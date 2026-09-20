@@ -27,7 +27,7 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 | Snowflake | [`@dal-go/dalgo2snowflake`](packages/snowflake) |
 | Solr | [`@dal-go/dalgo2solr`](packages/solr) |
 
-Import revisions and the archive plan for standalone repositories are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
+Import revisions and the completed standalone-repository cutover are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
 
 ## Development
 
