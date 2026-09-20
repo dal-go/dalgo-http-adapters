@@ -10,7 +10,7 @@ Do not add new implementation work to a standalone repository. Report fixes and 
 | clickhouse | https://github.com/dal-go/dalgo2clickhouse-js | `c9665be9d6fc9f7d546584c7687469ea8f66ac41` |
 | cosmosdb | https://github.com/dal-go/dalgo2cosmosdb-js | `1130e198b5dddfb1949e8e2820bb83435c9d0784` |
 | couchbase | https://github.com/dal-go/dalgo2couchbase-js | `388d5abdc8b91252326494e5aef00c3e26400abb` |
-| couchdb | https://github.com/dal-go/dalgo2couchdb-js | uncommitted local import |
+| couchdb | https://github.com/dal-go/dalgo2couchdb-js | No standalone commit; canonical snapshot is monorepo commit `ee7aad16d43b1f433dd4ddb46579374f45c8a6d2` |
 | databricks | https://github.com/dal-go/dalgo2databricks-js | `4c03eba8407d738e848f29ff655d84d261d72997` |
 | dynamodb | https://github.com/dal-go/dalgo2dynamodb-js | `0f6a4347b1a1874f750f66798fb1adb1a0b76458` |
 | elasticsearch | https://github.com/dal-go/dalgo2elasticsearch-js | `14734c218608c001ce9e05478e741df9c71b4e7f` |
