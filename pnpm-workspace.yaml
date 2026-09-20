@@ -1,0 +1,10 @@
+packages:
+  - "packages/*"
+
+overrides:
+  "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d"
+
+allowBuilds:
+  "@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d": true
+  "@firebase/util@1.15.3": false
+  "protobufjs@7.6.6": false

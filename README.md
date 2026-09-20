@@ -2,7 +2,46 @@
 
 Qualification matrix and delivery catalog for database data planes that can be used over HTTP/HTTPS from JavaScript.
 
-The reference implementation is [`dalgo2firestore-js`](https://github.com/dal-go/dalgo2firestore-js). Every adapter targets the contracts from [`dalgo-js`](https://github.com/dal-go/dalgo-js), exposes only DALgo semantics it can preserve, and fails explicitly for unsupported operations. The complete qualification evidence is in [`qualification-matrix.md`](qualification-matrix.md).
+The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore). Every adapter targets the contracts from [`dalgo-js`](https://github.com/dal-go/dalgo-js), exposes only DALgo semantics it can preserve, and fails explicitly for unsupported operations. The complete qualification evidence is in [`qualification-matrix.md`](qualification-matrix.md).
+
+## Packages
+
+| Adapter | Local package |
+|---|---|
+| BigQuery | [`@dal-go/dalgo2bigquery`](packages/bigquery) |
+| ClickHouse | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) |
+| Cosmos DB | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) |
+| Couchbase | [`@dal-go/dalgo2couchbase`](packages/couchbase) |
+| CouchDB | [`@dal-go/dalgo2couchdb`](packages/couchdb) |
+| Databricks | [`@dal-go/dalgo2databricks`](packages/databricks) |
+| DynamoDB | [`@dal-go/dalgo2dynamodb`](packages/dynamodb) |
+| Elasticsearch | [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) |
+| Firebase Realtime Database | [`@dal-go/dalgo2firebase-rtdb`](packages/firebase-rtdb) |
+| Firestore | [`@dal-go/dalgo2firestore`](packages/firestore) |
+| IndexedDB | [`@dal-go/dalgo2indexeddb`](packages/indexeddb) |
+| InfluxDB | [`@dal-go/dalgo2influxdb`](packages/influxdb) |
+| Neo4j | [`@dal-go/dalgo2neo4j`](packages/neo4j) |
+| OpenSearch | [`@dal-go/dalgo2opensearch`](packages/opensearch) |
+| OpenVaultDB | [`@dal-go/dalgo2ovdb`](packages/ovdb) |
+| Redshift | [`@dal-go/dalgo2redshift`](packages/redshift) |
+| Snowflake | [`@dal-go/dalgo2snowflake`](packages/snowflake) |
+| Solr | [`@dal-go/dalgo2solr`](packages/solr) |
+
+Import revisions and the archive plan for standalone repositories are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
+
+## Development
+
+The workspace uses Node.js 24 and pnpm 11.20. Install once at the repository
+root, then run the complete adapter gate or select one package:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm check
+pnpm --filter @dal-go/dalgo2firestore check
+```
+
+All packages use the same pinned DALgo contract revision. No adapter is
+published to npm by this repository yet.
 
 ## Classification
 
@@ -41,7 +80,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | 13 | Azure Cosmos DB for NoSQL REST | HTTP-capable / ephemeral-token browser | Yes | Yes | Yes | Yes | Cosmos SQL | Yes | Partition-scoped batch / stored procedures | Change feed | Master/account keys are never browser-safe; browser use requires a backend-issued resource token or carefully designed Entra/network setup. | `dalgo2cosmosdb-js`; partition key is explicit; do not claim browser-native auth. |
 | 14 | Amazon Redshift Data API | HTTP-capable | Yes | Yes | Yes | Yes | SQL | Yes | Transactional batch | Async statements, not CDC | IAM/Secrets Manager; server-side. | `dalgo2redshift-js`; analytical SQL semantics. |
 | 15 | Couchbase HTTP data services | HTTP-capable | Yes | Yes | Yes | Yes | SQL++ / search | Yes | Limited | Eventing/change mechanisms vary | Cluster/service credentials and CORS need deployment review. | Separate SQL++ and key-value capability mapping; do not wrap management REST. |
-| 16 | Google Firestore | Browser-ready | Yes | Yes | Yes | Yes | Structured query | Count/sum/average | Batched writes / transactions | Realtime listeners | Firebase Auth and Security Rules are designed for public clients. | Implemented: [`dalgo2firestore-js`](https://github.com/dal-go/dalgo2firestore-js). |
+| 16 | Google Firestore | Browser-ready | Yes | Yes | Yes | Yes | Structured query | Count/sum/average | Batched writes / transactions | Realtime listeners | Firebase Auth and Security Rules are designed for public clients. | Implemented: [`@dal-go/dalgo2firestore`](packages/firestore). |
 | 17 | Firebase Realtime Database REST/Web SDK | Browser-ready | Yes | Yes | Yes | Yes | Key/range query | No server aggregation | Atomic updates / client transaction retries | SSE/WebSocket | Firebase Auth and Security Rules; browser-first. | `dalgo2firebase-rtdb-js`; tree/path semantics and limited query composition. |
 | 18 | Apache CouchDB HTTP | Browser-ready | Yes | Yes | Yes | Yes | Mango / views | Views | Per-document MVCC, bulk is not ACID | `_changes` feeds | CORS configurable; use scoped users/proxy as appropriate. | `dalgo2couchdb-js`; expose revision/conflict semantics. |
 | 19 | PostgREST protocol / Supabase | Browser-ready | Yes | Yes | Yes | Yes | URL filters / embedding / RPC | Yes | One request; multi-step logic via PostgreSQL functions | Provider-specific realtime is separate | CORS plus JWT/RLS enables public clients when policies are correct. | `dalgo2postgrest-js`, not a Supabase-only adapter. |
@@ -121,21 +160,21 @@ An official SDK using HTTP internally does not by itself make a product browser-
 
 | Adapter | Status |
 |---|---|
-| [`dalgo2firestore-js`](https://github.com/dal-go/dalgo2firestore-js) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
-| [`dalgo2indexeddb-js`](https://github.com/dal-go/dalgo2indexeddb-js) | Implemented local browser adapter. |
-| [`dalgo2ovdb-js`](https://github.com/dal-go/dalgo2ovdb-js) | Implemented OpenVaultDB HTTP adapter. |
-| [`dalgo2snowflake-js`](https://github.com/dal-go/dalgo2snowflake-js) | Implemented read/query SQL API adapter; writes and DALgo callback transactions remain explicitly unsupported. |
-| [`dalgo2databricks-js`](https://github.com/dal-go/dalgo2databricks-js) | Implemented read/query Statement Execution API adapter with complete inline chunk validation; writes and DALgo callback transactions remain explicitly unsupported. |
-| [`dalgo2elasticsearch-js`](https://github.com/dal-go/dalgo2elasticsearch-js) | Implemented HTTP document CRUD/query adapter; DALgo callback transactions remain explicitly unsupported. |
-| [`dalgo2dynamodb-js`](https://github.com/dal-go/dalgo2dynamodb-js) | Implemented browser-capable AWS SDK v3 adapter for the documented two-key table layout; requires temporary scoped credentials. |
-| [`dalgo2bigquery-js`](https://github.com/dal-go/dalgo2bigquery-js) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
-| [`dalgo2neo4j-js`](https://github.com/dal-go/dalgo2neo4j-js) | Implemented configured-label CRUD/query adapter over Query API v2, with explicit transactions limited to Aura affinity or declared single-instance deployments. |
-| [`dalgo2solr-js`](https://github.com/dal-go/dalgo2solr-js) | Implemented bounded document CRUD/query adapter over Solr JSON Request and Update APIs; deployments must keep Solr behind a trusted proxy or equivalent access control. |
-| [`dalgo2clickhouse-js`](https://github.com/dal-go/dalgo2clickhouse-js) | Implemented bounded parameterized read/query support over the ClickHouse HTTP interface plus an explicit append-only JSONEachRow helper; OLTP-style DALgo mutations and callback transactions remain unsupported. |
-| [`dalgo2influxdb-js`](https://github.com/dal-go/dalgo2influxdb-js) | Implemented bounded InfluxDB 3 SQL reads/queries plus an explicit line-protocol append helper; point replacement, update, delete, and callback transactions remain unsupported. |
-| [`dalgo2opensearch-js`](https://github.com/dal-go/dalgo2opensearch-js) | Implemented bounded provider-neutral OpenSearch REST CRUD/query adapter with direct-index and string-ID contracts; AWS SigV4 signing remains an injected trusted-runtime responsibility. |
-| [`dalgo2redshift-js`](https://github.com/dal-go/dalgo2redshift-js) | Implemented bounded read/query adapter over the asynchronous Redshift Data API with explicit table/key/projection mappings; writes and DALgo callback transactions remain unsupported. |
-| [`dalgo2cosmosdb-js`](https://github.com/dal-go/dalgo2cosmosdb-js) | Implemented bounded, partition-scoped Cosmos DB for NoSQL REST CRUD/query adapter with opaque continuation cursors and an explicit ephemeral-token/trusted-proxy authentication boundary. |
+| [`@dal-go/dalgo2firestore`](packages/firestore) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
+| [`@dal-go/dalgo2indexeddb`](packages/indexeddb) | Implemented local browser adapter. |
+| [`@dal-go/dalgo2ovdb`](packages/ovdb) | Implemented OpenVaultDB HTTP adapter. |
+| [`@dal-go/dalgo2snowflake`](packages/snowflake) | Implemented read/query SQL API adapter; writes and DALgo callback transactions remain explicitly unsupported. |
+| [`@dal-go/dalgo2databricks`](packages/databricks) | Implemented read/query Statement Execution API adapter with complete inline chunk validation; writes and DALgo callback transactions remain explicitly unsupported. |
+| [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) | Implemented HTTP document CRUD/query adapter; DALgo callback transactions remain explicitly unsupported. |
+| [`@dal-go/dalgo2dynamodb`](packages/dynamodb) | Implemented browser-capable AWS SDK v3 adapter for the documented two-key table layout; requires temporary scoped credentials. |
+| [`@dal-go/dalgo2bigquery`](packages/bigquery) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
+| [`@dal-go/dalgo2neo4j`](packages/neo4j) | Implemented configured-label CRUD/query adapter over Query API v2, with explicit transactions limited to Aura affinity or declared single-instance deployments. |
+| [`@dal-go/dalgo2solr`](packages/solr) | Implemented bounded document CRUD/query adapter over Solr JSON Request and Update APIs; deployments must keep Solr behind a trusted proxy or equivalent access control. |
+| [`@dal-go/dalgo2clickhouse`](packages/clickhouse) | Implemented bounded parameterized read/query support over the ClickHouse HTTP interface plus an explicit append-only JSONEachRow helper; OLTP-style DALgo mutations and callback transactions remain unsupported. |
+| [`@dal-go/dalgo2influxdb`](packages/influxdb) | Implemented bounded InfluxDB 3 SQL reads/queries plus an explicit line-protocol append helper; point replacement, update, delete, and callback transactions remain unsupported. |
+| [`@dal-go/dalgo2opensearch`](packages/opensearch) | Implemented bounded provider-neutral OpenSearch REST CRUD/query adapter with direct-index and string-ID contracts; AWS SigV4 signing remains an injected trusted-runtime responsibility. |
+| [`@dal-go/dalgo2redshift`](packages/redshift) | Implemented bounded read/query adapter over the asynchronous Redshift Data API with explicit table/key/projection mappings; writes and DALgo callback transactions remain unsupported. |
+| [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) | Implemented bounded, partition-scoped Cosmos DB for NoSQL REST CRUD/query adapter with opaque continuation cursors and an explicit ephemeral-token/trusted-proxy authentication boundary. |
 
 ## Adapter acceptance bar
 

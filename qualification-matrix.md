@@ -1,5 +1,9 @@
 # HTTP data-plane qualification matrix
 
+## Implemented local packages
+
+The consolidated adapters are available from the local [packages](packages) workspace. See [README.md](README.md#packages) for the complete package list and [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md) for import provenance.
+
 This is a qualification catalog, not a claim that every product has an adapter. `HTTP` means an application data-plane endpoint, not an ARM/cloud-resource management API. `Browser-native` means the vendor's public-client model is intended for browser use. `Ephemeral-token` means a trusted service must mint a narrowly scoped, short-lived token/SAS. Account keys, service-account keys, admin keys, PATs, database passwords, and unrestricted API keys are never browser credentials.
 
 Capability order is `read / insert / update / delete / query / aggregate / transaction / change-feed / result-stream / async-poll`.

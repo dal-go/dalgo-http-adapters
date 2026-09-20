@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Emulator-only acceptance fixture. Applications must supply their own
+    // authenticated, least-privilege production rules.
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
