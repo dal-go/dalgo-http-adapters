@@ -124,8 +124,11 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`dalgo2firestore-js`](https://github.com/dal-go/dalgo2firestore-js) | Implemented reference adapter. |
 | [`dalgo2indexeddb-js`](https://github.com/dal-go/dalgo2indexeddb-js) | Implemented local browser adapter. |
 | [`dalgo2ovdb-js`](https://github.com/dal-go/dalgo2ovdb-js) | Implemented OpenVaultDB HTTP adapter. |
-| `dalgo2snowflake-js` | Implementation in progress. |
-| `dalgo2databricks-js` | Implementation in progress. |
+| [`dalgo2snowflake-js`](https://github.com/dal-go/dalgo2snowflake-js) | Implemented read/query SQL API adapter; writes and DALgo callback transactions remain explicitly unsupported. |
+| [`dalgo2databricks-js`](https://github.com/dal-go/dalgo2databricks-js) | Implemented read/query Statement Execution API adapter with complete inline chunk validation; writes and DALgo callback transactions remain explicitly unsupported. |
+| [`dalgo2elasticsearch-js`](https://github.com/dal-go/dalgo2elasticsearch-js) | Implemented HTTP document CRUD/query adapter; DALgo callback transactions remain explicitly unsupported. |
+| [`dalgo2dynamodb-js`](https://github.com/dal-go/dalgo2dynamodb-js) | Implemented browser-capable AWS SDK v3 adapter for the documented two-key table layout; requires temporary scoped credentials. |
+| [`dalgo2bigquery-js`](https://github.com/dal-go/dalgo2bigquery-js) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
 
 ## Adapter acceptance bar
 
