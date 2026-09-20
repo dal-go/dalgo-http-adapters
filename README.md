@@ -134,6 +134,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`dalgo2clickhouse-js`](https://github.com/dal-go/dalgo2clickhouse-js) | Implemented bounded parameterized read/query support over the ClickHouse HTTP interface plus an explicit append-only JSONEachRow helper; OLTP-style DALgo mutations and callback transactions remain unsupported. |
 | [`dalgo2influxdb-js`](https://github.com/dal-go/dalgo2influxdb-js) | Implemented bounded InfluxDB 3 SQL reads/queries plus an explicit line-protocol append helper; point replacement, update, delete, and callback transactions remain unsupported. |
 | [`dalgo2opensearch-js`](https://github.com/dal-go/dalgo2opensearch-js) | Implemented bounded provider-neutral OpenSearch REST CRUD/query adapter with direct-index and string-ID contracts; AWS SigV4 signing remains an injected trusted-runtime responsibility. |
+| [`dalgo2redshift-js`](https://github.com/dal-go/dalgo2redshift-js) | Implemented bounded read/query adapter over the asynchronous Redshift Data API with explicit table/key/projection mappings; writes and DALgo callback transactions remain unsupported. |
 
 ## Adapter acceptance bar
 
