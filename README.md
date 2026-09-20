@@ -129,6 +129,10 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`dalgo2elasticsearch-js`](https://github.com/dal-go/dalgo2elasticsearch-js) | Implemented HTTP document CRUD/query adapter; DALgo callback transactions remain explicitly unsupported. |
 | [`dalgo2dynamodb-js`](https://github.com/dal-go/dalgo2dynamodb-js) | Implemented browser-capable AWS SDK v3 adapter for the documented two-key table layout; requires temporary scoped credentials. |
 | [`dalgo2bigquery-js`](https://github.com/dal-go/dalgo2bigquery-js) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
+| [`dalgo2neo4j-js`](https://github.com/dal-go/dalgo2neo4j-js) | Implemented configured-label CRUD/query adapter over Query API v2, with explicit transactions limited to Aura affinity or declared single-instance deployments. |
+| [`dalgo2solr-js`](https://github.com/dal-go/dalgo2solr-js) | Implemented bounded document CRUD/query adapter over Solr JSON Request and Update APIs; deployments must keep Solr behind a trusted proxy or equivalent access control. |
+| [`dalgo2clickhouse-js`](https://github.com/dal-go/dalgo2clickhouse-js) | Implemented bounded parameterized read/query support over the ClickHouse HTTP interface plus an explicit append-only JSONEachRow helper; OLTP-style DALgo mutations and callback transactions remain unsupported. |
+| [`dalgo2influxdb-js`](https://github.com/dal-go/dalgo2influxdb-js) | Implemented bounded InfluxDB 3 SQL reads/queries plus an explicit line-protocol append helper; point replacement, update, delete, and callback transactions remain unsupported. |
 
 ## Adapter acceptance bar
 
