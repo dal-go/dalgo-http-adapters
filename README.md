@@ -121,7 +121,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 
 | Adapter | Status |
 |---|---|
-| [`dalgo2firestore-js`](https://github.com/dal-go/dalgo2firestore-js) | Implemented reference adapter. |
+| [`dalgo2firestore-js`](https://github.com/dal-go/dalgo2firestore-js) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
 | [`dalgo2indexeddb-js`](https://github.com/dal-go/dalgo2indexeddb-js) | Implemented local browser adapter. |
 | [`dalgo2ovdb-js`](https://github.com/dal-go/dalgo2ovdb-js) | Implemented OpenVaultDB HTTP adapter. |
 | [`dalgo2snowflake-js`](https://github.com/dal-go/dalgo2snowflake-js) | Implemented read/query SQL API adapter; writes and DALgo callback transactions remain explicitly unsupported. |
@@ -133,7 +133,6 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`dalgo2solr-js`](https://github.com/dal-go/dalgo2solr-js) | Implemented bounded document CRUD/query adapter over Solr JSON Request and Update APIs; deployments must keep Solr behind a trusted proxy or equivalent access control. |
 | [`dalgo2clickhouse-js`](https://github.com/dal-go/dalgo2clickhouse-js) | Implemented bounded parameterized read/query support over the ClickHouse HTTP interface plus an explicit append-only JSONEachRow helper; OLTP-style DALgo mutations and callback transactions remain unsupported. |
 | [`dalgo2influxdb-js`](https://github.com/dal-go/dalgo2influxdb-js) | Implemented bounded InfluxDB 3 SQL reads/queries plus an explicit line-protocol append helper; point replacement, update, delete, and callback transactions remain unsupported. |
-| [`dalgo2firestore-js`](https://github.com/dal-go/dalgo2firestore-js) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
 
 ## Adapter acceptance bar
 
