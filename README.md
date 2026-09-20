@@ -135,6 +135,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`dalgo2influxdb-js`](https://github.com/dal-go/dalgo2influxdb-js) | Implemented bounded InfluxDB 3 SQL reads/queries plus an explicit line-protocol append helper; point replacement, update, delete, and callback transactions remain unsupported. |
 | [`dalgo2opensearch-js`](https://github.com/dal-go/dalgo2opensearch-js) | Implemented bounded provider-neutral OpenSearch REST CRUD/query adapter with direct-index and string-ID contracts; AWS SigV4 signing remains an injected trusted-runtime responsibility. |
 | [`dalgo2redshift-js`](https://github.com/dal-go/dalgo2redshift-js) | Implemented bounded read/query adapter over the asynchronous Redshift Data API with explicit table/key/projection mappings; writes and DALgo callback transactions remain unsupported. |
+| [`dalgo2cosmosdb-js`](https://github.com/dal-go/dalgo2cosmosdb-js) | Implemented bounded, partition-scoped Cosmos DB for NoSQL REST CRUD/query adapter with opaque continuation cursors and an explicit ephemeral-token/trusted-proxy authentication boundary. |
 
 ## Adapter acceptance bar
 
