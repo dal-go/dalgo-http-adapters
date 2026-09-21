@@ -20,9 +20,15 @@ export function quoteIdentifier(value: string, label: string): string {
   return `"${value}"`;
 }
 
-function scalar(value: unknown, label: string): LibSQLScalar {
+/** Restricts JavaScript numbers to values the JSON Hrana value mapping can round-trip. */
+export function libSQLScalar(value: unknown, label: string): LibSQLScalar {
   if (value === null || typeof value === "boolean" || typeof value === "string") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      throw new UnsupportedError(`libSQL SQL ${label} integral numbers must be JavaScript safe integers`);
+    }
+    return value;
+  }
   throw new UnsupportedError(`libSQL SQL ${label} values must be null, boolean, finite numbers, or strings`);
 }
 
@@ -34,7 +40,7 @@ function columnForField(table: LibSQLTable, field: string): LibSQLColumn {
 }
 
 function expression(column: LibSQLColumn): string { return `t.${quoteIdentifier(column.column, "column name")}`; }
-function parameter(args: LibSQLScalar[], value: unknown): string { args.push(scalar(value, "parameter")); return "?"; }
+function parameter(args: LibSQLScalar[], value: unknown): string { args.push(libSQLScalar(value, "parameter")); return "?"; }
 
 function filterSql<T>(filter: QueryFilter<T>, table: LibSQLTable, args: LibSQLScalar[]): string {
   const isKey = String(filter.field) === DOCUMENT_ID;
@@ -81,7 +87,11 @@ function cursorSql<T>(query: StructuredQuery<T>, table: LibSQLTable, columns: re
     if (column.nullable !== false) throw new UnsupportedError(`libSQL paginated order requires nullable: false for ${column.column}`);
     if (value === undefined || value === null) throw new UnsupportedError("libSQL null or undefined cursor values");
     if (column.column === table.keyColumn.column && typeof value !== "string") throw new UnsupportedError("libSQL key cursor position must be a string");
-    const previous = columns.slice(0, index).map((prior) => `${expression(prior)} = ${parameter(args, query.startAfter?.values[columns.indexOf(prior)])}`);
+    const previous = columns.slice(0, index).map((prior, priorIndex) => {
+      const priorValue = query.startAfter?.values[priorIndex];
+      if (priorValue === undefined || priorValue === null) throw new UnsupportedError("libSQL null or undefined cursor values");
+      return `${expression(prior)} = ${parameter(args, priorValue)}`;
+    });
     const direction = query.orders[index]?.direction ?? "asc";
     clauses.push(`(${[...previous, `${expression(column)} ${direction === "desc" ? "<" : ">"} ${parameter(args, value)}`].join(" AND ")})`);
   }

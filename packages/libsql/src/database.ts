@@ -1,4 +1,5 @@
 import {
+  AlreadyExistsError,
   Key,
   UnsupportedError,
   identityCodec,
@@ -11,7 +12,7 @@ import {
   type StructuredQuery,
   type UpdateData,
 } from "@dal-go/dalgo";
-import { compileLibSQLQuery, validateIdentifier, type LibSQLScalar } from "./sql.js";
+import { compileLibSQLQuery, libSQLScalar, validateIdentifier, type LibSQLScalar } from "./sql.js";
 import type { LibSQLColumn, LibSQLDatabaseOptions, LibSQLTable } from "./types.js";
 
 type HranaValue =
@@ -23,9 +24,9 @@ type HranaValue =
 
 interface HranaColumn { readonly name?: unknown; }
 interface HranaStatementResult { readonly cols?: unknown; readonly rows?: unknown; }
-interface PipelineError { readonly code?: unknown; }
+interface PipelineError { readonly code?: unknown; readonly extended_code?: unknown; }
 interface PipelineResult { readonly type?: unknown; readonly response?: unknown; readonly error?: unknown; }
-interface PipelineResponse { readonly results?: unknown; }
+interface PipelineResponse { readonly baton?: unknown; readonly results?: unknown; }
 
 function isObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function positive(value: number | undefined, fallback: number, name: string): number {
@@ -66,6 +67,7 @@ function freezeTables(tables: Readonly<Record<string, LibSQLTable>>): Readonly<R
       if (names.has(copied.column)) throw new TypeError(`duplicate libSQL mapped column: ${copied.column}`);
       names.add(copied.column); columns[field] = copied;
     }
+    if (Object.keys(columns).length === 0) throw new TypeError("libSQL table mappings require at least one mapped data column");
     if (table.uniqueKey !== undefined && table.uniqueKey !== true && table.uniqueKey !== false) throw new TypeError("uniqueKey must be a boolean");
     result[collection] = Object.freeze({ table: table.table, ...(table.uniqueKey === undefined ? {} : { uniqueKey: table.uniqueKey }), keyColumn, columns: Object.freeze(columns) });
   }
@@ -76,7 +78,10 @@ function encodedValue(value: LibSQLScalar): HranaValue {
   if (value === null) return { type: "null" };
   if (typeof value === "string") return { type: "text", value };
   if (typeof value === "boolean") return { type: "integer", value: value ? "1" : "0" };
-  if (Number.isInteger(value)) return { type: "integer", value: String(value) };
+  if (Number.isInteger(value)) {
+    if (!Number.isSafeInteger(value)) throw new UnsupportedError("libSQL integral values must be JavaScript safe integers");
+    return { type: "integer", value: String(value) };
+  }
   return { type: "float", value };
 }
 
@@ -98,13 +103,19 @@ function decodedValue(value: unknown): LibSQLScalar {
 
 function pipelineResult(value: unknown): HranaStatementResult {
   if (!isObject(value)) throw new TypeError("malformed libSQL pipeline response");
-  const results = (value as PipelineResponse).results;
+  const response = value as PipelineResponse;
+  if (response.baton !== null) throw new TypeError("malformed libSQL pipeline baton");
+  const results = response.results;
   if (!Array.isArray(results) || results.length !== 2) throw new TypeError("malformed libSQL pipeline response");
+  const close = results[1] as PipelineResult | undefined;
+  if (!isObject(close) || close.type !== "ok" || !isObject(close.response) || close.response.type !== "close") {
+    throw new TypeError("malformed libSQL close response");
+  }
   const first = results[0] as PipelineResult | undefined;
   if (!isObject(first)) throw new TypeError("malformed libSQL pipeline result");
   if (first.type === "error") {
     const error = isObject(first.error) ? first.error as PipelineError : {};
-    throw new LibSQLPipelineError(safeCode(error.code));
+    throw new LibSQLPipelineError(safeCode(error.code), safeCode(error.extended_code));
   }
   if (first.type !== "ok" || !isObject(first.response) || first.response.type !== "execute" || !isObject(first.response.result)) {
     throw new TypeError("malformed libSQL execute response");
@@ -159,9 +170,11 @@ export class LibSQLHttpError extends Error {
 /** A server-side statement failure with a bounded machine code but no echoed SQL, headers, or error body. */
 export class LibSQLPipelineError extends Error {
   public readonly code: string | undefined;
-  public constructor(code: string | undefined) {
-    super(code === undefined ? "libSQL pipeline statement failed" : `libSQL pipeline statement failed (${code})`);
-    this.name = "LibSQLPipelineError"; this.code = code;
+  public readonly extendedCode: string | undefined;
+  public constructor(code: string | undefined, extendedCode?: string) {
+    const visibleCode = extendedCode ?? code;
+    super(visibleCode === undefined ? "libSQL pipeline statement failed" : `libSQL pipeline statement failed (${visibleCode})`);
+    this.name = "LibSQLPipelineError"; this.code = code; this.extendedCode = extendedCode;
   }
 }
 
@@ -216,7 +229,7 @@ export class LibSQLDatabase implements Database {
     const selected = rows.slice(0, requested);
     const records = selected.map((row) => this.snapshot(new Key(query.source.name, String(row.__dalgo_key)), row, query.source.codec) as ExistingRecord<T>);
     const last = selected.at(-1);
-    const nextCursor = rows.length > requested && last !== undefined
+    const nextCursor = query.orders.length > 0 && rows.length > requested && last !== undefined
       ? { values: compiled.cursorColumns.map((column) => last[column.column === table.keyColumn.column ? "__dalgo_key" : this.fieldForColumn(table, column.column)]) }
       : undefined;
     return nextCursor === undefined ? { records } : { records, nextCursor };
@@ -226,7 +239,12 @@ export class LibSQLDatabase implements Database {
     this.assertStringKey(key); const table = this.writableTable(key); const values = this.fullData(data, codec, table);
     const fields = Object.keys(table.columns);
     const dataValues = this.valuesFor(fields, values);
-    this.assertSingleWrite(await this.mutate(`INSERT INTO ${this.quotedTable(table)} (${[table.keyColumn.column, ...fields.map((field) => table.columns[field]?.column)].map((column) => this.quotedColumn(column)).join(", ")}) VALUES (${[key.id, ...dataValues].map(() => "?").join(", ")})`, [key.id, ...dataValues]));
+    try {
+      this.assertSingleWrite(await this.mutate(`INSERT INTO ${this.quotedTable(table)} (${[table.keyColumn.column, ...fields.map((field) => table.columns[field]?.column)].map((column) => this.quotedColumn(column)).join(", ")}) VALUES (${[key.id, ...dataValues].map(() => "?").join(", ")})`, [key.id, ...dataValues]));
+    } catch (error) {
+      if (error instanceof LibSQLPipelineError && this.isDuplicateKey(error)) throw new AlreadyExistsError(key, { cause: error });
+      throw error;
+    }
   }
 
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
@@ -283,8 +301,11 @@ export class LibSQLDatabase implements Database {
       return value;
     });
   }
-  private scalar(value: unknown): LibSQLScalar { if (value === null || typeof value === "boolean" || typeof value === "string") return value; if (typeof value === "number" && Number.isFinite(value)) return value; throw new UnsupportedError("libSQL mapped values must be null, boolean, finite numbers, or strings"); }
+  private scalar(value: unknown): LibSQLScalar { return libSQLScalar(value, "mapped"); }
   private assertSingleWrite(affected: number): void { if (affected !== 1) throw new UnsupportedError("libSQL insert or set did not affect exactly one record"); }
+  private isDuplicateKey(error: LibSQLPipelineError): boolean {
+    return [error.code, error.extendedCode].some((code) => code === "SQLITE_CONSTRAINT_UNIQUE" || code === "SQLITE_CONSTRAINT_PRIMARYKEY");
+  }
 
   private async select(sql: string, args: readonly LibSQLScalar[], table: LibSQLTable): Promise<readonly Record<string, LibSQLScalar>[]> {
     const result = await this.pipeline(sql, args, true);
@@ -293,41 +314,64 @@ export class LibSQLDatabase implements Database {
   private async mutate(sql: string, args: readonly LibSQLScalar[]): Promise<number> { return affectedRows(await this.pipeline(sql, args, false)); }
 
   private async pipeline(sql: string, args: readonly LibSQLScalar[], wantRows: boolean): Promise<HranaStatementResult> {
-    const supplied = this.#headers === undefined ? {} : await this.#headers();
-    if (!isObject(supplied)) throw new TypeError("headers must return an object");
-    const headers = headersFrom(supplied as Readonly<Record<string, string>>);
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
     try {
-      let response: Response;
-      try {
-        response = await this.#fetch(`${this.#origin}/v3/pipeline`, {
-          method: "POST", redirect: "error", signal: controller.signal,
-          headers: { ...headers, accept: "application/json", "content-type": "application/json" },
-          body: JSON.stringify({ baton: null, requests: [{ type: "execute", stmt: { sql, args: args.map(encodedValue), want_rows: wantRows } }, { type: "close" }] }),
-        });
-      } catch { throw new Error("libSQL pipeline request failed"); }
+      const supplied = this.#headers === undefined
+        ? {}
+        : await this.awaitWithinDeadline(Promise.resolve().then(() => this.#headers?.()), controller, "libSQL request headers could not be obtained");
+      if (!isObject(supplied)) throw new TypeError("headers must return an object");
+      const headers = headersFrom(supplied as Readonly<Record<string, string>>);
+      this.throwIfAborted(controller);
+      const body = JSON.stringify({ baton: null, requests: [{ type: "execute", stmt: { sql, args: args.map(encodedValue), want_rows: wantRows } }, { type: "close" }] });
+      this.throwIfAborted(controller);
+      const response = await this.awaitWithinDeadline(this.#fetch(`${this.#origin}/v3/pipeline`, {
+        method: "POST", redirect: "error", signal: controller.signal,
+        headers: { ...headers, accept: "application/json", "content-type": "application/json" }, body,
+      }), controller, "libSQL pipeline request failed");
       if (!response.ok) throw new LibSQLHttpError(response.status);
       const length = response.headers.get("content-length");
       if (length !== null && (!/^\d+$/u.test(length) || Number(length) > this.#maxResponseBytes)) throw new UnsupportedError("libSQL response exceeds maxResponseBytes");
-      const body = await this.readBoundedBody(response);
-      try { return pipelineResult(JSON.parse(body) as unknown); } catch (error) {
-        if (error instanceof LibSQLPipelineError || error instanceof UnsupportedError || error instanceof TypeError) throw error;
-        throw new TypeError("malformed libSQL JSON response", { cause: error });
-      }
+      const responseBody = await this.readBoundedBody(response, controller);
+      return pipelineResult(this.parsePipelineJson(responseBody));
     } finally { clearTimeout(timer); }
   }
 
-  private async readBoundedBody(response: Response): Promise<string> {
+  private parsePipelineJson(body: string): unknown {
+    try { return JSON.parse(body) as unknown; } catch { throw new TypeError("malformed libSQL JSON response"); }
+  }
+
+  private throwIfAborted(controller: AbortController): void {
+    if (controller.signal.aborted) throw new UnsupportedError("libSQL operation exceeded configured timeout");
+  }
+
+  private async awaitWithinDeadline<T>(operation: Promise<T>, controller: AbortController, failureMessage: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = (): void => reject(new UnsupportedError("libSQL operation exceeded configured timeout"));
+      if (controller.signal.aborted) { onAbort(); return; }
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      void operation.then(
+        (value) => { controller.signal.removeEventListener("abort", onAbort); resolve(value); },
+        () => { controller.signal.removeEventListener("abort", onAbort); reject(new Error(failureMessage)); },
+      );
+    });
+  }
+
+  private async readBoundedBody(response: Response, controller: AbortController): Promise<string> {
     if (response.body === null) throw new TypeError("libSQL response was unexpectedly empty");
     const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
     try {
       while (true) {
-        const next = await reader.read(); if (next.done) break;
+        const next = await this.awaitWithinDeadline(reader.read(), controller, "libSQL response body could not be read"); if (next.done) break;
         size += next.value.byteLength;
-        if (size > this.#maxResponseBytes) { await reader.cancel(); throw new UnsupportedError("libSQL response exceeds maxResponseBytes"); }
+        if (size > this.#maxResponseBytes) {
+          void reader.cancel().catch(() => undefined);
+          throw new UnsupportedError("libSQL response exceeds maxResponseBytes");
+        }
         chunks.push(next.value);
       }
-    } finally { reader.releaseLock(); }
+    } finally {
+      try { reader.releaseLock(); } catch { /* A mocked stream can retain a pending read after deadline expiry. */ }
+    }
     const output = new Uint8Array(size); let offset = 0;
     for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.byteLength; }
     return new TextDecoder().decode(output);

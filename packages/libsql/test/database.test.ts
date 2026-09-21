@@ -1,4 +1,4 @@
-import { collection } from "@dal-go/dalgo";
+import { AlreadyExistsError, collection } from "@dal-go/dalgo";
 import { describe, expect, it } from "vitest";
 import { LibSQLDatabase, type LibSQLDatabaseOptions } from "../src/index.js";
 
@@ -107,9 +107,23 @@ describe("LibSQLDatabase", () => {
     await expect(blocked.insert(items.key("one"), { title: "Milk", rank: 10 })).rejects.toThrow("uniqueKey: true");
   });
 
+  it("maps only unique and primary-key insert constraint codes to AlreadyExistsError", async () => {
+    const calls: Call[] = [];
+    const duplicate = {
+      baton: null,
+      results: [
+        { type: "error", error: { code: "SQLITE_CONSTRAINT", extended_code: "SQLITE_CONSTRAINT_UNIQUE", message: "do not expose me" } },
+        { type: "ok", response: { type: "close" } },
+      ],
+    };
+    const db = database([response(duplicate)], calls);
+    const items = collection<{ title: string; rank: number }>("items");
+    await expect(db.insert(items.key("one"), { title: "Milk", rank: 10 })).rejects.toBeInstanceOf(AlreadyExistsError);
+  });
+
   it("rejects unproven transactions, invalid mappings, and responses without leaking bodies or server messages", async () => {
     const calls: Call[] = [];
-    const db = database([response({ error: "secret HTTP error body" }, 403), response({ results: [{ type: "error", error: { code: "SQLITE_CONSTRAINT", message: "secret SQL text" } }, { type: "ok", response: { type: "close" } }] })], calls);
+    const db = database([response({ error: "secret HTTP error body" }, 403), response({ baton: null, results: [{ type: "error", error: { code: "SQLITE_CONSTRAINT", message: "secret SQL text" } }, { type: "ok", response: { type: "close" } }] })], calls);
     const items = collection<{ title: string; rank: number }>("items");
     await expect(db.get(items.key("one"))).rejects.toEqual(expect.objectContaining({ name: "LibSQLHttpError", status: 403 }));
     const failure = await db.get(items.key("one")).catch((error: unknown) => error);
@@ -131,5 +145,60 @@ describe("LibSQLDatabase", () => {
     const ambiguous = database([], [], { tables: { items: { table: "items", keyColumn: { column: "id", nullable: false }, columns: { title: { column: "title" }, rank: { column: "rank", nullable: false } } } } });
     await expect(ambiguous.query(items.query().orderBy("title").limit(1).build())).rejects.toThrow("nullable: false");
     await expect(ambiguous.query(items.query().offset(1).build())).rejects.toThrow("offsets");
+  });
+
+  it("emits cursors only for explicit, deterministic orders and binds descending multi-column cursors", async () => {
+    const calls: Call[] = [];
+    const db = database([response(statement(projection, [one, two])), response(statement(projection, []))], calls);
+    const items = collection<{ title: string; rank: number }>("items");
+    const unordered = await db.query(items.query().limit(1).build());
+    expect(unordered.nextCursor).toBeUndefined();
+
+    await db.query(items.query().orderBy("rank", "desc").orderBy("title", "asc").startAfter(11, "Tea", "two").limit(1).build());
+    const sent = request(calls[1]);
+    expect(sent.sql).toContain('ORDER BY t."rank" DESC, t."title" ASC, t."id" ASC');
+    expect(sent.sql).toContain('((t."rank" < ?) OR (t."rank" = ? AND t."title" > ?) OR (t."rank" = ? AND t."title" = ? AND t."id" > ?))');
+    expect(sent.args).toEqual([
+      { type: "integer", value: "11" }, { type: "integer", value: "11" }, { type: "text", value: "Tea" },
+      { type: "integer", value: "11" }, { type: "text", value: "Tea" }, { type: "text", value: "two" },
+    ]);
+  });
+
+  it("rejects empty projections, unsafe integral inputs, malformed close responses, and deadline escapes", async () => {
+    const items = collection<{ title: string; rank: number }>("items");
+    expect(() => database([], [], { tables: { items: { table: "items", keyColumn: { column: "id" }, columns: {} } } })).toThrow("at least one");
+
+    const unsafeInput = database([], []);
+    await expect(unsafeInput.query(items.query().where("rank", "==", 9_007_199_254_740_992).build())).rejects.toThrow("safe integers");
+    await expect(unsafeInput.update(items.key("one"), { rank: 9_007_199_254_740_992 })).rejects.toThrow("safe integers");
+    await expect(unsafeInput.query(items.query().orderBy("rank").startAfter(9_007_199_254_740_992, "one").build())).rejects.toThrow("safe integers");
+
+    const malformed = database([response({ baton: "not-null", results: [{ type: "ok", response: { type: "execute", result: { cols: [], rows: [] } }, }, { type: "ok", response: { type: "not-close" } }] })], []);
+    await expect(malformed.get(items.key("one"))).rejects.toThrow("baton");
+
+    const badClose = database([response({ baton: null, results: [{ type: "ok", response: { type: "execute", result: { cols: [], rows: [] } }, }, { type: "ok", response: { type: "not-close" } }] })], []);
+    await expect(badClose.get(items.key("one"))).rejects.toThrow("close");
+
+    const timedOut = database([], [], {
+      timeoutMs: 1,
+      headers: async () => new Promise<Readonly<Record<string, string>>>(() => undefined),
+    });
+    await expect(timedOut.get(items.key("one"))).rejects.toThrow("configured timeout");
+  });
+
+  it("bounds the header provider, fetch, and body read without exposing remote parsing failures", async () => {
+    const items = collection<{ title: string; rank: number }>("items");
+    const never = <T>(): Promise<T> => new Promise<T>(() => undefined);
+    const fetchTimedOut = database([], [], { timeoutMs: 5, fetch: () => never<Response>() });
+    await expect(fetchTimedOut.get(items.key("one"))).rejects.toThrow("configured timeout");
+
+    const pendingBody = new Response(new ReadableStream<Uint8Array>({ pull: () => never<void>() }));
+    const bodyTimedOut = database([], [], { timeoutMs: 5, fetch: async () => pendingBody });
+    await expect(bodyTimedOut.get(items.key("one"))).rejects.toThrow("configured timeout");
+
+    const malformedJson = database([new Response("secret non-JSON server response")], []);
+    const failure = await malformedJson.get(items.key("one")).catch((error: unknown) => error);
+    expect(String(failure)).not.toContain("secret non-JSON");
+    expect(failure).not.toHaveProperty("cause");
   });
 });

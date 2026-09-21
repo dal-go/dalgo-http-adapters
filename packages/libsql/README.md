@@ -51,8 +51,9 @@ application document to/from the declared top-level scalar column projection.
 ## Supported DALgo surface
 
 - `get`, bounded `getMany`, and bounded structured top-level collection queries
-  with AND scalar filters, ordering, and non-null `startAfter` cursors. Ordered
-  paging appends the key as a deterministic tie-breaker.
+  with AND scalar filters. Pagination cursors are returned only for an explicit
+  non-null ordering; ordered paging appends the key as a deterministic
+  tie-breaker.
 - `insert`, `set`, top-level `update`, and `delete` only when the table mapping
   explicitly sets `uniqueKey: true`, meaning the configured key column has a
   database UNIQUE or PRIMARY KEY constraint. Insert uses `INSERT`; set uses a
@@ -69,7 +70,8 @@ application document to/from the declared top-level scalar column projection.
 
 This adapter rejects nested and collection-group keys, offsets, inclusive/end
 cursors, membership/array filters, non-scalar mapped values, unsafe 64-bit
-integers, and projections outside the declared mapping. It does not support
+integers, empty column projections, and projections outside the declared
+mapping. It does not support
 blobs, arbitrary JSON columns, aggregation, subscriptions, cursor streaming,
 or session state. A codec is the supported route when an application document
 needs a JSON column or other conversion.
