@@ -14,18 +14,24 @@ describe("KustoDatabase", () => {
     expect(fetch.mock.calls[0]?.[0].toString()).toBe("https://example.kusto.windows.net/v2/rest/query");
     const init = fetch.mock.calls[0]?.[1]; expect((init?.headers as Record<string, string>)["x-ms-readonly"]).toBe("true");
     expect(JSON.parse(init?.body as string)).toMatchObject({ db: "Logs", properties: { Parameters: { __dalgo_key: "milk" } } });
+    expect(JSON.parse(init?.body as string).csl).toContain("declare query_parameters(__dalgo_key:string)");
   });
   it("executes caller KQL only with declared parameters and validates a scalar primary table", async () => {
     const { db, fetch } = database(); fetch.mockResolvedValueOnce(result([["a", "b"]], ["left", "right"]));
     await expect(db.queryKql("print left = x, right = y", { x: { type: "string", value: "a" }, y: { type: "string", value: "b" } })).resolves.toEqual([{ left: "a", right: "b" }]);
     expect(JSON.parse(fetch.mock.calls[0]?.[1]?.body as string).csl).toContain("declare query_parameters(x:string, y:string)");
+    fetch.mockResolvedValueOnce(result([["true", "1.5"]], ["flag", "value"]));
+    await db.queryKql("print flag = enabled, value = threshold", { enabled: { type: "bool", value: true }, threshold: { type: "real", value: 1.5 } });
+    expect(JSON.parse(fetch.mock.calls[1]?.[1]?.body as string).properties.Parameters).toEqual({ enabled: "bool(true)", threshold: "real(1.5)" });
     await expect(db.queryKql(".drop table Items")).rejects.toThrow("non-management");
   });
   it("supports bounded mapped collection queries and rejects semantic mismatches before transport", async () => {
     const { db, fetch } = database(); const items = collection<{ title: string }>("items"); fetch.mockResolvedValueOnce(result([["milk", "Buy"]]));
     await expect(db.query(items.query().limit(1).build())).resolves.toMatchObject({ records: [{ key: key("items", "milk"), data: { title: "Buy" } }] });
     await expect(db.query(items.query().where("title", "==", "Buy").build())).rejects.toThrow("filters");
-    expect(fetch).toHaveBeenCalledTimes(1);
+    fetch.mockResolvedValueOnce(result([["milk", "Buy"], ["eggs", "Buy"]]));
+    await expect(db.query(items.query().limit(1).build())).rejects.toThrow("continuation");
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
   it("redacts HTTP, token, malformed, and response completion failures", async () => {
     const { db, fetch } = database(); fetch.mockResolvedValueOnce(new Response("secret", { status: 500 })); await expect(db.get(key("items", "x"))).rejects.toEqual(new KustoHttpError(500));

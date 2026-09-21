@@ -17,7 +17,7 @@ A DALgo collection is explicitly mapped to one Kusto table; `keyColumn` maps a r
 | `insert`, `set`, `update`, `delete`, transactions | Rejected before network access. |
 | `queryKql` | Explicit read-only KQL escape hatch with declared typed request parameters and validated scalar primary table. |
 
-Generic DALgo filters, sort, offset, cursors, nesting, projections, aggregation, realtime, and streaming are rejected rather than guessed. Kusto ingestion/update/delete operations are management or specialized ingestion surfaces with different acknowledgement, retry, schema, and idempotency semantics; this package does not fake DALgo CRUD or transactions.
+Generic DALgo filters, sort, offset, cursors, nested/collection-group sources, projections, aggregation, realtime, and streaming are rejected rather than guessed. A collection query fetches one extra row; if continuation would be required, it rejects rather than silently truncating. Kusto ingestion/update/delete operations are management or specialized ingestion surfaces with different acknowledgement, retry, schema, and idempotency semantics; this package does not fake DALgo CRUD or transactions.
 
 ```ts
 import { collection } from "@dal-go/dalgo";
@@ -32,7 +32,7 @@ const db = new KustoDatabase({
 await db.query(collection<{ message: string }>("events").query().limit(20).build());
 ```
 
-Request deadlines cover token acquisition, transport, and bounded streamed body reading. Token/transport/redirect/timeout/malformed-response failures are redacted as `KustoRequestError`; provider error bodies are discarded and HTTP errors expose only status. Default deadline and response cap are 15 seconds and 1 MiB.
+KQL parameters are declared with `declare query_parameters`; REST `Parameters` uses raw values only for `string` and safe-integral `long`, and KQL literal strings (for example `bool(true)` and `real(1.5)`) for other scalar types. Request deadlines cover token acquisition, transport, and each bounded streamed body read. Token/transport/redirect/timeout/malformed-response failures are redacted as `KustoRequestError`; provider error bodies are discarded and HTTP errors expose only status. Default deadline and response cap are 15 seconds and 1 MiB.
 
 ## Official references
 
