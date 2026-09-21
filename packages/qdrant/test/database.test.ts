@@ -70,8 +70,8 @@ describe("QdrantDatabase", () => {
 
   it("writes payload documents with configured vectors and validates Qdrant mutation results", async () => {
     const fetch = vi.fn()
-      .mockResolvedValueOnce(json({ result: { status: "acknowledged" } }))
-      .mockResolvedValueOnce(json({ result: { status: "acknowledged" } }));
+      .mockResolvedValueOnce(json({ status: "ok", result: { status: "acknowledged" } }))
+      .mockResolvedValueOnce(json({ status: "ok", result: { status: "acknowledged" } }));
     const db = database(fetch);
     await db.set(key("products", 3), { price: 3 });
     await db.delete(key("products", 3));
@@ -173,6 +173,24 @@ describe("QdrantDatabase", () => {
     expect(error).toBeInstanceOf(QdrantRequestError);
     expect(String(error)).not.toContain("secret");
 
+    const synchronouslyFailingHeaders = new QdrantDatabase({
+      baseUrl: "https://qdrant.example",
+      headers: () => { throw new Error("synchronous header secret"); },
+      collections: { products: { collection: "products", vectorForWrite: () => [1] } },
+    });
+    const synchronousHeaderError = await synchronouslyFailingHeaders.get(key("products", productOne)).catch((caught: unknown) => caught);
+    expect(synchronousHeaderError).toBeInstanceOf(QdrantRequestError);
+    expect(String(synchronousHeaderError)).not.toContain("secret");
+
+    const synchronouslyFailingTransport = new QdrantDatabase({
+      baseUrl: "https://qdrant.example",
+      fetch: () => { throw new Error("synchronous transport secret"); },
+      collections: { products: { collection: "products", vectorForWrite: () => [1] } },
+    });
+    const synchronousTransportError = await synchronouslyFailingTransport.get(key("products", productOne)).catch((caught: unknown) => caught);
+    expect(synchronousTransportError).toBeInstanceOf(QdrantRequestError);
+    expect(String(synchronousTransportError)).not.toContain("secret");
+
     const failingBody = new QdrantDatabase({
       baseUrl: "https://qdrant.example",
       fetch: () => Promise.resolve(new Response(new ReadableStream({ start: (controller) => { controller.error(new Error("body secret")); } }))),
@@ -181,5 +199,10 @@ describe("QdrantDatabase", () => {
     const bodyError = await failingBody.get(key("products", productOne)).catch((caught: unknown) => caught);
     expect(bodyError).toBeInstanceOf(QdrantRequestError);
     expect(String(bodyError)).not.toContain("secret");
+  });
+
+  it("requires Qdrant top-level and mutation result success statuses", async () => {
+    const db = database(vi.fn().mockResolvedValue(json({ status: "error", result: { status: "acknowledged" } })));
+    await expect(db.set(key("products", 1), { price: 1 })).rejects.toThrow("mutation");
   });
 });

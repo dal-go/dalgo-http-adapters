@@ -163,6 +163,7 @@ function pointsFromRetrieve(value: unknown): readonly QdrantPoint[] {
 }
 
 function validateMutationResult(value: unknown): void {
+  if (!isObject(value) || value.status !== "ok") throw new TypeError("malformed Qdrant mutation response");
   const result = resultFrom(value, "mutation");
   if (!isObject(result) || (result.status !== "acknowledged" && result.status !== "completed")) {
     throw new TypeError("malformed Qdrant mutation result");
@@ -397,9 +398,9 @@ export class QdrantDatabase implements Database, WriteSession {
       controller.abort(timeoutError);
       rejectTimeout?.(timeoutError);
     }, this.#timeoutMs);
-    const stage = async <T>(operation: Promise<T> | T, name: string): Promise<T> => {
+    const stage = async <T>(operation: () => Promise<T> | T, name: string): Promise<T> => {
       try {
-        return await Promise.race([operation, deadline]);
+        return await Promise.race([Promise.resolve().then(operation), deadline]);
       } catch (error) {
         if (error === timeoutError) throw error;
         if (error instanceof RangeError) throw error;
@@ -415,16 +416,16 @@ export class QdrantDatabase implements Database, WriteSession {
           throw new RangeError(`Qdrant request body exceeds maxRequestBytes (${String(this.#maxRequestBytes)})`);
         }
       }
-      const configured = await stage(typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {}), "header provider");
+      const configured = await stage(() => typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {}), "header provider");
       validateHeaders(configured);
-      const response = await stage(this.#fetch(`${this.#baseUrl}${path}`, {
+      const response = await stage(() => this.#fetch(`${this.#baseUrl}${path}`, {
         method,
         redirect: "error",
         signal: controller.signal,
         headers: { ...configured, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) },
         ...(serialized === undefined ? {} : { body: serialized }),
       }), "transport");
-      const text = await stage(responseText(response, this.#maxResponseBytes), "response body");
+      const text = await stage(() => responseText(response, this.#maxResponseBytes), "response body");
       if (!response.ok && !acceptedStatuses.includes(response.status)) throw new QdrantHttpError(response.status);
       let parsed: unknown;
       try { parsed = text.length === 0 ? undefined : JSON.parse(text); } catch { parsed = text; }
