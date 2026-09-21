@@ -11,7 +11,7 @@ including apps that query an OpenVaultDB Firestore database directly.
 pnpm add @dalgo/core @dalgo/firestore firebase
 ```
 
-Both packages are published to npm as `@dalgo/core` and `@dalgo/firestore`.
+The adapter uses the separately published `@dalgo/core` contracts.
 
 ## Browser setup
 
