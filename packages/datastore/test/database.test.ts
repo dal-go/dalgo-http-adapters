@@ -86,6 +86,10 @@ describe("DatastoreDatabase", () => {
     expect((body(fetch, 1).query as { startCursor: string }).startCursor).toBe("next");
     await expect(db.query(items.query().orderBy("done").startAfter("next").build())).rejects.toBeInstanceOf(UnsupportedError);
     await expect(db.query(items.query().orderBy("done", "desc").limit(2).startAfter(...cursor.values).build())).rejects.toBeInstanceOf(UnsupportedError);
+    const other = database().database;
+    await expect(other.query(items.query().orderBy("done").limit(2).startAfter(...cursor.values).build())).rejects.toBeInstanceOf(UnsupportedError);
+    const token = cursor.values[0] as string;
+    await expect(db.query(items.query().orderBy("done").limit(2).startAfter(`${token}x`).build())).rejects.toBeInstanceOf(UnsupportedError);
     await expect(db.insert(key("items", "nested"), { values: [["not allowed"]] })).rejects.toThrow("nested arrays");
   });
 

@@ -80,10 +80,12 @@ this generic JSON mapping.
 - `set` sends a complete entity. `update` is deliberately rejected rather than
   accidentally replacing omitted fields: Datastore commit mode
   is `NON_TRANSACTIONAL`, so multi-request read-modify-write is not atomic.
-- Cursor continuation uses a validated adapter-generated opaque envelope around
-  the server cursor, bound to this adapter instance and its canonical kind,
-  namespace, filters, order, offset, and limit query shape. Raw, forged, and
-  cross-query DALgo cursor values are rejected before a request is sent.
+- Cursor continuation uses an adapter-instance registry keyed by a fresh 256-bit
+  random opaque token, bound to canonical kind, namespace, filters, order,
+  offset, and limit query shape. Raw, tampered, cross-instance, and cross-query
+  DALgo cursor values are rejected before a request is sent. The registry holds
+  at most 1,024 continuations and evicts the oldest; cursors are intentionally
+  process/instance-local and do not survive adapter recreation.
 - Datastore disallows arrays directly inside arrays; encoding rejects them. The
   adapter also rejects incompatible disjunctive filters, multiple inequality
   properties, missing first inequality order, and duplicate order properties

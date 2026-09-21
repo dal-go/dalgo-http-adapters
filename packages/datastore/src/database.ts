@@ -20,6 +20,7 @@ const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const DEFAULT_MAX_GET_MANY = 1_000;
 const DEFAULT_MAX_QUERY_LIMIT = 1_000;
+const DEFAULT_MAX_CURSOR_REGISTRY = 1_024;
 const CURSOR_PREFIX = "dalgo-datastore:v2:";
 
 export type DatastoreFetch = typeof globalThis.fetch;
@@ -204,17 +205,10 @@ function compileFilter(filter: QueryFilter<unknown>, collection: string): JsonOb
   return { propertyFilter: { property: { name: propertyName(filter.field) }, op: operation, value: filterValue(filter, collection) } };
 }
 
-function base64url(value: string): string {
-  const bytes = new TextEncoder().encode(value);
+function base64url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
-}
-
-function fromBase64url(value: string): string {
-  const base64 = value.replaceAll("-", "+").replaceAll("_", "/");
-  const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
-  return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
 }
 
 function canonicalJson(value: unknown): string {
@@ -224,31 +218,7 @@ function canonicalJson(value: unknown): string {
   return `{${Object.keys(value).sort().map((name) => `${JSON.stringify(name)}:${canonicalJson(value[name])}`).join(",")}}`;
 }
 
-function fingerprint(value: unknown, nonce: string): string {
-  let hash = 0x811c9dc5;
-  for (const character of `${nonce}\n${canonicalJson(value)}`) { hash ^= character.codePointAt(0) ?? 0; hash = Math.imul(hash, 0x01000193); }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function opaqueCursor(raw: string, queryShape: unknown, secret: string): string {
-  if (raw.length === 0) throw new DatastoreRequestError();
-  return `${CURSOR_PREFIX}${base64url(JSON.stringify({ f: fingerprint({ queryShape, raw }, secret), c: raw }))}`;
-}
-
-function rawCursor(cursor: import("@dal-go/dalgo").QueryCursor, queryShape: unknown, secret: string): string {
-  if (cursor.values.length !== 1 || typeof cursor.values[0] !== "string" || !cursor.values[0].startsWith(CURSOR_PREFIX)) {
-    throw new UnsupportedError("Datastore cursors other than adapter-generated opaque cursors");
-  }
-  const encoded = cursor.values[0].slice(CURSOR_PREFIX.length);
-  if (!/^[A-Za-z0-9_-]+$/u.test(encoded)) throw new UnsupportedError("Datastore malformed opaque cursor");
-  try {
-    const envelope: unknown = JSON.parse(fromBase64url(encoded));
-    if (!object(envelope) || typeof envelope.f !== "string" || typeof envelope.c !== "string" || opaqueCursor(envelope.c, queryShape, secret) !== cursor.values[0]) throw new Error("invalid cursor envelope");
-    return envelope.c;
-  } catch {
-    throw new UnsupportedError("Datastore malformed opaque cursor");
-  }
-}
+interface RegisteredCursor { readonly raw: string; readonly queryShape: string; }
 
 function validateQuery<T>(query: StructuredQuery<T>): void {
   const operators = query.filters.map((filter) => filter.operator);
@@ -287,7 +257,7 @@ export class DatastoreDatabase implements Database, WriteSession {
   readonly #projectId: string; readonly #databaseId: string; readonly #namespaceId: string | undefined;
   readonly #accessToken: DatastoreAccessTokenProvider; readonly #fetch: DatastoreFetch; readonly #baseUrl: string;
   readonly #timeoutMs: number; readonly #maxRequestBytes: number; readonly #maxResponseBytes: number; readonly #maxGetMany: number; readonly #maxQueryLimit: number;
-  readonly #cursorSecret: string;
+  readonly #cursorRegistry = new Map<string, RegisteredCursor>();
 
   public constructor(options: DatastoreDatabaseOptions) {
     this.#projectId = identifier(options.projectId, "project ID"); this.#databaseId = identifier(options.databaseId ?? "(default)", "database ID");
@@ -299,7 +269,6 @@ export class DatastoreDatabase implements Database, WriteSession {
     this.#fetch = options.fetch ?? globalThis.fetch; this.#timeoutMs = positive(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs", 120_000);
     this.#maxRequestBytes = positive(options.maxRequestBytes, DEFAULT_MAX_REQUEST_BYTES, "maxRequestBytes"); this.#maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
     this.#maxGetMany = positive(options.maxGetManyKeys, DEFAULT_MAX_GET_MANY, "maxGetManyKeys", 1_000); this.#maxQueryLimit = positive(options.maxQueryLimit, DEFAULT_MAX_QUERY_LIMIT, "maxQueryLimit", 1_000);
-    const secret = new Uint32Array(4); crypto.getRandomValues(secret); this.#cursorSecret = Array.from(secret, (part) => part.toString(16).padStart(8, "0")).join("");
   }
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> { return (await this.getMany([key], codec))[0] as RecordSnapshot<T>; }
@@ -332,12 +301,12 @@ export class DatastoreDatabase implements Database, WriteSession {
     const allFilters = parent === undefined ? filters : [{ propertyFilter: { property: { name: "__key__" }, op: "HAS_ANCESTOR", value: { keyValue: parent } } }, ...filters];
     const wireQuery: JsonObject = { kind: [{ name: collection }], limit, ...(allFilters.length === 0 ? {} : { filter: allFilters.length === 1 ? allFilters[0] : { compositeFilter: { op: "AND", filters: allFilters } } }), ...(query.orders.length === 0 ? {} : { order: query.orders.map((order) => { if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("Datastore query order direction"); return { property: { name: propertyName(order.field) }, direction: order.direction === "asc" ? "ASCENDING" : "DESCENDING" }; }) }), ...(query.offset === undefined ? {} : { offset: query.offset }) };
     const queryShape = { projectId: this.#projectId, databaseId: this.requestDatabaseId(), namespaceId: this.#namespaceId ?? "", query: wireQuery };
-    const body: JsonObject = { databaseId: this.requestDatabaseId(), partitionId: { ...(this.#namespaceId === undefined ? {} : { namespaceId: this.#namespaceId }) }, query: { ...wireQuery, ...(query.startAfter === undefined ? {} : { startCursor: rawCursor(query.startAfter, queryShape, this.#cursorSecret) }) } };
+    const body: JsonObject = { databaseId: this.requestDatabaseId(), partitionId: { ...(this.#namespaceId === undefined ? {} : { namespaceId: this.#namespaceId }) }, query: { ...wireQuery, ...(query.startAfter === undefined ? {} : { startCursor: this.loadCursor(query.startAfter, queryShape) }) } };
     const response = await this.call("runQuery", body); if (!object(response) || !object(response.batch)) throw new DatastoreRequestError(); const batch = response.batch;
     if (!Array.isArray(batch.entityResults) || typeof batch.moreResults !== "string" || !new Set(["NOT_FINISHED", "MORE_RESULTS_AFTER_LIMIT", "MORE_RESULTS_AFTER_CURSOR", "NO_MORE_RESULTS", "MORE_RESULTS_TYPE_UNSPECIFIED"]).has(batch.moreResults)) throw new DatastoreRequestError();
     if (batch.entityResults.length > limit || (batch.moreResults !== "NO_MORE_RESULTS" && (batch.moreResults === "MORE_RESULTS_TYPE_UNSPECIFIED" || typeof batch.endCursor !== "string" || batch.endCursor.length === 0))) throw new DatastoreRequestError();
     const records = batch.entityResults.map((item) => { const entity = this.entityFromResult(item); const key = this.keyFromPath(this.pathFromWire(entity.key)); return this.snapshot(key, entity, query.source.codec); });
-    return { records, ...(batch.moreResults === "NO_MORE_RESULTS" ? {} : { nextCursor: { values: [opaqueCursor(batch.endCursor as string, queryShape, this.#cursorSecret)] } }) };
+    return { records, ...(batch.moreResults === "NO_MORE_RESULTS" ? {} : { nextCursor: { values: [this.saveCursor(batch.endCursor as string, queryShape)] } }) };
   }
 
   public async runReadwriteTransaction<Result>(callback: (transaction: import("@dal-go/dalgo").ReadwriteTransaction) => Promise<Result>): Promise<Result> { void callback; throw new UnsupportedError("Datastore callback transactions"); }
@@ -345,6 +314,26 @@ export class DatastoreDatabase implements Database, WriteSession {
   private wireKey(path: readonly JsonObject[]): DatastoreKey { return { partitionId: { projectId: this.#projectId, databaseId: this.#databaseId, ...(this.#namespaceId === undefined ? {} : { namespaceId: this.#namespaceId }) }, path }; }
   private entity<T>(key: Key, data: T, codec?: Codec<T>): JsonObject { const encoded = codecOrIdentity(codec).encode(data); if (!plainObject(encoded)) throw new TypeError("Datastore DALgo records must encode to a plain object"); const properties: JsonObject = {}; for (const [name, value] of Object.entries(encoded)) properties[identifier(name, "property name")] = dataValue(value); return { key: this.wireKey(pathFor(key)), properties }; }
   private requestDatabaseId(): string { return this.#databaseId === "(default)" ? "" : this.#databaseId; }
+  private saveCursor(raw: string, queryShape: unknown): string {
+    if (raw.length === 0) throw new DatastoreRequestError();
+    const shape = canonicalJson(queryShape);
+    const bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
+    const token = base64url(bytes);
+    if (this.#cursorRegistry.size >= DEFAULT_MAX_CURSOR_REGISTRY) {
+      const oldest = this.#cursorRegistry.keys().next().value;
+      if (oldest !== undefined) this.#cursorRegistry.delete(oldest);
+    }
+    this.#cursorRegistry.set(token, { raw, queryShape: shape });
+    return `${CURSOR_PREFIX}${token}`;
+  }
+  private loadCursor(cursor: import("@dal-go/dalgo").QueryCursor, queryShape: unknown): string {
+    if (cursor.values.length !== 1 || typeof cursor.values[0] !== "string" || !cursor.values[0].startsWith(CURSOR_PREFIX)) throw new UnsupportedError("Datastore cursors other than adapter-generated opaque cursors");
+    const token = cursor.values[0].slice(CURSOR_PREFIX.length);
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(token)) throw new UnsupportedError("Datastore malformed opaque cursor");
+    const registered = this.#cursorRegistry.get(token);
+    if (registered === undefined || registered.queryShape !== canonicalJson(queryShape)) throw new UnsupportedError("Datastore cursor does not belong to this query");
+    return registered.raw;
+  }
   private async commit(mutation: JsonObject): Promise<void> { const response = await this.call("commit", { databaseId: this.requestDatabaseId(), mode: "NON_TRANSACTIONAL", mutations: [mutation] }); if (!object(response) || !Array.isArray(response.mutationResults) || response.mutationResults.length !== 1) throw new DatastoreRequestError(); }
   private entityFromResult(value: unknown): JsonObject { if (!object(value) || !object(value.entity) || !object(value.entity.key) || !object(value.entity.properties)) throw new DatastoreRequestError(); return value.entity; }
   private pathFromWire(value: unknown): readonly JsonObject[] { if (!object(value) || !Array.isArray(value.path) || value.path.length === 0 || !value.path.every(object)) throw new DatastoreRequestError(); return value.path; }
