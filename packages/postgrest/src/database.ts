@@ -177,10 +177,18 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+function cancelBody(body: ReadableStream<Uint8Array> | null): void {
+  void body?.cancel().catch(() => undefined);
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  void reader.cancel().catch(() => undefined);
+}
+
 async function readJson(response: Response, maximum: number, signal: AbortSignal): Promise<unknown> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) > maximum)) {
-    await response.body?.cancel();
+    cancelBody(response.body);
     throw new RangeError("PostgREST response exceeds maxResponseBytes");
   }
   if (response.body === null) return undefined;
@@ -193,14 +201,18 @@ async function readJson(response: Response, maximum: number, signal: AbortSignal
       if (item.done) break;
       total += item.value.byteLength;
       if (total > maximum) {
-        await reader.cancel();
+        cancelReader(reader);
         throw new RangeError("PostgREST response exceeds maxResponseBytes");
       }
       chunks.push(item.value);
     }
   } finally {
-    if (signal.aborted) await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+    if (signal.aborted) cancelReader(reader);
+    try {
+      reader.releaseLock();
+    } catch {
+      // An implementation may retain an in-flight read after cancellation.
+    }
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -359,7 +371,7 @@ export class PostgrestDatabase implements Database, WriteSession {
   }
 
   private readonly discard = async (response: Response): Promise<void> => {
-    await response.body?.cancel().catch(() => undefined);
+    cancelBody(response.body);
   };
 
   private async request<T>(
@@ -386,7 +398,7 @@ export class PostgrestDatabase implements Database, WriteSession {
         signal: controller.signal,
       }), controller.signal);
       if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined);
+        cancelBody(response.body);
         throw new PostgrestHttpError(response.status);
       }
       return await consume(response, controller.signal);

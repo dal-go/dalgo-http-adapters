@@ -7,6 +7,13 @@ function response(status: number, body?: unknown, headers: Record<string, string
   return new Response(body === undefined ? undefined : JSON.stringify(body), { status, headers });
 }
 
+function neverSettlingStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    pull: () => new Promise<void>(() => undefined),
+    cancel: () => new Promise<void>(() => undefined),
+  });
+}
+
 function database(options: Partial<ConstructorParameters<typeof PostgrestDatabase>[0]> = {}) {
   const fetch = vi.fn<typeof globalThis.fetch>();
   const headers = vi.fn(() => ({ authorization: "Bearer opaque" }));
@@ -145,5 +152,21 @@ describe("PostgrestDatabase", () => {
       timeoutMs: 1,
     });
     await expect(hangingHeaders.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
+  });
+
+  it("does not await a never-settling cancellation or body read", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(new Response(neverSettlingStream(), { status: 201 }));
+    await expect(db.insert(key("items", "milk"), { done: false })).resolves.toBeUndefined();
+
+    fetch.mockResolvedValueOnce(new Response(neverSettlingStream(), { status: 500 }));
+    await expect(db.get(key("items", "milk"))).rejects.toEqual(new PostgrestHttpError(500));
+
+    const timeout = new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      fetch: vi.fn().mockResolvedValue(new Response(neverSettlingStream(), { status: 200 })),
+      timeoutMs: 1,
+    });
+    await expect(timeout.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
   });
 });

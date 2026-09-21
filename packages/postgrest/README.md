@@ -92,7 +92,8 @@ top-level DALgo keys from its value.
   and JSON failures become a generic `PostgrestRequestError`, never their
   original text. Inserts request `return=minimal` and cancel any unexpected
   response body; keyed writes read a bounded representation to prove their
-  cardinality. JSON request/response bodies are limited to 1 MiB by
+  cardinality. Cancellation is best-effort and never awaited, so a hostile or
+  broken stream cannot outlive the request deadline. JSON request/response bodies are limited to 1 MiB by
   default, `getMany` to 100 keys and 8 concurrent requests, queries to 100
   rows, and one end-to-end request deadline of 15 seconds (all configurable within hard caps).
 - The HTTP-contract tests inject `fetch`; they do not exercise a live
