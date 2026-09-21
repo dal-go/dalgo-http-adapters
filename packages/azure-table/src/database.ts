@@ -66,6 +66,8 @@ interface AzureCursor {
   readonly endpoint: string;
   readonly table: string;
   readonly partition: string;
+  /** Exact canonical filter and $top used to obtain this service continuation. */
+  readonly queryShape: string;
   readonly nextPartitionKey: string;
   readonly nextRowKey?: string;
 }
@@ -223,7 +225,7 @@ export class AzureTableDatabase implements Database {
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
     const { tableName, partitionKey } = this.mapping(key);
-    try { return this.record(await this.request(this.entityUrl(tableName, partitionKey, key.id), "GET"), key, codec); }
+    try { return this.record(await this.request(this.entityUrl(tableName, partitionKey, key.id), "GET"), key, codec, undefined, partitionKey); }
     catch (error) { if (error instanceof AzureTableHttpError && error.status === 404) return { key, exists: false }; throw error; }
   }
 
@@ -270,19 +272,20 @@ export class AzureTableDatabase implements Database {
     if (query.source.kind !== "collection" || query.source.parent !== undefined) throw new UnsupportedError("Azure Table collection-group or nested-collection queries");
     if (query.orders.length > 0 || query.offset !== undefined || query.startAt !== undefined || query.endAt !== undefined || query.endBefore !== undefined) throw new UnsupportedError("Azure Table DALgo ordering, offsets, or inclusive/end cursors");
     const tableName = table(this.#options.tableName(query.source.name)); const partitionKey = partition(this.#options.partitionKey(query.source.name));
-    const cursor = this.cursor(query.startAfter, tableName, partitionKey);
     const limit = query.limit ?? this.#options.maxQueryLimit;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#options.maxQueryLimit) throw new UnsupportedError(`Azure Table query limit above ${String(this.#options.maxQueryLimit)}`);
     if (query.filters.length > 14) throw new UnsupportedError("Azure Table queries with more than 15 comparisons");
     const url = this.tableUrl(tableName);
     const clauses = [`PartitionKey eq ${odataString(partitionKey)}`, ...query.filters.map(filter)];
+    const queryShape = JSON.stringify({ filter: clauses, top: limit });
+    const cursor = this.cursor(query.startAfter, tableName, partitionKey, queryShape);
     url.searchParams.set("$filter", clauses.join(" and ")); url.searchParams.set("$top", String(limit));
     if (cursor !== undefined) { url.searchParams.set("NextPartitionKey", cursor.nextPartitionKey); if (cursor.nextRowKey !== undefined) url.searchParams.set("NextRowKey", cursor.nextRowKey); }
     const result = await this.request(url, "GET");
     if (!isPlainObject(result.body) || !Array.isArray(result.body.value) || !result.body.value.every(isPlainObject)) throw new TypeError("Azure Table query response must contain a value array of entity objects");
-    const records = result.body.value.map((item) => this.record({ body: item, headers: result.headers }, undefined, query.source.codec, query.source.name));
+    const records = result.body.value.map((item) => this.record({ body: item, headers: result.headers }, undefined, query.source.codec, query.source.name, partitionKey));
     const nextPartitionKey = result.headers.get("x-ms-continuation-NextPartitionKey"); const nextRowKey = result.headers.get("x-ms-continuation-NextRowKey");
-    const nextCursor = nextPartitionKey === null || nextPartitionKey.length === 0 ? undefined : { values: [{ adapter: "@dal-go/dalgo2azure-table", version: 1, endpoint: this.#options.endpoint, table: tableName, partition: partitionKey, nextPartitionKey, ...(nextRowKey === null || nextRowKey.length === 0 ? {} : { nextRowKey }) } satisfies AzureCursor] };
+    const nextCursor = nextPartitionKey === null || nextPartitionKey.length === 0 ? undefined : { values: [{ adapter: "@dal-go/dalgo2azure-table", version: 1, endpoint: this.#options.endpoint, table: tableName, partition: partitionKey, queryShape, nextPartitionKey, ...(nextRowKey === null || nextRowKey.length === 0 ? {} : { nextRowKey }) } satisfies AzureCursor] };
     return nextCursor === undefined ? { records } : { records, nextCursor };
   }
 
@@ -295,15 +298,16 @@ export class AzureTableDatabase implements Database {
   private tableUrl(tableName: string): URL { return new URL(encodeURIComponent(tableName), this.#options.endpoint); }
   private entityUrl(tableName: string, partitionKey: string, id: string | number): URL { keyId(id); return new URL(`${encodeURIComponent(tableName)}(PartitionKey=${encodeURIComponent(odataString(partitionKey))},RowKey=${encodeURIComponent(odataString(rowKey(id)))})`, this.#options.endpoint); }
   private async conditional(key: Key, method: string, body: unknown, etag: string): Promise<void> { if (etag.length === 0 || /[\r\n]/u.test(etag)) throw new TypeError("ETag must be a non-empty CR/LF-safe string"); const mapping = this.mapping(key); await this.request(this.entityUrl(mapping.tableName, mapping.partitionKey, key.id), method, body, { "if-match": etag }); }
-  private cursor(cursor: QueryCursor | undefined, tableName: string, partitionKey: string): AzureCursor | undefined {
+  private cursor(cursor: QueryCursor | undefined, tableName: string, partitionKey: string, queryShape: string): AzureCursor | undefined {
     if (cursor === undefined) return undefined;
     if (cursor.values.length !== 1 || !isPlainObject(cursor.values[0])) throw new TypeError("Azure Table startAfter must be a cursor returned by this adapter");
     const value = cursor.values[0];
-    if (value.adapter !== "@dal-go/dalgo2azure-table" || value.version !== 1 || value.endpoint !== this.#options.endpoint || value.table !== tableName || value.partition !== partitionKey || typeof value.nextPartitionKey !== "string" || value.nextPartitionKey.length === 0 || (value.nextRowKey !== undefined && typeof value.nextRowKey !== "string")) throw new TypeError("Azure Table startAfter does not belong to this endpoint, table, and partition");
+    if (value.adapter !== "@dal-go/dalgo2azure-table" || value.version !== 1 || value.endpoint !== this.#options.endpoint || value.table !== tableName || value.partition !== partitionKey || value.queryShape !== queryShape || typeof value.nextPartitionKey !== "string" || value.nextPartitionKey.length === 0 || (value.nextRowKey !== undefined && typeof value.nextRowKey !== "string")) throw new TypeError("Azure Table startAfter does not belong to this exact endpoint, table, partition, and query");
     return value as unknown as AzureCursor;
   }
-  private record<T>(response: { body: unknown; headers: Headers }, requestedKey: Key | undefined, codec?: Codec<T>, collection?: string): ExistingRecord<T> {
+  private record<T>(response: { body: unknown; headers: Headers }, requestedKey: Key | undefined, codec?: Codec<T>, collection?: string, expectedPartition?: string): ExistingRecord<T> {
     if (!isPlainObject(response.body) || typeof response.body.PartitionKey !== "string" || typeof response.body.RowKey !== "string") throw new TypeError("Azure Table response must be an entity with PartitionKey and RowKey");
+    if (expectedPartition !== undefined && response.body.PartitionKey !== expectedPartition) throw new TypeError("Azure Table response PartitionKey does not match the configured mapping");
     let key: Key;
     if (requestedKey !== undefined) { if (response.body.RowKey !== rowKey(requestedKey.id)) throw new TypeError("Azure Table response does not match requested DALgo key"); key = requestedKey; }
     else { if (collection === undefined) throw new Error("Azure Table query record collection is required"); const id = decodeRowKey(response.body.RowKey); key = new Key(collection, id); }

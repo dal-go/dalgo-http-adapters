@@ -56,8 +56,11 @@ describe("AzureTableDatabase", () => {
     expect(page.records).toEqual([{ key: key("items", "a"), exists: true, data: { done: false, rank: 2 }, metadata: {} }]);
     expect(fetch.mock.calls[0]?.[0]).toContain("%24filter=PartitionKey+eq+%27items%27+and+done+eq+false+and+rank+gt+1");
     fetch.mockResolvedValueOnce(response(200, { value: [] }));
-    await database.query(items.query().startAfter(...(page.nextCursor?.values ?? [])).build());
+    await database.query(items.query().where("done", "==", false).where("rank", ">", 1).limit(10).startAfter(...(page.nextCursor?.values ?? [])).build());
     expect(fetch.mock.calls[1]?.[0]).toContain("NextPartitionKey=opaque-p"); expect(fetch.mock.calls[1]?.[0]).toContain("NextRowKey=opaque-r");
+    await expect(database.query(items.query().where("done", "==", true).startAfter(...(page.nextCursor?.values ?? [])).build())).rejects.toThrow("exact endpoint, table, partition, and query");
+    await expect(database.query(items.query().limit(9).startAfter(...(page.nextCursor?.values ?? [])).build())).rejects.toThrow("exact endpoint, table, partition, and query");
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("supports document-id equality with the adapter RowKey encoding and rejects dishonest query semantics", async () => {
@@ -91,5 +94,14 @@ describe("AzureTableDatabase", () => {
     await expect(database.runReadwriteTransaction(() => Promise.resolve("no"))).rejects.toBeInstanceOf(UnsupportedError);
     await expect(database.get(new Key("children", "x", key("parents", "p")))).rejects.toBeInstanceOf(UnsupportedError);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects point reads and query entities outside their configured physical partition", async () => {
+    const { database, fetch } = setup();
+    fetch.mockResolvedValueOnce(response(200, { PartitionKey: "wrong", RowKey: "ImEi", done: false }));
+    await expect(database.get(key("items", "a"))).rejects.toThrow("PartitionKey does not match");
+    const items = collection<{ done: boolean }>("items");
+    fetch.mockResolvedValueOnce(response(200, { value: [{ PartitionKey: "wrong", RowKey: "ImEi", done: false }] }));
+    await expect(database.query(items.query().build())).rejects.toThrow("PartitionKey does not match");
   });
 });

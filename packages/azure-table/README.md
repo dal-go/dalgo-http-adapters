@@ -7,7 +7,11 @@ management API.
 ## Browser and credential boundary
 
 This is **HTTP-capable**, not intrinsically browser-ready. Browser use requires
-an Azure Storage CORS rule for the exact application origin and a trusted,
+an Azure Storage CORS rule for the exact application origin. That rule must
+allow `GET`, `POST`, `PUT`, `MERGE`, and `DELETE`; request headers
+`Authorization`, `x-ms-date`, `x-ms-version`, `If-Match`, and `Content-Type`;
+and expose `x-ms-continuation-NextPartitionKey` and
+`x-ms-continuation-NextRowKey`. Browser use also requires a trusted,
 authenticated broker that supplies a short-lived, least-privilege OAuth bearer
 token (or a same-origin proxy that holds any SAS). The adapter accepts only a
 per-request `authorization` header provider: it intentionally does not accept
