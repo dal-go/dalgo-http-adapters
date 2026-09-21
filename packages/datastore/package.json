@@ -1,0 +1,18 @@
+{
+  "name": "@dal-go/dalgo2datastore",
+  "version": "0.1.0",
+  "description": "Google Cloud Datastore v1 REST adapter for DALgo TypeScript",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "sideEffects": false,
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "LICENSE", "README.md"],
+  "scripts": { "build": "tsc -p tsconfig.build.json", "check": "eslint . && vitest run && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json", "lint": "eslint .", "prepack": "npm run build", "test": "vitest run" },
+  "repository": { "type": "git", "url": "git+https://github.com/dal-go/dalgo-http-adapters.git", "directory": "packages/datastore" },
+  "bugs": { "url": "https://github.com/dal-go/dalgo-http-adapters/issues" },
+  "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/datastore#readme",
+  "license": "MIT",
+  "engines": { "node": ">=24" },
+  "peerDependencies": { "@dal-go/dalgo": "^0.1.0" },
+  "devDependencies": { "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d", "@eslint/js": "10.0.1", "eslint": "10.11.0", "typescript": "6.0.3", "typescript-eslint": "8.70.0", "vitest": "5.0.1" }
+}
