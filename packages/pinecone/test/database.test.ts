@@ -29,7 +29,7 @@ describe("PineconeDatabase", () => {
     ]);
     expect(JSON.parse(calls[0]?.[1].body as string)).toEqual({ vectors: [{ id: "one", values: [1, 2], metadata: { title: "One", price: 1 } }], namespace: "tenant-a" });
     expect(JSON.parse(calls[1]?.[1].body as string)).toEqual({ ids: ["one"], namespace: "tenant-a" });
-    expect(calls[0]?.[1].headers).toMatchObject({ "Api-Key": "secret", "X-Pinecone-Api-Version": "2025-10", accept: "application/json" });
+    expect(calls[0]?.[1].headers).toMatchObject({ "Api-Key": "secret", "X-Pinecone-Api-Version": "2026-07", accept: "application/json" });
   });
 
   it("isolates collections in distinct namespaces for reads, writes, deletes, and vector search", async () => {
@@ -86,7 +86,10 @@ describe("PineconeDatabase", () => {
     await expect(malformed.get(products.key("one"))).rejects.toBeInstanceOf(UnsupportedError);
     const limited = new PineconeDatabase({ baseUrl: "https://index.example", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1] } }, maxRequestBytes: 8 });
     await expect(limited.set(products.key("one"), { title: "a long title", price: 1 })).rejects.toThrow("maxRequestBytes");
-    await expect(database(vi.fn()).get(products.key("café"))).rejects.toThrow("printable ASCII");
+    await expect(database(vi.fn()).get(products.key("café"))).rejects.toThrow("U+0001-U+007F");
+    const idWithSpaceAndDel = `part one${String.fromCharCode(127)}`;
+    const validId = database(vi.fn().mockResolvedValue(json({ vectors: {} })));
+    await expect(validId.get(products.key(idWithSpaceAndDel))).resolves.toEqual({ key: products.key(idWithSpaceAndDel), exists: false });
   });
 
   it("requires exactly one safe upsert receipt for one-record set", async () => {

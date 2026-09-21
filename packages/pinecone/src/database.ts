@@ -19,7 +19,7 @@ const DEFAULT_MAX_QUERY_LIMIT = 1_000;
 const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const DEFAULT_TIMEOUT_MS = 30_000;
-const PINECONE_API_VERSION = "2025-10";
+const PINECONE_API_VERSION = "2026-07";
 
 export type PineconeFetch = typeof globalThis.fetch;
 export type PineconeHeaders = Readonly<Record<string, string>>;

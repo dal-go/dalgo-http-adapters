@@ -74,7 +74,15 @@ export function compilePineconeVectorQuery<T>(query: StructuredQuery<T>, maximum
 }
 
 export function validatePineconeId(value: unknown): asserts value is string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 512 || !/^[!-~]+$/u.test(value)) {
-    throw new TypeError("Pinecone vector IDs must be non-empty printable ASCII strings up to 512 characters with no spaces or control characters");
+  if (typeof value !== "string" || value.length === 0 || value.length > 512 || !hasPineconeIdCharacters(value)) {
+    throw new TypeError("Pinecone vector IDs must be strings of 1-512 ASCII characters in the U+0001-U+007F range");
   }
+}
+
+function hasPineconeIdCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 1 || code > 127) return false;
+  }
+  return true;
 }
