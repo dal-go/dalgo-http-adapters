@@ -19,20 +19,26 @@ const DEFAULT_MAX_QUERY_LIMIT = 1_000;
 const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const PINECONE_API_VERSION = "2025-10";
 
 export type PineconeFetch = typeof globalThis.fetch;
 export type PineconeHeaders = Readonly<Record<string, string>>;
 export type PineconeVector = readonly number[];
 
+/** Maps each DALgo collection to an isolated namespace and dense-vector producer. */
+export interface PineconeCollectionMapping {
+  readonly namespace: string;
+  readonly vectorForWrite: (metadata: Readonly<Record<string, unknown>>, key: Key) => PineconeVector;
+}
+
 export interface PineconeDatabaseOptions {
   /** The unique host for an index, for example https://index-abc.svc.us-east-1-aws.pinecone.io. */
   readonly baseUrl: string;
-  /** Produces the dense vector Pinecone requires when DALgo metadata is upserted. */
-  readonly vectorForWrite: (metadata: Readonly<Record<string, unknown>>, key: Key) => PineconeVector;
+  /** Every usable DALgo collection must map to an isolated Pinecone namespace. */
+  readonly collections: Readonly<Record<string, PineconeCollectionMapping>>;
   /** Re-evaluated per request; inject Api-Key only in a trusted environment. */
   readonly headers?: PineconeHeaders | (() => PineconeHeaders | Promise<PineconeHeaders>);
   readonly fetch?: PineconeFetch;
-  readonly namespace?: string;
   readonly timeoutMs?: number;
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
@@ -129,10 +135,9 @@ function cancel(body: ReadableStream<Uint8Array> | null): void { void body?.canc
 
 export class PineconeDatabase implements Database, WriteSession {
   readonly #baseUrl: string;
-  readonly #vectorForWrite: PineconeDatabaseOptions["vectorForWrite"];
+  readonly #collections: Readonly<Record<string, PineconeCollectionMapping>>;
   readonly #headers: PineconeDatabaseOptions["headers"];
   readonly #fetch: PineconeFetch;
-  readonly #namespace: string | undefined;
   readonly #timeoutMs: number;
   readonly #maxRequestBytes: number;
   readonly #maxResponseBytes: number;
@@ -144,12 +149,20 @@ export class PineconeDatabase implements Database, WriteSession {
     const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
     if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new TypeError("baseUrl must use HTTPS, except for loopback development");
     if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) throw new TypeError("baseUrl must not contain credentials, a query, or a fragment");
-    if (typeof options.vectorForWrite !== "function") throw new TypeError("vectorForWrite is required because Pinecone upsert requires a vector");
+    if (!isObject(options.collections)) throw new TypeError("collections must be an explicit Pinecone collection mapping");
+    const namespaces = new Set<string>();
+    for (const [collection, mapping] of Object.entries(options.collections)) {
+      if (collection.length === 0 || hasControlCharacter(collection) || !isObject(mapping) || typeof mapping.namespace !== "string" || typeof mapping.vectorForWrite !== "function") {
+        throw new TypeError("each Pinecone collection mapping requires a control-character-free namespace and vectorForWrite");
+      }
+      const mappedNamespace = namespace(mapping.namespace);
+      if (mappedNamespace === undefined || namespaces.has(mappedNamespace)) throw new TypeError("each Pinecone collection must use a distinct namespace");
+      namespaces.add(mappedNamespace);
+    }
     this.#baseUrl = url.toString().replace(/\/+$/u, "");
-    this.#vectorForWrite = options.vectorForWrite;
+    this.#collections = Object.fromEntries(Object.entries(options.collections).map(([collection, mapping]) => [collection, { ...mapping }]));
     this.#headers = options.headers;
     this.#fetch = options.fetch ?? globalThis.fetch;
-    this.#namespace = namespace(options.namespace);
     this.#timeoutMs = positive(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs");
     this.#maxRequestBytes = positive(options.maxRequestBytes, DEFAULT_MAX_REQUEST_BYTES, "maxRequestBytes");
     this.#maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
@@ -159,7 +172,7 @@ export class PineconeDatabase implements Database, WriteSession {
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
     const id = this.keyId(key);
-    const result = await this.fetchVectors([id]);
+    const result = await this.fetchVectors([id], this.mappingForKey(key));
     const record = result.get(id);
     return record === undefined ? { key, exists: false } : this.snapshot(key, record, codec);
   }
@@ -167,9 +180,15 @@ export class PineconeDatabase implements Database, WriteSession {
   public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
     if (keys.length === 0) return [];
     if (keys.length > this.#maxGetManyKeys) throw new RangeError(`Pinecone getMany accepts at most ${String(this.#maxGetManyKeys)} keys`);
-    const keyIds = keys.map((key) => this.keyId(key));
+    const first = keys[0];
+    if (first === undefined) throw new TypeError("Pinecone key is required");
+    const mapping = this.mappingForKey(first);
+    const keyIds = keys.map((key) => {
+      if (this.mappingForKey(key).namespace !== mapping.namespace) throw new UnsupportedError("Pinecone getMany across collection namespaces");
+      return this.keyId(key);
+    });
     const distinct = [...new Set(keyIds)];
-    const records = await this.fetchVectors(distinct);
+    const records = await this.fetchVectors(distinct, mapping);
     return keys.map((key, index) => {
       const id = keyIds[index];
       if (id === undefined) throw new TypeError("Pinecone key is required");
@@ -186,7 +205,8 @@ export class PineconeDatabase implements Database, WriteSession {
 
   public async vectorSearch<T>(query: StructuredQuery<T>, vector: PineconeVector): Promise<QueryPage<T>> {
     const compiled = compilePineconeVectorQuery(query, this.#maxQueryLimit);
-    const body = { vector: vectorForRequest(vector), topK: compiled.topK, includeValues: false, includeMetadata: true, ...this.namespaceBody(), ...(compiled.filter === undefined ? {} : { filter: compiled.filter }) };
+    const mapping = this.mappingForCollection(query.source.name);
+    const body = { vector: vectorForRequest(vector), topK: compiled.topK, includeValues: false, includeMetadata: true, namespace: mapping.namespace, ...(compiled.filter === undefined ? {} : { filter: compiled.filter }) };
     const response = await this.request("POST", "/query", body);
     if (!isObject(response.body) || !Array.isArray(response.body.matches)) throw new TypeError("malformed Pinecone query response");
     if (response.body.matches.length > compiled.topK) throw new TypeError("Pinecone query response contains more matches than requested");
@@ -201,10 +221,11 @@ export class PineconeDatabase implements Database, WriteSession {
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const id = this.keyId(key);
     const metadata = encodedMetadata(data, codecOrIdentity(codec));
-    const values = vectorForRequest(this.#vectorForWrite(metadata, key));
-    const response = await this.request("POST", "/vectors/upsert", { vectors: [{ id, values, metadata }], ...this.namespaceBody() });
+    const mapping = this.mappingForKey(key);
+    const values = vectorForRequest(mapping.vectorForWrite(metadata, key));
+    const response = await this.request("POST", "/vectors/upsert", { vectors: [{ id, values, metadata }], namespace: mapping.namespace });
     const upsertedCount = isObject(response.body) ? response.body.upsertedCount : undefined;
-    if (response.body !== undefined && (!isObject(response.body) || (upsertedCount !== undefined && (typeof upsertedCount !== "number" || !Number.isSafeInteger(upsertedCount) || upsertedCount < 0)))) {
+    if (!isObject(response.body) || typeof upsertedCount !== "number" || !Number.isSafeInteger(upsertedCount) || upsertedCount !== 1) {
       throw new TypeError("malformed Pinecone upsert response");
     }
   }
@@ -212,7 +233,7 @@ export class PineconeDatabase implements Database, WriteSession {
   public update(...arguments_: [key: Key, data: UpdateData]): Promise<void> { return this.unsupported("Pinecone atomic update", arguments_); }
 
   public async delete(key: Key): Promise<void> {
-    await this.request("POST", "/vectors/delete", { ids: [this.keyId(key)], ...this.namespaceBody() });
+    await this.request("POST", "/vectors/delete", { ids: [this.keyId(key)], namespace: this.mappingForKey(key).namespace });
   }
 
   public runReadwriteTransaction<Result>(callback: (transaction: ReadwriteTransaction) => Promise<Result>): Promise<Result> {
@@ -226,18 +247,27 @@ export class PineconeDatabase implements Database, WriteSession {
     return key.id;
   }
 
+  private mappingForKey(key: Key): PineconeCollectionMapping {
+    if (key.parent !== undefined) throw new UnsupportedError("Pinecone nested collection keys");
+    return this.mappingForCollection(key.collection);
+  }
+
+  private mappingForCollection(collection: string): PineconeCollectionMapping {
+    const mapping = this.#collections[collection];
+    if (mapping === undefined) throw new UnsupportedError(`Pinecone collection mapping for ${collection}`);
+    return mapping;
+  }
+
   private snapshot<T>(key: Key, record: PineconeVectorRecord, codec?: Codec<T>, original?: unknown): ExistingRecord<T> {
     const score = isObject(original) ? original.score : undefined;
     if (score !== undefined && (typeof score !== "number" || !Number.isFinite(score))) throw new TypeError("malformed Pinecone query score");
     return { key, exists: true, data: codecOrIdentity(codec).decode(record.metadata ?? {}), ...(score === undefined ? {} : { metadata: { score } }) };
   }
 
-  private namespaceBody(): { readonly namespace?: string } { return this.#namespace === undefined ? {} : { namespace: this.#namespace }; }
-
-  private async fetchVectors(ids: readonly string[]): Promise<ReadonlyMap<string, PineconeVectorRecord>> {
+  private async fetchVectors(ids: readonly string[], mapping: PineconeCollectionMapping): Promise<ReadonlyMap<string, PineconeVectorRecord>> {
     const query = new URLSearchParams();
     ids.forEach((id) => { query.append("ids", id); });
-    if (this.#namespace !== undefined) query.set("namespace", this.#namespace);
+    query.set("namespace", mapping.namespace);
     const response = await this.request("GET", `/vectors/fetch?${query.toString()}`);
     if (!isObject(response.body) || !isObject(response.body.vectors)) throw new TypeError("malformed Pinecone fetch response");
     const records = new Map<string, PineconeVectorRecord>();
@@ -272,7 +302,7 @@ export class PineconeDatabase implements Database, WriteSession {
     try {
       const configured = await stage(() => typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {}));
       validateHeaders(configured);
-      const response = await stage(() => this.#fetch(`${this.#baseUrl}${path}`, { method, redirect: "error", signal: controller.signal, headers: { ...configured, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) }, ...(serialized === undefined ? {} : { body: serialized }) }));
+      const response = await stage(() => this.#fetch(`${this.#baseUrl}${path}`, { method, redirect: "error", signal: controller.signal, headers: { ...configured, "X-Pinecone-Api-Version": PINECONE_API_VERSION, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) }, ...(serialized === undefined ? {} : { body: serialized }) }));
       const bodyValue = await stage(() => this.readResponse(response, controller.signal));
       if (!response.ok) throw new PineconeHttpError(response.status);
       return { status: response.status, body: bodyValue };

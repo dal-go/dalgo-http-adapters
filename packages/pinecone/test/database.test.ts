@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PineconeDatabase, PineconeHttpError, PineconeRequestError } from "../src/index.js";
 
 function json(body: unknown, status = 200): Response { return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }); }
-function database(fetch: typeof globalThis.fetch): PineconeDatabase { return new PineconeDatabase({ baseUrl: "https://index.example/", namespace: "tenant-a", vectorForWrite: () => [1, 2], fetch }); }
+function database(fetch: typeof globalThis.fetch): PineconeDatabase { return new PineconeDatabase({ baseUrl: "https://index.example/", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1, 2] } }, fetch }); }
 const products = collection<{ readonly title: string; readonly price: number }>("products");
 
 describe("PineconeDatabase", () => {
@@ -20,7 +20,7 @@ describe("PineconeDatabase", () => {
 
   it("upserts metadata and deletes by id without exposing configured headers", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(json({ upsertedCount: 1 })).mockResolvedValueOnce(json({}));
-    const db = new PineconeDatabase({ baseUrl: "https://index.example", namespace: "tenant-a", vectorForWrite: () => [1, 2], headers: { "Api-Key": "secret" }, fetch });
+    const db = new PineconeDatabase({ baseUrl: "https://index.example", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1, 2] } }, headers: { "Api-Key": "secret" }, fetch });
     await db.set(products.key("one"), { title: "One", price: 1 });
     await db.delete(products.key("one"));
     const calls = fetch.mock.calls as unknown as [string, RequestInit][];
@@ -29,7 +29,32 @@ describe("PineconeDatabase", () => {
     ]);
     expect(JSON.parse(calls[0]?.[1].body as string)).toEqual({ vectors: [{ id: "one", values: [1, 2], metadata: { title: "One", price: 1 } }], namespace: "tenant-a" });
     expect(JSON.parse(calls[1]?.[1].body as string)).toEqual({ ids: ["one"], namespace: "tenant-a" });
-    expect(calls[0]?.[1].headers).toMatchObject({ "Api-Key": "secret", accept: "application/json" });
+    expect(calls[0]?.[1].headers).toMatchObject({ "Api-Key": "secret", "X-Pinecone-Api-Version": "2025-10", accept: "application/json" });
+  });
+
+  it("isolates collections in distinct namespaces for reads, writes, deletes, and vector search", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json({ vectors: { one: { id: "one", metadata: { title: "One" } } } }))
+      .mockResolvedValueOnce(json({ upsertedCount: 1 }))
+      .mockResolvedValueOnce(json({}))
+      .mockResolvedValueOnce(json({ matches: [] }));
+    const db = new PineconeDatabase({
+      baseUrl: "https://index.example",
+      collections: {
+        products: { namespace: "products-ns", vectorForWrite: () => [1] },
+        books: { namespace: "books-ns", vectorForWrite: () => [2] },
+      },
+      fetch,
+    });
+    await db.get(key("products", "one"));
+    await db.set(key("books", "one"), { title: "Book" });
+    await db.delete(key("books", "one"));
+    await db.vectorSearch(collection("books").query().limit(1).build(), [0.2]);
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://index.example/vectors/fetch?ids=one&namespace=products-ns");
+    expect(JSON.parse((fetch.mock.calls[1]?.[1] as RequestInit).body as string)).toMatchObject({ namespace: "books-ns", vectors: [{ id: "one", values: [2] }] });
+    expect(JSON.parse((fetch.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({ ids: ["one"], namespace: "books-ns" });
+    expect(JSON.parse((fetch.mock.calls[3]?.[1] as RequestInit).body as string)).toMatchObject({ namespace: "books-ns" });
+    await expect(db.getMany([key("products", "one"), key("books", "one")])).rejects.toBeInstanceOf(UnsupportedError);
   });
 
   it("keeps vector search explicit and maps supported metadata filters", async () => {
@@ -52,29 +77,36 @@ describe("PineconeDatabase", () => {
   });
 
   it("enforces URL, JSON, response, and error-redaction boundaries", async () => {
-    expect(() => new PineconeDatabase({ baseUrl: "http://index.example", vectorForWrite: () => [1] })).toThrow("HTTPS");
-    expect(() => new PineconeDatabase({ baseUrl: "https://key:secret@index.example", vectorForWrite: () => [1] })).toThrow("credentials");
-    const failing = new PineconeDatabase({ baseUrl: "https://index.example", vectorForWrite: () => [1], headers: { "Api-Key": "secret" }, fetch: vi.fn().mockResolvedValue(json({ message: "secret" }, 401)) });
+    expect(() => new PineconeDatabase({ baseUrl: "http://index.example", collections: {} })).toThrow("HTTPS");
+    expect(() => new PineconeDatabase({ baseUrl: "https://key:secret@index.example", collections: {} })).toThrow("credentials");
+    const failing = new PineconeDatabase({ baseUrl: "https://index.example", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1] } }, headers: { "Api-Key": "secret" }, fetch: vi.fn().mockResolvedValue(json({ message: "secret" }, 401)) });
     const error = await failing.get(products.key("one")).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(PineconeHttpError); expect(String(error)).not.toContain("secret");
     const malformed = database(vi.fn().mockResolvedValue(json({ vectors: { one: { id: "one", metadata: "wrong" } } })));
     await expect(malformed.get(products.key("one"))).rejects.toBeInstanceOf(UnsupportedError);
-    const limited = new PineconeDatabase({ baseUrl: "https://index.example", vectorForWrite: () => [1], maxRequestBytes: 8 });
+    const limited = new PineconeDatabase({ baseUrl: "https://index.example", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1] } }, maxRequestBytes: 8 });
     await expect(limited.set(products.key("one"), { title: "a long title", price: 1 })).rejects.toThrow("maxRequestBytes");
+    await expect(database(vi.fn()).get(products.key("café"))).rejects.toThrow("printable ASCII");
+  });
+
+  it("requires exactly one safe upsert receipt for one-record set", async () => {
+    await expect(database(vi.fn().mockResolvedValue(json({ upsertedCount: 0 }))).set(products.key("one"), { title: "One", price: 1 })).rejects.toThrow("upsert");
+    await expect(database(vi.fn().mockResolvedValue(json({ upsertedCount: 2 }))).set(products.key("one"), { title: "One", price: 1 })).rejects.toThrow("upsert");
+    await expect(database(vi.fn().mockResolvedValue(json({ upsertedCount: 1.5 }))).set(products.key("one"), { title: "One", price: 1 })).rejects.toThrow("upsert");
   });
 
   it("bounds header, transport, and response reads and redacts their causes", async () => {
     vi.useFakeTimers();
     try {
       const never = new Promise<Response>(() => undefined);
-      const headers = new PineconeDatabase({ baseUrl: "https://index.example", vectorForWrite: () => [1], timeoutMs: 1, headers: () => never.then(() => ({ "Api-Key": "secret" })) });
+      const headers = new PineconeDatabase({ baseUrl: "https://index.example", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1] } }, timeoutMs: 1, headers: () => never.then(() => ({ "Api-Key": "secret" })) });
       const headerRequest = headers.get(products.key("one")); const headerAssertion = expect(headerRequest).rejects.toMatchObject({ name: "PineconeRequestError", message: "Pinecone request timed out" });
       await vi.advanceTimersByTimeAsync(1); await headerAssertion;
-      const transport = new PineconeDatabase({ baseUrl: "https://index.example", vectorForWrite: () => [1], timeoutMs: 1, fetch: () => never });
+      const transport = new PineconeDatabase({ baseUrl: "https://index.example", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1] } }, timeoutMs: 1, fetch: () => never });
       const transportRequest = transport.get(products.key("one")); const transportAssertion = expect(transportRequest).rejects.toMatchObject({ name: "PineconeRequestError", message: "Pinecone request timed out" });
       await vi.advanceTimersByTimeAsync(1); await transportAssertion;
     } finally { vi.useRealTimers(); }
-    const failingHeaders = new PineconeDatabase({ baseUrl: "https://index.example", vectorForWrite: () => [1], headers: () => { throw new Error("secret"); } });
+    const failingHeaders = new PineconeDatabase({ baseUrl: "https://index.example", collections: { products: { namespace: "tenant-a", vectorForWrite: () => [1] } }, headers: () => { throw new Error("secret"); } });
     const error = await failingHeaders.get(products.key("one")).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(PineconeRequestError); expect(String(error)).not.toContain("secret");
   });

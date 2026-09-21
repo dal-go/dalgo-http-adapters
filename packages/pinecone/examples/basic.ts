@@ -6,8 +6,9 @@ declare function embedForIndex(value: unknown): readonly number[];
 
 const database = new PineconeDatabase({
   baseUrl: "https://your-index-host",
-  namespace: "products",
-  vectorForWrite: (metadata) => embedForIndex(metadata.title),
+  collections: {
+    products: { namespace: "products", vectorForWrite: (metadata) => embedForIndex(metadata.title) },
+  },
   // Obtain this only in a trusted server/worker-side credential broker.
   headers: () => ({ "Api-Key": "server-provided-token" }),
 });

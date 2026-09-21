@@ -74,7 +74,7 @@ export function compilePineconeVectorQuery<T>(query: StructuredQuery<T>, maximum
 }
 
 export function validatePineconeId(value: unknown): asserts value is string {
-  if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > 512 || hasControlCharacter(value)) {
-    throw new TypeError("Pinecone vector IDs must be non-empty strings up to 512 bytes with no control characters");
+  if (typeof value !== "string" || value.length === 0 || value.length > 512 || !/^[!-~]+$/u.test(value)) {
+    throw new TypeError("Pinecone vector IDs must be non-empty printable ASCII strings up to 512 characters with no spaces or control characters");
   }
 }
