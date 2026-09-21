@@ -46,7 +46,22 @@ Call `await db.close()` before deleting or upgrading a database from another tab
 
 ## Storage model
 
-The adapter owns one object store named `__dalgo_records`. Records retain their complete hierarchical DALgo keys and are indexed by collection path and collection name. This fixed schema means new DALgo collections do not require IndexedDB version upgrades.
+By default, the adapter owns one object store named `__dalgo_records`. Records retain their complete hierarchical DALgo keys and are indexed by collection path and collection name. This fixed schema means new DALgo collections do not require IndexedDB version upgrades.
+
+For a database whose collections are known in advance, pass `collections` to expose each one as its own IndexedDB object store:
+
+```ts
+const db = new IndexedDbDatabase({
+  name: "chinook",
+  collections: [
+    { name: "main.Customer", storeName: "Customer" },
+    { name: "main.Invoice", storeName: "Invoice" },
+    { name: "main.Track", storeName: "Track" },
+  ],
+});
+```
+
+Strings can also be used when the DALgo collection name and IndexedDB object store name are identical. Only the listed collections can be read or written. Additions to that list require an IndexedDB version upgrade (or a new database name). Choose the layout when creating a database; changing an existing shared-store database to named stores does not migrate its records.
 
 Collection and collection-group selection uses IndexedDB indexes. DALgo filters, ordering, cursors, offsets, and limits are then evaluated in memory, so this initial driver favors correctness and a small stable schema over large-query performance. Use a remote adapter or add purpose-built indexes before querying very large local collections.
 

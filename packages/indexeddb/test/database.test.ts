@@ -18,6 +18,64 @@ function database(): IndexedDbDatabase {
 const items = collection<Item>("items");
 
 describe("IndexedDbDatabase", () => {
+  it("uses separate named object stores when collections are configured", async () => {
+    const factory = new IDBFactory();
+    const db = new IndexedDbDatabase({
+      name: "named-collections",
+      factory,
+      collections: ["chinook.Customer", "chinook.Invoice"],
+    });
+    const customers = collection<{ name: string }>("chinook.Customer");
+    const invoices = collection<{ total: number }>("chinook.Invoice");
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(customers.key(1), { name: "Alice" });
+      await transaction.set(invoices.key(2), { total: 12 });
+    });
+
+    expect((await db.getMany([customers.key(1), invoices.key(2)])).map((record) => record.exists)).toEqual([true, true]);
+    expect((await db.query(customers.query().build())).records.map((record) => record.data.name)).toEqual(["Alice"]);
+    expect((await db.query(invoices.query().build())).records.map((record) => record.data.total)).toEqual([12]);
+    await expect(db.get(key("other", 1))).rejects.toThrow("not configured");
+    await db.close();
+
+    const native = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open("named-collections");
+      request.onsuccess = () => { resolve(request.result); };
+      request.onerror = () => { reject(request.error ?? new Error("failed to open database")); };
+    });
+    expect(Array.from(native.objectStoreNames)).toEqual(["chinook.Customer", "chinook.Invoice"]);
+    native.close();
+  });
+
+  it("maps schema-qualified collections to plain object store names", async () => {
+    const factory = new IDBFactory();
+    const db = new IndexedDbDatabase({
+      name: "chinook",
+      factory,
+      collections: [
+        { name: "main.Customer", storeName: "Customer" },
+        { name: "main.Invoice", storeName: "Invoice" },
+      ],
+    });
+    const customer = collection<{ name: string }>("main.Customer");
+    const invoice = collection<{ total: number }>("main.Invoice");
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(customer.key(1), { name: "Alice" });
+      await transaction.set(invoice.key(1), { total: 42 });
+    });
+    expect((await db.query(customer.query().build())).records.map((record) => record.data.name)).toEqual(["Alice"]);
+    expect((await db.query(invoice.query().build())).records.map((record) => record.data.total)).toEqual([42]);
+    await db.close();
+
+    const native = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open("chinook");
+      request.onsuccess = () => { resolve(request.result); };
+      request.onerror = () => { reject(request.error ?? new Error("failed to open database")); };
+    });
+    expect(Array.from(native.objectStoreNames)).toEqual(["Customer", "Invoice"]);
+    native.close();
+  });
+
   it("gets missing and existing records and preserves hierarchical keys", async () => {
     const db = database();
     const missing = await db.get(items.key("missing"));
