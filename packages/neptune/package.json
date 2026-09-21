@@ -9,7 +9,7 @@
   "files": ["dist", "LICENSE", "README.md"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "eslint . && vitest run && tsc -p tsconfig.build.json",
+    "check": "eslint . && vitest run && tsc -p tsconfig.build.json && tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "prepack": "npm run build",
     "test": "vitest run"
@@ -18,7 +18,7 @@
   "bugs": { "url": "https://github.com/dal-go/dalgo-http-adapters/issues" },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/neptune#readme",
   "license": "MIT",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=24" },
   "peerDependencies": { "@dal-go/dalgo": "^0.1.0" },
   "devDependencies": {
     "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d",

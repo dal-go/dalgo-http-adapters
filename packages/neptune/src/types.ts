@@ -17,6 +17,10 @@ export interface NeptuneDatabaseOptions {
   readonly headers?: NeptuneHeadersProvider;
   /** Absolute request deadline; defaults to 30 seconds and is bounded to 60 seconds. */
   readonly timeoutMs?: number;
+  /** Maximum DALgo records returned by one query; defaults to 1,000 and is bounded to 10,000. */
+  readonly maxRows?: number;
+  /** Maximum bytes read from one HTTP response; defaults to 1 MiB and is bounded to 10 MiB. */
+  readonly maxResponseBytes?: number;
   /** A custom fetch may SigV4-sign the final URL, headers, and form body. */
   readonly fetch?: typeof fetch;
 }

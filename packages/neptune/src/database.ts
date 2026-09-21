@@ -19,6 +19,8 @@ import { NeptuneQueryError } from "./types.js";
 
 function codecOrIdentity<T>(codec?: Codec<T>): Codec<T> { return (codec ?? identityCodec) as Codec<T>; }
 
+class NeptuneTimeoutError extends Error {}
+
 function collectionMap(values: Readonly<Record<string, NeptuneCollectionOptions>>): ReadonlyMap<string, ResolvedCollection> {
   const collections = new Map<string, ResolvedCollection>();
   for (const [collection, configuration] of Object.entries(values)) {
@@ -29,10 +31,14 @@ function collectionMap(values: Readonly<Record<string, NeptuneCollectionOptions>
     collections.set(collection, { collection, label: configuration.label, idPrefix });
   }
   if (collections.size === 0) throw new TypeError("at least one Neptune collection must be configured");
-  const prefixes = new Set<string>();
-  for (const item of collections.values()) {
-    if (prefixes.has(item.idPrefix)) throw new TypeError("each Neptune collection needs a distinct idPrefix");
-    prefixes.add(item.idPrefix);
+  const prefixes = [...collections.values()].map((item) => item.idPrefix);
+  for (let index = 0; index < prefixes.length; index += 1) {
+    for (let other = index + 1; other < prefixes.length; other += 1) {
+      const first = prefixes[index];
+      const second = prefixes[other];
+      if (first === undefined || second === undefined) continue;
+      if (first.startsWith(second) || second.startsWith(first)) throw new TypeError("Neptune idPrefix values must not overlap");
+    }
   }
   return collections;
 }
@@ -53,6 +59,8 @@ export class NeptuneDatabase implements Database {
   readonly #collections: ReadonlyMap<string, ResolvedCollection>;
   readonly #headers: NeptuneDatabaseOptions["headers"];
   readonly #timeoutMs: number;
+  readonly #maxRows: number;
+  readonly #maxResponseBytes: number;
   readonly #fetch: typeof fetch;
 
   public constructor(options: NeptuneDatabaseOptions) {
@@ -61,6 +69,10 @@ export class NeptuneDatabase implements Database {
     this.#headers = options.headers;
     this.#timeoutMs = options.timeoutMs ?? 30_000;
     if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs < 1 || this.#timeoutMs > 60_000) throw new RangeError("Neptune timeoutMs must be a safe integer between 1 and 60000");
+    this.#maxRows = options.maxRows ?? 1_000;
+    if (!Number.isSafeInteger(this.#maxRows) || this.#maxRows < 1 || this.#maxRows > 10_000) throw new RangeError("Neptune maxRows must be a safe integer between 1 and 10000");
+    this.#maxResponseBytes = options.maxResponseBytes ?? 1_048_576;
+    if (!Number.isSafeInteger(this.#maxResponseBytes) || this.#maxResponseBytes < 1 || this.#maxResponseBytes > 10_485_760) throw new RangeError("Neptune maxResponseBytes must be a safe integer between 1 and 10485760");
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 
@@ -77,14 +89,15 @@ export class NeptuneDatabase implements Database {
   public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> { return Promise.all(keys.map(async (key) => this.get(key, codec))); }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
-    const compiled = compileNeptuneQuery(query, this.#collections);
+    const compiled = compileNeptuneQuery(query, this.#collections, this.#maxRows);
     const nodes = this.nodes(await this.execute(compiled.statement, compiled.parameters), compiled.collection);
-    const records = nodes.map((node): ExistingRecord<T> => {
+    const pageNodes = nodes.slice(0, compiled.rowLimit);
+    const records = pageNodes.map((node): ExistingRecord<T> => {
       const id = dalgoId(compiled.collection, node.id);
       return recordFromNode(new Key(compiled.collection.collection, id), node, compiled.collection, query.source.codec);
     });
-    const last = nodes.at(-1);
-    const nextCursor = query.limit !== undefined && nodes.length === query.limit && last !== undefined
+    const last = pageNodes.at(-1);
+    const nextCursor = nodes.length > compiled.rowLimit && last !== undefined
       ? cursorFromNode({ "~id": last.id, ...last.properties }, compiled.orders, compiled.collection) : undefined;
     return { records, ...(nextCursor === undefined ? {} : { nextCursor }) };
   }
@@ -134,8 +147,8 @@ export class NeptuneDatabase implements Database {
     });
   }
 
-  private async requestHeaders(): Promise<Headers> {
-    const supplied = await Promise.resolve().then(async () => typeof this.#headers === "function" ? this.#headers() : this.#headers);
+  private async requestHeaders(wait: <Value>(work: () => Promise<Value> | Value) => Promise<Value>): Promise<Headers> {
+    const supplied = await wait(async () => typeof this.#headers === "function" ? this.#headers() : this.#headers);
     const headers = new Headers(supplied);
     headers.set("accept", "application/json");
     headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
@@ -144,21 +157,61 @@ export class NeptuneDatabase implements Database {
 
   private async execute(query: string, parameters: Readonly<Record<string, unknown>>): Promise<readonly Readonly<Record<string, unknown>>[]> {
     const controller = new AbortController();
-    const timer = setTimeout(() => { controller.abort(); }, this.#timeoutMs);
+    let rejectDeadline!: (reason: Error) => void;
+    const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject as (reason: Error) => void; });
+    const timeoutError = new NeptuneTimeoutError(`Neptune openCypher request timed out after ${this.#timeoutMs.toString()}ms`);
+    const timer = setTimeout(() => { controller.abort(); rejectDeadline(timeoutError); }, this.#timeoutMs);
+    const wait = async <Value>(work: () => Promise<Value> | Value): Promise<Value> => Promise.race([Promise.resolve().then(work), deadline]);
     try {
       const body = new URLSearchParams({ query, parameters: JSON.stringify(parameters) });
-      const response = await Promise.resolve().then(async () => this.#fetch(new URL("/openCypher", this.#baseUrl), {
-        method: "POST", headers: await this.requestHeaders(), body, signal: controller.signal, redirect: "error",
+      const response = await wait(async () => this.#fetch(new URL("/openCypher", this.#baseUrl), {
+        method: "POST", headers: await this.requestHeaders(wait), body, signal: controller.signal, redirect: "error",
       }));
-      const text = await response.text();
-      if (!response.ok) throw new NeptuneQueryError(response.headers.get("x-neptune-status") ?? undefined);
+      const text = await this.readBody(response, wait, controller);
+      if (!response.ok) throw new NeptuneQueryError(this.errorCode(text, response.headers));
+      const trailingStatus = response.headers.get("x-neptune-status");
+      if (trailingStatus !== null && !/^2\d\d(?:\s|$)/u.test(trailingStatus)) throw new NeptuneQueryError(this.boundedCode(trailingStatus));
       let parsed: unknown;
       try { parsed = JSON.parse(text); } catch { throw new TypeError("Neptune openCypher returned invalid JSON"); }
       if (!isPlainRecord(parsed) || !Array.isArray(parsed.results) || !parsed.results.every(isPlainRecord)) throw new TypeError("Neptune openCypher returned an invalid results object");
       return parsed.results;
     } catch (error) {
-      if (controller.signal.aborted) throw new Error(`Neptune openCypher request timed out after ${this.#timeoutMs.toString()}ms`, { cause: error });
-      throw error;
+      if (error instanceof NeptuneTimeoutError) throw timeoutError;
+      if (error instanceof NeptuneQueryError || error instanceof TypeError) throw error;
+      throw new NeptuneQueryError(undefined);
     } finally { clearTimeout(timer); }
+  }
+
+  private async readBody(response: Response, wait: <Value>(work: () => Promise<Value> | Value) => Promise<Value>, controller: AbortController): Promise<string> {
+    if (response.body === null) return "";
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    let text = "";
+    try {
+      for (;;) {
+        const chunk = await wait(async () => reader.read());
+        if (chunk.done) return text + decoder.decode();
+        bytes += chunk.value.byteLength;
+        if (bytes > this.#maxResponseBytes) {
+          controller.abort();
+          await reader.cancel().catch(() => undefined);
+          throw new TypeError(`Neptune openCypher response exceeds ${this.#maxResponseBytes.toString()} bytes`);
+        }
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+    } finally { reader.releaseLock(); }
+  }
+
+  private boundedCode(value: string | null): string | undefined {
+    return value === null || value.length === 0 ? undefined : value.slice(0, 128);
+  }
+
+  private errorCode(body: string, headers: Headers): string | undefined {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (isPlainRecord(parsed) && typeof parsed.code === "string") return this.boundedCode(parsed.code);
+    } catch { /* Error details remain redacted. */ }
+    return this.boundedCode(headers.get("x-neptune-status"));
   }
 }

@@ -15,6 +15,7 @@ export interface CompiledNeptuneQuery<T> {
   readonly parameters: Readonly<Record<string, unknown>>;
   readonly collection: ResolvedCollection;
   readonly orders: readonly QueryOrder<T>[];
+  readonly rowLimit: number;
 }
 
 function property<T>(field: FieldPath<T>): string {
@@ -22,6 +23,10 @@ function property<T>(field: FieldPath<T>): string {
 }
 
 function orders<T>(query: StructuredQuery<T>): readonly QueryOrder<T>[] {
+  for (const order of query.orders) {
+    const direction = (order as { readonly direction: unknown }).direction;
+    if (direction !== "asc" && direction !== "desc") throw new TypeError("Neptune query order direction must be asc or desc");
+  }
   return query.orders.some((order) => order.field === DOCUMENT_ID)
     ? query.orders
     : [...query.orders, { field: DOCUMENT_ID, direction: query.orders.at(-1)?.direction ?? "asc" }];
@@ -88,7 +93,7 @@ function cursor<T>(
   return `(${terms.join(" OR ")})`;
 }
 
-export function compileNeptuneQuery<T>(query: StructuredQuery<T>, collections: ReadonlyMap<string, ResolvedCollection>): CompiledNeptuneQuery<T> {
+export function compileNeptuneQuery<T>(query: StructuredQuery<T>, collections: ReadonlyMap<string, ResolvedCollection>, maxRows: number): CompiledNeptuneQuery<T> {
   if (query.source.kind !== "collection" || query.source.parent !== undefined) {
     throw new UnsupportedError("Neptune nested and collection-group DALgo queries");
   }
@@ -102,6 +107,10 @@ export function compileNeptuneQuery<T>(query: StructuredQuery<T>, collections: R
     return expression;
   });
   const queryOrders = orders(query);
+  if (!Number.isSafeInteger(query.offset ?? 0) || (query.offset ?? 0) < 0) throw new TypeError("Neptune query offset must be a non-negative safe integer");
+  if (query.limit !== undefined && (!Number.isSafeInteger(query.limit) || query.limit < 1)) throw new TypeError("Neptune query limit must be a positive safe integer");
+  if (query.limit !== undefined && query.limit > maxRows) throw new RangeError(`Neptune query limit must not exceed maxRows (${maxRows.toString()})`);
+  const rowLimit = query.limit ?? maxRows;
   const start = cursor(query.startAt, queryOrders, collection, "startAt", parameters) ?? cursor(query.startAfter, queryOrders, collection, "startAfter", parameters);
   const end = cursor(query.endAt, queryOrders, collection, "endAt", parameters) ?? cursor(query.endBefore, queryOrders, collection, "endBefore", parameters);
   if (start !== undefined) clauses.push(start);
@@ -109,8 +118,9 @@ export function compileNeptuneQuery<T>(query: StructuredQuery<T>, collections: R
   const where = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
   const order = queryOrders.map((item) => `${property(item.field)} ${item.direction.toUpperCase()}`).join(", ");
   const offset = query.offset === undefined ? "" : ` SKIP ${query.offset.toString()}`;
-  const limit = query.limit === undefined ? "" : ` LIMIT ${query.limit.toString()}`;
-  return { statement: `MATCH (n:${quoteIdentifier(collection.label, "Neptune node label")})${where} RETURN n AS node ORDER BY ${order}${offset}${limit}`, parameters, collection, orders: queryOrders };
+  // Fetch one sentinel row so a bounded page can truthfully advertise a continuation.
+  const limit = ` LIMIT ${(rowLimit + 1).toString()}`;
+  return { statement: `MATCH (n:${quoteIdentifier(collection.label, "Neptune node label")})${where} RETURN n AS node ORDER BY ${order}${offset}${limit}`, parameters, collection, orders: queryOrders, rowLimit };
 }
 
 export function cursorFromNode<T>(node: Readonly<Record<string, unknown>>, queryOrders: readonly QueryOrder<T>[], collection: ResolvedCollection): QueryCursor {

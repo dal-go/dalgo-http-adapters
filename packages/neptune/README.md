@@ -73,8 +73,14 @@ rather than silently adopting Neptune's graph/property semantics.
   `delete` refuses to detach relationships, so linked-node deletion fails rather
   than silently deleting graph edges.
 - The adapter uses an absolute 30-second deadline by default (maximum 60
-  seconds), rejects redirects, validates response structure, and does not put
-  server response text in thrown HTTP errors.
+  seconds), rejects redirects, streams and bounds each response to 1 MiB by
+  default (maximum 10 MiB), validates response structure, and does not put
+  server response text in thrown HTTP errors. Invalid JSON after an HTTP 200 is
+  still treated as a failed query.
+- Queries are never unbounded: `maxRows` defaults to 1,000 (maximum 10,000).
+  The adapter asks Neptune for one extra sentinel row, returns at most
+  `maxRows` (or the query limit), and provides a cursor only when that sentinel
+  proves another page exists.
 - Direct browser use is generally impractical: Neptune Database is normally
   private within a VPC, it does not provide a browser-oriented CORS/auth flow,
   and IAM authentication requires per-request SigV4. Prefer a narrowly scoped

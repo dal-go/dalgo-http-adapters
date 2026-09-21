@@ -1,11 +1,11 @@
-import { AlreadyExistsError, NotFoundError, UnsupportedError, collection } from "@dal-go/dalgo";
+import { AlreadyExistsError, NotFoundError, UnsupportedError, collection, key } from "@dal-go/dalgo";
 import { describe, expect, it } from "vitest";
 import { NeptuneDatabase } from "../src/index.js";
 
 interface Call { readonly input: URL | RequestInfo; readonly init?: RequestInit; }
 
 function reply(body: unknown, status = 200, headers?: Record<string, string>): Response {
-  return new Response(JSON.stringify(body), { status, headers });
+  return new Response(JSON.stringify(body), { status, ...(headers === undefined ? {} : { headers }) });
 }
 
 function node(id: string, properties: Record<string, unknown> = {}): object {
@@ -15,7 +15,7 @@ function node(id: string, properties: Record<string, unknown> = {}): object {
 function fakeFetch(...responses: Response[]): { readonly fetch: typeof fetch; readonly calls: Call[] } {
   const calls: Call[] = [];
   const fetch = ((input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
-    calls.push({ input, init });
+    calls.push({ input, ...(init === undefined ? {} : { init }) });
     return Promise.resolve(responses.shift() ?? reply({ results: [] }));
   }) as typeof globalThis.fetch;
   return { fetch, calls };
@@ -72,17 +72,17 @@ describe("NeptuneDatabase", () => {
   });
 
   it("maps Neptune duplicate custom IDs and missing mutations to DALgo errors", async () => {
-    const duplicate = fakeFetch(reply({ message: "redacted" }, 400, { "x-neptune-status": "400 DuplicateDataException" }));
+    const duplicate = fakeFetch(reply({ code: "DuplicateDataException", message: "must not surface" }, 400));
     await expect(database(duplicate).insert(collection("items").key("milk"), { title: "Milk" })).rejects.toBeInstanceOf(AlreadyExistsError);
     const absent = fakeFetch(reply({ results: [] }));
     await expect(database(absent).update(collection("items").key("milk"), { done: true })).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it("compiles scalar query filters, stable IDs, and safe cursors", async () => {
-    const recording = fakeFetch(reply({ results: [{ node: node("items:a", { rank: 2 }) }] }));
+    const recording = fakeFetch(reply({ results: [{ node: node("items:a", { rank: 2 }) }, { node: node("items:b", { rank: 3 }) }] }));
     const query = collection<{ rank: number }>("items").query().where("rank", ">=", 1).orderBy("rank").limit(1).build();
     const page = await database(recording).query(query);
-    expect(body(recording).get("query")).toContain("n.`rank` >= $filter0 RETURN n AS node ORDER BY n.`rank` ASC, id(n) ASC LIMIT 1");
+    expect(body(recording).get("query")).toContain("n.`rank` >= $filter0 RETURN n AS node ORDER BY n.`rank` ASC, id(n) ASC LIMIT 2");
     expect(page.nextCursor).toEqual({ values: [2, "a"] });
   });
 
@@ -90,9 +90,41 @@ describe("NeptuneDatabase", () => {
     const recording = fakeFetch();
     const db = database(recording);
     await expect(db.runReadwriteTransaction()).rejects.toBeInstanceOf(UnsupportedError);
-    await expect(db.get(collection("items").key(1))).rejects.toThrow("string IDs");
+    await expect(db.get(key("items", 1))).rejects.toThrow("string IDs");
     await expect(db.insert(collection("items").key("a"), { tags: ["x"] })).rejects.toThrow("non-null finite");
     expect(() => new NeptuneDatabase({ baseUrl: "http://example.com", collections: { items: { label: "Item" } } })).toThrow("HTTPS");
     expect(recording.calls).toHaveLength(0);
+  });
+
+  it("uses a bounded sentinel page and rejects forged query interpolation values", async () => {
+    const recording = fakeFetch(reply({ results: [{ node: node("items:a", { rank: 1 }) }, { node: node("items:b", { rank: 2 }) }] }));
+    const db = new NeptuneDatabase({
+      baseUrl: "https://cluster.neptune.amazonaws.com:8182", collections: { items: { label: "Item" } }, fetch: recording.fetch, maxRows: 1,
+    });
+    const page = await db.query(collection<{ rank: number }>("items").query().orderBy("rank").build());
+    expect(body(recording).get("query")).toContain("LIMIT 2");
+    expect(page.records).toHaveLength(1);
+    expect(page.nextCursor).toEqual({ values: [1, "a"] });
+    const forged = collection("items").query().build() as unknown as { orders: { field: string; direction: string }[]; offset?: number; limit?: number };
+    forged.orders = [{ field: "rank", direction: "DESC; DELETE n" }];
+    await expect(db.query(forged as never)).rejects.toThrow("direction");
+    forged.orders = [];
+    forged.offset = -1;
+    await expect(db.query(forged as never)).rejects.toThrow("offset");
+    forged.offset = 0;
+    forged.limit = Number.POSITIVE_INFINITY;
+    await expect(db.query(forged as never)).rejects.toThrow("limit");
+  });
+
+  it("rejects prefix-overlapping mappings and oversized response bodies", async () => {
+    expect(() => new NeptuneDatabase({
+      baseUrl: "https://cluster.neptune.amazonaws.com:8182",
+      collections: { items: { label: "Item", idPrefix: "item:" }, other: { label: "Other", idPrefix: "item:other:" } },
+    })).toThrow("must not overlap");
+    const recording = fakeFetch(reply({ results: [{ node: node("items:a", { title: "x".repeat(100) }) }] }));
+    const db = new NeptuneDatabase({
+      baseUrl: "https://cluster.neptune.amazonaws.com:8182", collections: { items: { label: "Item" } }, fetch: recording.fetch, maxResponseBytes: 20,
+    });
+    await expect(db.get(collection("items").key("a"))).rejects.toThrow("exceeds 20 bytes");
   });
 });
