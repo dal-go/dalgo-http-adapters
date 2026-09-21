@@ -20,8 +20,8 @@ export interface IndexedDbDatabaseOptions {
   readonly name: string;
   readonly version?: number;
   readonly factory?: IDBFactory;
-  /** When supplied, create one object store per named collection instead of the shared record store. */
-  readonly collections?: readonly string[];
+  /** When supplied, create one object store per collection instead of the shared record store. */
+  readonly collections?: readonly (string | { readonly name: string; readonly storeName: string })[];
 }
 
 function codecOrIdentity<T>(codec?: Codec<T>): Codec<T> {
@@ -146,7 +146,7 @@ export class IndexedDbDatabase implements Database {
   public readonly name: string;
   public readonly version: number;
   readonly #factory: IDBFactory;
-  readonly #collections: readonly string[] | undefined;
+  readonly #storesByCollection: ReadonlyMap<string, string> | undefined;
   #databasePromise: Promise<IDBDatabase> | undefined;
 
   public constructor(options: IndexedDbDatabaseOptions) {
@@ -155,27 +155,34 @@ export class IndexedDbDatabase implements Database {
       throw new RangeError("IndexedDB version must be a positive safe integer");
     }
     const factory = options.factory ?? globalThis.indexedDB;
+    let storesByCollection: Map<string, string> | undefined;
     if (options.collections !== undefined) {
-      if (options.collections.length === 0 || options.collections.some((name) =>
-        name.trim().length === 0 || name.includes("/") || name === DALGO_RECORD_STORE
-      ) || new Set(options.collections).size !== options.collections.length) {
-        throw new TypeError("IndexedDB collections must be unique, nonempty collection names");
+      storesByCollection = new Map(options.collections.map((entry) =>
+        typeof entry === "string" ? [entry, entry] : [entry.name, entry.storeName],
+      ));
+      if (options.collections.length === 0 || storesByCollection.size !== options.collections.length ||
+        [...storesByCollection.entries()].some(([collection, storeName]) =>
+          collection.trim().length === 0 || collection.includes("/") ||
+          storeName.trim().length === 0 || storeName === DALGO_RECORD_STORE
+        ) || new Set(storesByCollection.values()).size !== storesByCollection.size) {
+        throw new TypeError("IndexedDB collections and object stores must have unique, nonempty names");
       }
     }
     this.name = options.name;
     this.version = options.version ?? 1;
     this.#factory = factory;
-    this.#collections = options.collections === undefined ? undefined : [...options.collections];
+    this.#storesByCollection = storesByCollection;
   }
 
   private storeName(collection: string): string {
-    if (this.#collections === undefined) return DALGO_RECORD_STORE;
-    if (!this.#collections.includes(collection)) throw new TypeError(`IndexedDB collection is not configured: ${collection}`);
-    return collection;
+    if (this.#storesByCollection === undefined) return DALGO_RECORD_STORE;
+    const storeName = this.#storesByCollection.get(collection);
+    if (storeName === undefined) throw new TypeError(`IndexedDB collection is not configured: ${collection}`);
+    return storeName;
   }
 
   private storeNames(): readonly string[] {
-    return this.#collections ?? [DALGO_RECORD_STORE];
+    return this.#storesByCollection === undefined ? [DALGO_RECORD_STORE] : [...this.#storesByCollection.values()];
   }
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
