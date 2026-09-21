@@ -303,7 +303,9 @@ export class AlgoliaDatabase implements Database, WriteSession {
     return { records: body.hits.map((hit) => {
       const record = responseObject(hit, "query hit");
       if (typeof record.objectID !== "string" || record.objectID.length === 0) throw new TypeError("malformed Algolia query objectID");
-      return { key: new Key(query.source.name, record.objectID), exists: true, data: codecOrIdentity(query.source.codec).decode(recordPayload(record, record.objectID, "query")) };
+      const key = new Key(query.source.name, record.objectID);
+      documentId(key);
+      return { key, exists: true, data: codecOrIdentity(query.source.codec).decode(recordPayload(record, record.objectID, "query")) };
     }) };
   }
 
@@ -344,7 +346,7 @@ export class AlgoliaDatabase implements Database, WriteSession {
   }
   private validateTask(value: unknown, context: string, expectedId?: string): void {
     const body = responseObject(value, context);
-    if (typeof body.taskID !== "number" || !Number.isSafeInteger(body.taskID)) throw new TypeError(`malformed Algolia ${context} task response`);
+    if (typeof body.taskID !== "number" || !Number.isSafeInteger(body.taskID) || body.taskID < 0) throw new TypeError(`malformed Algolia ${context} task response`);
     if (expectedId !== undefined && body.objectID !== undefined && body.objectID !== expectedId) throw new TypeError(`Algolia ${context} response does not match the requested objectID`);
   }
   private async request(target: "search" | "write", method: string, path: string, body?: unknown, acceptedStatuses: readonly number[] = []): Promise<AlgoliaResponse> {

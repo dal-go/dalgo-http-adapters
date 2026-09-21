@@ -38,6 +38,11 @@ describe("AlgoliaDatabase", () => {
     });
   });
 
+  it("rejects query hits whose IDs cannot be represented as DALgo Algolia document IDs", async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ hits: [{ objectID: "has\u0000control" }] }));
+    await expect(database(fetch).query(collection("products").query().limit(1).build())).rejects.toThrow("document IDs");
+  });
+
   it("requires an explicit write-mode declaration for replacement writes and deletion", async () => {
     const searchFetch = vi.fn();
     const search = database(searchFetch);
@@ -104,6 +109,8 @@ describe("AlgoliaDatabase", () => {
   it("requires an exact safe task response for a replacement write", async () => {
     const unsafeTask = database(vi.fn().mockResolvedValue(json({ taskID: 9_007_199_254_740_992 })), "write");
     await expect(unsafeTask.set(key("products", "one"), {})).rejects.toThrow("task");
+    const negativeTask = database(vi.fn().mockResolvedValue(json({ taskID: -1 })), "write");
+    await expect(negativeTask.set(key("products", "one"), {})).rejects.toThrow("task");
     const wrongObject = database(vi.fn().mockResolvedValue(json({ taskID: 1, objectID: "other" })), "write");
     await expect(wrongObject.set(key("products", "one"), {})).rejects.toThrow("does not match");
   });
