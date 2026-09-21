@@ -71,6 +71,8 @@ describe("AppwriteDatabase", () => {
     await expect(db.get(key("items", "milk"))).rejects.toEqual(new AppwriteRequestError()); expect(init(fetch).redirect).toBe("error");
     fetch.mockResolvedValueOnce(response(200, { $id: "milk" }, { "content-length": "999" })); const small = new AppwriteDatabase({ endpoint: "https://cloud.appwrite.io/v1", projectId: "project", databaseId: "data", fetch, maxResponseBytes: 10 });
     await expect(small.get(key("items", "milk"))).rejects.toEqual(new AppwriteRequestError());
+    fetch.mockResolvedValueOnce(response(200, { total: 1, rows: [{ $id: "bad\nrow", done: false }] }));
+    await expect(db.query(collection<{ done: boolean }>("items").query().build())).rejects.toEqual(new AppwriteRequestError());
   });
 
   it("requires explicit trusted-server mode for an API key and omits browser cookies there", async () => {

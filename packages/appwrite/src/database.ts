@@ -106,8 +106,15 @@ function tableId(collection: string): string {
 
 function rowId(key: Key): string {
   if (key.parent !== undefined) throw new UnsupportedError("Appwrite nested DALgo keys");
-  if (typeof key.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/u.test(key.id)) throw new UnsupportedError("Appwrite row IDs outside Appwrite's ID syntax");
+  if (!isRowId(key.id)) throw new UnsupportedError("Appwrite row IDs outside Appwrite's ID syntax");
   return key.id;
+}
+
+function isRowId(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,35}$/u.test(value); }
+
+function rowIdValue(value: unknown): string {
+  if (!isRowId(value)) throw new AppwriteRequestError();
+  return value;
 }
 
 function field(value: unknown): string {
@@ -280,9 +287,10 @@ export class AppwriteDatabase implements Database {
   }
 
   private record<T>(row: unknown, requested: Key | undefined, codec?: Codec<T>, collection?: string): ExistingRecord<T> {
-    if (!plainObject(row) || typeof row.$id !== "string") throw new AppwriteRequestError();
-    const parsed = requested ?? new Key(collection ?? (() => { throw new AppwriteRequestError(); })(), row.$id);
-    if (requested !== undefined && row.$id !== rowId(requested)) throw new AppwriteRequestError();
+    if (!plainObject(row)) throw new AppwriteRequestError();
+    const responseRowId = rowIdValue(row.$id);
+    const parsed = requested ?? new Key(collection ?? (() => { throw new AppwriteRequestError(); })(), responseRowId);
+    if (requested !== undefined && responseRowId !== rowId(requested)) throw new AppwriteRequestError();
     const data = { ...row }; for (const name of Object.keys(data)) if (name.startsWith("$")) delete data[name];
     return { key: parsed, exists: true, data: codecOrIdentity(codec).decode(data) };
   }
