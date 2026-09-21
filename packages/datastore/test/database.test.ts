@@ -28,39 +28,39 @@ describe("DatastoreDatabase", () => {
     ]);
     expect(fetch.mock.calls[0]?.[0].toString()).toBe("https://datastore.example/v1/projects/test-project:lookup");
     expect((fetch.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization).toBe("Bearer opaque-token");
+    expect(body(fetch).databaseId).toBe("");
     expect(body(fetch).keys).toEqual([{ partitionId: { projectId: "test-project", databaseId: "(default)" }, path: [{ kind: "items", name: "milk" }] }, { partitionId: { projectId: "test-project", databaseId: "(default)" }, path: [{ kind: "items", name: "eggs" }] }]);
     expect(accessToken).toHaveBeenCalledOnce();
   });
 
-  it("uses Datastore insert, upsert, update, and delete mutations", async () => {
+  it("uses Datastore insert, upsert, and delete mutations", async () => {
     const { database: db, fetch } = database();
     fetch.mockImplementation(() => Promise.resolve(response(200, { mutationResults: [{}] })));
     await db.insert(key("items", "milk"), { title: "Buy", nested: { urgent: true }, tags: ["shop"] });
+    expect(body(fetch).databaseId).toBe("");
     expect(body(fetch).mutations).toEqual([{ insert: { key: { partitionId: { projectId: "test-project", databaseId: "(default)" }, path: [{ kind: "items", name: "milk" }] }, properties: { title: { stringValue: "Buy" }, nested: { entityValue: { properties: { urgent: { booleanValue: true } } } }, tags: { arrayValue: { values: [{ stringValue: "shop" }] } } } } }]);
     await db.set(key("items", "milk"), { title: "Replace" });
     expect(body(fetch, 1).mutations).toHaveLength(1); expect((body(fetch, 1).mutations as { upsert: unknown }[])[0]?.upsert).toBeDefined();
-    await db.update(key("items", "milk"), { title: "Patch" });
-    expect((body(fetch, 2).mutations as { update: unknown }[])[0]?.update).toBeDefined();
     await db.delete(key("items", "milk"));
-    expect((body(fetch, 3).mutations as { delete: unknown }[])[0]?.delete).toBeDefined();
+    expect((body(fetch, 2).mutations as { delete: unknown }[])[0]?.delete).toBeDefined();
   });
 
-  it("maps conflict and update-missing statuses to DALgo errors", async () => {
+  it("maps conflict and rejects partial updates before network access", async () => {
     const { database: db, fetch } = database();
     fetch.mockResolvedValueOnce(response(409, { error: { message: "do not leak row" } }));
     await expect(db.insert(key("items", "milk"), {})).rejects.toMatchObject({ name: "AlreadyExistsError" });
-    fetch.mockResolvedValueOnce(response(404, { error: { message: "do not leak row" } }));
-    await expect(db.update(key("items", "missing"), {})).rejects.toMatchObject({ name: "NotFoundError" });
+    await expect(db.update(key("items", "missing"), {})).rejects.toBeInstanceOf(UnsupportedError);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("compiles bounded filters, order, offset, namespace and cursor paging", async () => {
     const { database: db, fetch } = database({ namespaceId: "tenant-a", maxQueryLimit: 10 });
     const items = collection<{ done: boolean; priority: number }>("items");
     fetch.mockResolvedValueOnce(response(200, { batch: { entityResults: [{ entity: entity("milk", { done: { booleanValue: false }, priority: { integerValue: "2" } }) }], endCursor: "next", moreResults: "NOT_FINISHED" } }));
-    await expect(db.query(items.query().where("done", "==", false).where("priority", "in", [1, 2]).orderBy(DOCUMENT_ID, "desc").limit(5).offset(2).startAfter("cursor").build())).resolves.toEqual({ records: [{ key: key("items", "milk"), exists: true, data: { done: false, priority: 2 } }], nextCursor: { values: ["next"] } });
+    await expect(db.query(items.query().where("done", "==", false).where("priority", "in", [1, 2]).orderBy(DOCUMENT_ID, "desc").limit(5).offset(2).build())).resolves.toEqual({ records: [{ key: key("items", "milk"), exists: true, data: { done: false, priority: 2 } }], nextCursor: { values: ["dalgo-datastore:v1:bmV4dA"] } });
     const request = body(fetch);
     expect(request.partitionId).toEqual({ namespaceId: "tenant-a" });
-    expect(request.query).toMatchObject({ kind: [{ name: "items" }], limit: 5, offset: 2, startCursor: "cursor", order: [{ property: { name: "__key__" }, direction: "DESCENDING" }] });
+    expect(request.query).toMatchObject({ kind: [{ name: "items" }], limit: 5, offset: 2, order: [{ property: { name: "__key__" }, direction: "DESCENDING" }] });
   });
 
   it("rejects semantics it cannot preserve before network access", async () => {
@@ -68,8 +68,35 @@ describe("DatastoreDatabase", () => {
     await expect(db.query(items.query().startAt("cursor").build())).rejects.toBeInstanceOf(UnsupportedError);
     await expect(db.query(items.query().where("done", "array-contains", true).build())).rejects.toBeInstanceOf(UnsupportedError);
     await expect(db.query(items.query().where("done", "in", []).build())).rejects.toThrow("1 to 10");
+    await expect(db.query(items.query().where("done", ">", false).build())).rejects.toBeInstanceOf(UnsupportedError);
+    await expect(db.query(items.query().where("done", "!=", false).where("priority" as never, "not-in", [1]).orderBy("done").build())).rejects.toBeInstanceOf(UnsupportedError);
     await expect(db.runReadwriteTransaction(() => Promise.resolve("no"))).rejects.toBeInstanceOf(UnsupportedError);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("uses only adapter-generated opaque cursors and rejects nested arrays", async () => {
+    const { database: db, fetch } = database();
+    const items = collection<{ done: boolean }>("items");
+    fetch.mockResolvedValueOnce(response(200, { batch: { entityResults: [], endCursor: "next", moreResults: "MORE_RESULTS_AFTER_LIMIT" } }));
+    const page = await db.query(items.query().orderBy("done").limit(2).build());
+    const cursor = page.nextCursor;
+    if (cursor === undefined) throw new Error("test requires a continuation cursor");
+    fetch.mockResolvedValueOnce(response(200, { batch: { entityResults: [], endCursor: "", moreResults: "NO_MORE_RESULTS" } }));
+    await db.query(items.query().orderBy("done").startAfter(...cursor.values).build());
+    expect((body(fetch, 1).query as { startCursor: string }).startCursor).toBe("next");
+    await expect(db.query(items.query().orderBy("done").startAfter("next").build())).rejects.toBeInstanceOf(UnsupportedError);
+    await expect(db.insert(key("items", "nested"), { values: [["not allowed"]] })).rejects.toThrow("nested arrays");
+  });
+
+  it("rejects undocumented continuation states, empty continuation cursor, and pages above the requested limit", async () => {
+    const { database: db, fetch } = database();
+    const items = collection<{ done: boolean }>("items");
+    fetch.mockResolvedValueOnce(response(200, { batch: { entityResults: [], endCursor: "", moreResults: "MORE_RESULTS_AFTER_CURSOR" } }));
+    await expect(db.query(items.query().orderBy("done").limit(1).build())).rejects.toEqual(new DatastoreRequestError());
+    fetch.mockResolvedValueOnce(response(200, { batch: { entityResults: [], endCursor: "next", moreResults: "UNKNOWN" } }));
+    await expect(db.query(items.query().orderBy("done").limit(1).build())).rejects.toEqual(new DatastoreRequestError());
+    fetch.mockResolvedValueOnce(response(200, { batch: { entityResults: [{ entity: entity("one", { done: { booleanValue: true } }) }, { entity: entity("two", { done: { booleanValue: false } }) }], endCursor: "", moreResults: "NO_MORE_RESULTS" } }));
+    await expect(db.query(items.query().orderBy("done").limit(1).build())).rejects.toEqual(new DatastoreRequestError());
   });
 
   it("rejects unsafe JSON, secrets in transport failures, bad endpoints, malformed responses and oversized bodies", async () => {

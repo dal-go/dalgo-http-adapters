@@ -52,7 +52,7 @@ database (default `(default)`), and namespace apply to every operation.
 | `get` / `getMany` | One bounded `projects:lookup`; results are reordered to the requested key order. |
 | `insert` | Non-transactional `commit` with an `insert` mutation; HTTP 409 becomes `AlreadyExistsError`. |
 | `set` | Non-transactional `commit` with a full-entity `upsert` mutation. |
-| `update` | Non-transactional `commit` with a full-entity `update` mutation; HTTP 404 becomes `NotFoundError`. |
+| `update` | Rejected: a DALgo partial update cannot honestly be mapped to a full-entity Datastore mutation. |
 | `delete` | Non-transactional `commit` with a delete mutation. |
 | `query` | `runQuery` for one kind, bounded filters/orders/offset, and adapter-generated `startAfter` cursor pagination. |
 
@@ -77,9 +77,15 @@ this generic JSON mapping.
   filters (1–10 values for the latter two), plus `__key__` through `DOCUMENT_ID`.
   Datastore index requirements, consistency behavior, query restrictions, and
   IAM are server concerns and are not hidden by this adapter.
-- `set` and `update` send a complete entity. DALgo `UpdateData` is therefore
-  replacement-shaped here; it is not a field-mask patch. Datastore commit mode
+- `set` sends a complete entity. `update` is deliberately rejected rather than
+  accidentally replacing omitted fields: Datastore commit mode
   is `NON_TRANSACTIONAL`, so multi-request read-modify-write is not atomic.
+- Cursor continuation uses a validated adapter-generated opaque envelope around
+  the server cursor. Raw or hand-constructed DALgo cursor values are rejected.
+- Datastore disallows arrays directly inside arrays; encoding rejects them. The
+  adapter also rejects incompatible disjunctive filters, multiple inequality
+  properties, missing first inequality order, and duplicate order properties
+  before issuing a request.
 - Request and response JSON default to 1 MiB; lookups to 1,000 keys; queries to
   1,000 records; and every request (token acquisition, transport, and response
   body) to a 15 second deadline. HTTP failures expose only status; provider

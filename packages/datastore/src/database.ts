@@ -2,7 +2,6 @@ import {
   AlreadyExistsError,
   DOCUMENT_ID,
   Key,
-  NotFoundError,
   UnsupportedError,
   identityCodec,
   type Codec,
@@ -21,6 +20,7 @@ const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
 const DEFAULT_MAX_GET_MANY = 1_000;
 const DEFAULT_MAX_QUERY_LIMIT = 1_000;
+const CURSOR_PREFIX = "dalgo-datastore:v1:";
 
 export type DatastoreFetch = typeof globalThis.fetch;
 export type DatastoreAccessTokenProvider = () => string | Promise<string>;
@@ -121,7 +121,7 @@ async function jsonBody(response: Response, maximum: number, signal: AbortSignal
   return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
 }
 
-function dataValue(value: unknown, seen = new Set<object>()): DatastoreValue {
+function dataValue(value: unknown, seen = new Set<object>(), insideArray = false): DatastoreValue {
   if (value === null) return { nullValue: null };
   if (typeof value === "string") return { stringValue: value };
   if (typeof value === "boolean") return { booleanValue: value };
@@ -130,15 +130,16 @@ function dataValue(value: unknown, seen = new Set<object>()): DatastoreValue {
     return Number.isSafeInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
   }
   if (Array.isArray(value)) {
+    if (insideArray) throw new TypeError("Datastore values must not contain nested arrays");
     if (seen.has(value)) throw new TypeError("Datastore values must not contain cycles");
-    seen.add(value); const values = value.map((item) => dataValue(item, seen)); seen.delete(value);
+    seen.add(value); const values = value.map((item) => dataValue(item, seen, true)); seen.delete(value);
     return { arrayValue: { values } };
   }
   if (!plainObject(value)) throw new TypeError("Datastore values must be JSON primitives, arrays, or plain objects");
   if (seen.has(value)) throw new TypeError("Datastore values must not contain cycles");
   seen.add(value);
   const properties: JsonObject = {};
-  for (const [name, item] of Object.entries(value)) properties[identifier(name, "property name")] = dataValue(item, seen);
+  for (const [name, item] of Object.entries(value)) properties[identifier(name, "property name")] = dataValue(item, seen, false);
   seen.delete(value);
   return { entityValue: { properties } };
 }
@@ -202,6 +203,65 @@ function compileFilter(filter: QueryFilter<unknown>, collection: string): JsonOb
   return { propertyFilter: { property: { name: propertyName(filter.field) }, op: operation, value: filterValue(filter, collection) } };
 }
 
+function opaqueCursor(raw: string): string {
+  if (raw.length === 0) throw new DatastoreRequestError();
+  const bytes = new TextEncoder().encode(raw);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `${CURSOR_PREFIX}${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "")}`;
+}
+
+function rawCursor(cursor: import("@dal-go/dalgo").QueryCursor): string {
+  if (cursor.values.length !== 1 || typeof cursor.values[0] !== "string" || !cursor.values[0].startsWith(CURSOR_PREFIX)) {
+    throw new UnsupportedError("Datastore cursors other than adapter-generated opaque cursors");
+  }
+  const encoded = cursor.values[0].slice(CURSOR_PREFIX.length);
+  if (!/^[A-Za-z0-9_-]+$/u.test(encoded)) throw new UnsupportedError("Datastore malformed opaque cursor");
+  try {
+    const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+    const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (opaqueCursor(raw) !== cursor.values[0]) throw new Error("non-canonical cursor");
+    return raw;
+  } catch {
+    throw new UnsupportedError("Datastore malformed opaque cursor");
+  }
+}
+
+function validateQuery<T>(query: StructuredQuery<T>): void {
+  const operators = query.filters.map((filter) => filter.operator);
+  const notEqual = query.filters.filter((filter) => filter.operator === "!=");
+  const notIn = query.filters.filter((filter) => filter.operator === "not-in");
+  const inFilters = query.filters.filter((filter) => filter.operator === "in");
+  if (notEqual.length > 1 || notIn.length > 1 || inFilters.length > 1) throw new UnsupportedError("Datastore repeated disjunctive filters");
+  if ((notEqual.length > 0 && notIn.length > 0) || (notIn.length > 0 && inFilters.length > 0)) throw new UnsupportedError("Datastore incompatible not-equal, not-in, and in filters");
+  const inequalities = query.filters.filter((filter) => ["!=", "<", "<=", ">", ">=", "not-in"].includes(filter.operator));
+  const inequalityFields = new Set(inequalities.map((filter) => propertyName(filter.field)));
+  if (inequalityFields.size > 1) throw new UnsupportedError("Datastore inequalities on multiple properties");
+  if (inequalities.length > 0) {
+    const firstOrder = query.orders[0];
+    const field = inequalities[0];
+    if (firstOrder === undefined || field === undefined || propertyName(firstOrder.field) !== propertyName(field.field)) {
+      throw new UnsupportedError("Datastore inequality filters without matching first order");
+    }
+  }
+  const orderFields = new Set<string>();
+  for (const order of query.orders) {
+    const field = propertyName(order.field);
+    if (orderFields.has(field)) throw new UnsupportedError("Datastore duplicate order properties");
+    orderFields.add(field);
+  }
+  for (const filter of query.filters) {
+    if (filter.value === undefined) throw new UnsupportedError("Datastore undefined query filters");
+    if (filter.value === null && filter.operator !== "==") throw new UnsupportedError("Datastore null filters other than equality");
+    if (["in", "not-in"].includes(filter.operator) && (!Array.isArray(filter.value) || filter.value.length === 0 || filter.value.length > 10)) {
+      throw new TypeError("Datastore in and not-in filters require 1 to 10 values");
+    }
+  }
+  void operators;
+}
+
 export class DatastoreDatabase implements Database, WriteSession {
   readonly #projectId: string; readonly #databaseId: string; readonly #namespaceId: string | undefined;
   readonly #accessToken: DatastoreAccessTokenProvider; readonly #fetch: DatastoreFetch; readonly #baseUrl: string;
@@ -223,7 +283,7 @@ export class DatastoreDatabase implements Database, WriteSession {
 
   public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
     if (keys.length > this.#maxGetMany) throw new UnsupportedError(`Datastore getMany above ${String(this.#maxGetMany)} keys`); if (keys.length === 0) return [];
-    const paths = keys.map(pathFor); const response = await this.call("lookup", { databaseId: this.#databaseId, keys: paths.map((path) => this.wireKey(path)) });
+    const paths = keys.map(pathFor); const response = await this.call("lookup", { databaseId: this.requestDatabaseId(), keys: paths.map((path) => this.wireKey(path)) });
     if (!object(response) || (response.deferred !== undefined && (!Array.isArray(response.deferred) || response.deferred.length > 0))) throw new DatastoreRequestError();
     const found = response.found ?? []; const missing = response.missing ?? []; if (!Array.isArray(found) || !Array.isArray(missing)) throw new DatastoreRequestError();
     const byPath = new Map<string, { readonly exists: boolean; readonly entity?: JsonObject }>();
@@ -234,7 +294,7 @@ export class DatastoreDatabase implements Database, WriteSession {
 
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { try { await this.commit({ insert: this.entity(key, data, codec) }); } catch (error) { if (error instanceof DatastoreHttpError && error.status === 409) throw new AlreadyExistsError(key, { cause: error }); throw error; } }
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { await this.commit({ upsert: this.entity(key, data, codec) }); }
-  public async update(key: Key, data: UpdateData): Promise<void> { try { await this.commit({ update: this.entity(key, data) }); } catch (error) { if (error instanceof DatastoreHttpError && error.status === 404) throw new NotFoundError(key, { cause: error }); throw error; } }
+  public async update(key: Key, data: UpdateData): Promise<void> { void key; void data; throw new UnsupportedError("Datastore partial update without an atomic field-mask mapping"); }
   public async delete(key: Key): Promise<void> { await this.commit({ delete: this.wireKey(pathFor(key)) }); }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
@@ -243,22 +303,25 @@ export class DatastoreDatabase implements Database, WriteSession {
     const collection = identifier(query.source.name, "kind"); const limit = query.limit ?? this.#maxQueryLimit;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#maxQueryLimit) throw new UnsupportedError(`Datastore query limit above ${String(this.#maxQueryLimit)}`);
     if (query.offset !== undefined && (!Number.isSafeInteger(query.offset) || query.offset < 0)) throw new TypeError("Datastore query offset must be a non-negative safe integer");
-    if (query.startAfter !== undefined && (query.startAfter.values.length !== 1 || typeof query.startAfter.values[0] !== "string")) throw new UnsupportedError("Datastore cursors other than adapter-generated opaque cursors");
+    if (query.startAfter !== undefined) rawCursor(query.startAfter);
+    validateQuery(query);
     const filters = query.filters.map((filter) => compileFilter(filter as QueryFilter<unknown>, collection));
     const parent = query.source.parent === undefined ? undefined : this.wireKey(pathFor(query.source.parent));
     const allFilters = parent === undefined ? filters : [{ propertyFilter: { property: { name: "__key__" }, op: "HAS_ANCESTOR", value: { keyValue: parent } } }, ...filters];
-    const body: JsonObject = { databaseId: this.#databaseId, partitionId: { ...(this.#namespaceId === undefined ? {} : { namespaceId: this.#namespaceId }) }, query: { kind: [{ name: collection }], limit, ...(allFilters.length === 0 ? {} : { filter: allFilters.length === 1 ? allFilters[0] : { compositeFilter: { op: "AND", filters: allFilters } } }), ...(query.orders.length === 0 ? {} : { order: query.orders.map((order) => { if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("Datastore query order direction"); return { property: { name: propertyName(order.field) }, direction: order.direction === "asc" ? "ASCENDING" : "DESCENDING" }; }) }), ...(query.offset === undefined ? {} : { offset: query.offset }), ...(query.startAfter === undefined ? {} : { startCursor: query.startAfter.values[0] }) } };
+    const body: JsonObject = { databaseId: this.requestDatabaseId(), partitionId: { ...(this.#namespaceId === undefined ? {} : { namespaceId: this.#namespaceId }) }, query: { kind: [{ name: collection }], limit, ...(allFilters.length === 0 ? {} : { filter: allFilters.length === 1 ? allFilters[0] : { compositeFilter: { op: "AND", filters: allFilters } } }), ...(query.orders.length === 0 ? {} : { order: query.orders.map((order) => { if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("Datastore query order direction"); return { property: { name: propertyName(order.field) }, direction: order.direction === "asc" ? "ASCENDING" : "DESCENDING" }; }) }), ...(query.offset === undefined ? {} : { offset: query.offset }), ...(query.startAfter === undefined ? {} : { startCursor: rawCursor(query.startAfter) }) } };
     const response = await this.call("runQuery", body); if (!object(response) || !object(response.batch)) throw new DatastoreRequestError(); const batch = response.batch;
-    if (!Array.isArray(batch.entityResults) || typeof batch.endCursor !== "string" || typeof batch.moreResults !== "string") throw new DatastoreRequestError();
+    if (!Array.isArray(batch.entityResults) || typeof batch.moreResults !== "string" || !new Set(["NOT_FINISHED", "MORE_RESULTS_AFTER_LIMIT", "MORE_RESULTS_AFTER_CURSOR", "NO_MORE_RESULTS", "MORE_RESULTS_TYPE_UNSPECIFIED"]).has(batch.moreResults)) throw new DatastoreRequestError();
+    if (batch.entityResults.length > limit || (batch.moreResults !== "NO_MORE_RESULTS" && (batch.moreResults === "MORE_RESULTS_TYPE_UNSPECIFIED" || typeof batch.endCursor !== "string" || batch.endCursor.length === 0))) throw new DatastoreRequestError();
     const records = batch.entityResults.map((item) => { const entity = this.entityFromResult(item); const key = this.keyFromPath(this.pathFromWire(entity.key)); return this.snapshot(key, entity, query.source.codec); });
-    return { records, ...(batch.moreResults === "NO_MORE_RESULTS" ? {} : { nextCursor: { values: [batch.endCursor] } }) };
+    return { records, ...(batch.moreResults === "NO_MORE_RESULTS" ? {} : { nextCursor: { values: [opaqueCursor(batch.endCursor as string)] } }) };
   }
 
   public async runReadwriteTransaction<Result>(callback: (transaction: import("@dal-go/dalgo").ReadwriteTransaction) => Promise<Result>): Promise<Result> { void callback; throw new UnsupportedError("Datastore callback transactions"); }
 
   private wireKey(path: readonly JsonObject[]): DatastoreKey { return { partitionId: { projectId: this.#projectId, databaseId: this.#databaseId, ...(this.#namespaceId === undefined ? {} : { namespaceId: this.#namespaceId }) }, path }; }
   private entity<T>(key: Key, data: T, codec?: Codec<T>): JsonObject { const encoded = codecOrIdentity(codec).encode(data); if (!plainObject(encoded)) throw new TypeError("Datastore DALgo records must encode to a plain object"); const properties: JsonObject = {}; for (const [name, value] of Object.entries(encoded)) properties[identifier(name, "property name")] = dataValue(value); return { key: this.wireKey(pathFor(key)), properties }; }
-  private async commit(mutation: JsonObject): Promise<void> { const response = await this.call("commit", { databaseId: this.#databaseId, mode: "NON_TRANSACTIONAL", mutations: [mutation] }); if (!object(response) || !Array.isArray(response.mutationResults) || response.mutationResults.length !== 1) throw new DatastoreRequestError(); }
+  private requestDatabaseId(): string { return this.#databaseId === "(default)" ? "" : this.#databaseId; }
+  private async commit(mutation: JsonObject): Promise<void> { const response = await this.call("commit", { databaseId: this.requestDatabaseId(), mode: "NON_TRANSACTIONAL", mutations: [mutation] }); if (!object(response) || !Array.isArray(response.mutationResults) || response.mutationResults.length !== 1) throw new DatastoreRequestError(); }
   private entityFromResult(value: unknown): JsonObject { if (!object(value) || !object(value.entity) || !object(value.entity.key) || !object(value.entity.properties)) throw new DatastoreRequestError(); return value.entity; }
   private pathFromWire(value: unknown): readonly JsonObject[] { if (!object(value) || !Array.isArray(value.path) || value.path.length === 0 || !value.path.every(object)) throw new DatastoreRequestError(); return value.path; }
   private keyFromPath(path: readonly JsonObject[]): Key { let result: Key | undefined; for (const segment of path) { if (typeof segment.kind !== "string") throw new DatastoreRequestError(); const id = typeof segment.name === "string" ? segment.name : typeof segment.id === "string" && /^\d+$/u.test(segment.id) ? Number(segment.id) : undefined; if (id === undefined || (typeof id === "number" && (!Number.isSafeInteger(id) || id <= 0))) throw new DatastoreRequestError(); result = new Key(segment.kind, id, result); } if (result === undefined) throw new DatastoreRequestError(); return result; }
