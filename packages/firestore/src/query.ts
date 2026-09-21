@@ -7,7 +7,7 @@ import {
   type QueryOrder,
   type QuerySource,
   type StructuredQuery,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import {
   collection,
   collectionGroup,

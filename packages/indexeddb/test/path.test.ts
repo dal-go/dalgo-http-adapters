@@ -1,4 +1,4 @@
-import { key } from "@dal-go/dalgo";
+import { key } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 import { deserializeKey, serializeKey } from "../src/index.js";
 

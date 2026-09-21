@@ -1,4 +1,4 @@
-import { Key, type CollectionSource } from "@dal-go/dalgo";
+import { Key, type CollectionSource } from "@dalgo/core";
 
 export function firestoreCollectionPath<T>(source: CollectionSource<T>): string {
   return source.parent === undefined

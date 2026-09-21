@@ -1,22 +1,20 @@
-# dalgo2indexeddb-js
+# `@dalgo/indexeddb`
 
-Native browser [IndexedDB](https://developer.mozilla.org/docs/Web/API/IndexedDB_API) adapter for the TypeScript implementation of [DALgo](https://github.com/dal-go/dalgo-js).
+Native browser [IndexedDB](https://developer.mozilla.org/docs/Web/API/IndexedDB_API) adapter for [`@dalgo/core`](https://www.npmjs.com/package/@dalgo/core).
 
-This adapter provides local, same-origin browser persistence. It complements `dalgo2firestore-js`; it does not synchronize IndexedDB with Firestore or an OpenVaultDB server by itself.
+This adapter provides local, same-origin browser persistence. It complements `@dalgo/firestore`; it does not synchronize IndexedDB with Firestore or an OpenVaultDB server by itself.
 
 ## Install
 
-The packages are currently available from GitHub rather than the npm registry:
-
 ```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2indexeddb-js
+pnpm add @dalgo/core @dalgo/indexeddb
 ```
 
 ## Use
 
 ```ts
-import { collection } from "@dal-go/dalgo";
-import { IndexedDbDatabase } from "@dal-go/dalgo2indexeddb";
+import { collection } from "@dalgo/core";
+import { IndexedDbDatabase } from "@dalgo/indexeddb";
 
 interface Todo {
   title: string;

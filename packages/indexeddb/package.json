@@ -1,5 +1,5 @@
 {
-  "name": "@dal-go/dalgo2indexeddb",
+  "name": "@dalgo/indexeddb",
   "version": "0.1.0",
   "description": "IndexedDB adapter for DALgo TypeScript",
   "type": "module",
@@ -34,14 +34,17 @@
   },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/indexeddb#readme",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dal-go/dalgo": "^0.1.0"
+    "@dalgo/core": "^0.1.0"
   },
   "devDependencies": {
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d",
+    "@dalgo/core": "^0.1.0",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "fake-indexeddb": "6.2.5",

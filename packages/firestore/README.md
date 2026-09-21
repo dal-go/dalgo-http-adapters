@@ -1,26 +1,25 @@
 # DALgo adapter for Firestore Web
 
-`@dal-go/dalgo2firestore` implements the
-[`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) database contracts with
+`@dalgo/firestore` implements the
+[`@dalgo/core`](https://www.npmjs.com/package/@dalgo/core) database contracts with
 Firebase's modular Cloud Firestore Web SDK. It is intended for browser apps,
 including apps that query an OpenVaultDB Firestore database directly.
 
 ## Install
 
 ```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2firestore-js firebase
+pnpm add @dalgo/core @dalgo/firestore firebase
 ```
 
-The repositories currently build as `@dal-go/dalgo` and
-`@dal-go/dalgo2firestore`; the first npm publication has not been performed.
+Both packages are published to npm as `@dalgo/core` and `@dalgo/firestore`.
 
 ## Browser setup
 
 ```ts
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { collection, key } from "@dal-go/dalgo";
-import { FirestoreDatabase } from "@dal-go/dalgo2firestore";
+import { collection, key } from "@dalgo/core";
+import { FirestoreDatabase } from "@dalgo/firestore";
 
 interface Item {
   title: string;

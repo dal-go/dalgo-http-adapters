@@ -1,4 +1,4 @@
-import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, collection, collectionGroup, key } from "@dal-go/dalgo";
+import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, collection, collectionGroup, key } from "@dalgo/core";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import { IndexedDbDatabase } from "../src/index.js";

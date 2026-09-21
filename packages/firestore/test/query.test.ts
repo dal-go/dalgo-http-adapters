@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { DOCUMENT_ID, UnsupportedError, collection, collectionGroup, key } from "@dal-go/dalgo";
+import { DOCUMENT_ID, UnsupportedError, collection, collectionGroup, key } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 import { compileFirestoreQuery, toFirestoreDocumentIdValue } from "../src/index.js";
 

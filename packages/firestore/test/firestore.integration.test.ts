@@ -1,4 +1,4 @@
-import { collection, key } from "@dal-go/dalgo";
+import { collection, key } from "@dalgo/core";
 import { deleteApp, initializeApp } from "firebase/app";
 import {
   connectFirestoreEmulator,

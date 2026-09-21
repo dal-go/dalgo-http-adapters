@@ -1,5 +1,5 @@
 {
-  "name": "@dal-go/dalgo2firestore",
+  "name": "@dalgo/firestore",
   "version": "0.1.0",
   "description": "Firestore Web SDK adapter for DALgo TypeScript",
   "type": "module",
@@ -35,15 +35,18 @@
   },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/firestore#readme",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dal-go/dalgo": "^0.1.0",
+    "@dalgo/core": "^0.1.0",
     "firebase": "^12.19.0"
   },
   "devDependencies": {
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d",
+    "@dalgo/core": "^0.1.0",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "firebase": "12.19.0",

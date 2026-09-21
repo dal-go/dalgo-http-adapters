@@ -1,4 +1,4 @@
-import { collection, key } from "@dal-go/dalgo";
+import { collection, key } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 import { firestoreCollectionPath, keyFromDocumentPath } from "../src/index.js";
 

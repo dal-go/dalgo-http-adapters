@@ -1,4 +1,4 @@
-import { Key, type KeyId, type QuerySource } from "@dal-go/dalgo";
+import { Key, type KeyId, type QuerySource } from "@dalgo/core";
 
 export interface SerializedKeyPart {
   readonly collection: string;

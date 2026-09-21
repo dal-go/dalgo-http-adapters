@@ -9,7 +9,7 @@ import {
   type QueryPage,
   type QuerySource,
   type StructuredQuery,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import { collectionPath, deserializeKey, type SerializedKeyPart } from "./path.js";
 
 export interface StoredRecord {

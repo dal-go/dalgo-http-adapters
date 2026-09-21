@@ -10,7 +10,7 @@ import {
   type StructuredQuery,
   type QueryPage,
   type UpdateData,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import { serializeKey } from "./path.js";
 import { executeQuery, type StoredRecord } from "./query.js";
 
