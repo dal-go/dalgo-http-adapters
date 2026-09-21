@@ -22,14 +22,14 @@ describe("PocketBaseDatabase", () => {
     fetch.mockResolvedValueOnce(response(200, { id: milk, collectionId: "abc", collectionName: "items", created: "now", updated: "now", expand: {}, done: false }));
     await expect(db.get<{ done: boolean }>(key("items", milk))).resolves.toEqual({ key: key("items", milk), exists: true, data: { done: false } });
     expect(fetch.mock.calls[0]?.[0].toString()).toBe(`https://db.example.com/api/collections/items/records/${milk}`);
-    expect(header(fetch, "authorization")).toBe("Bearer opaque"); expect(headers).toHaveBeenCalledOnce(); expect(init(fetch).credentials).toBe("include");
+    expect(header(fetch, "authorization")).toBe("Bearer opaque"); expect(headers).toHaveBeenCalledOnce(); expect(init(fetch).credentials).toBe("omit");
   });
 
   it("maps create, patch, and delete to records endpoints", async () => {
     const { db, fetch } = setup();
-    fetch.mockResolvedValueOnce(response(200)); await db.insert(key("items", milk), { done: false });
+    fetch.mockResolvedValueOnce(response(200, { id: milk, collectionName: "items" })); await db.insert(key("items", milk), { done: false });
     expect(init(fetch).method).toBe("POST"); expect(JSON.parse(init(fetch).body as string)).toEqual({ id: milk, done: false });
-    fetch.mockResolvedValueOnce(response(200)); await db.update(key("items", milk), { done: true }); expect(init(fetch, 1).method).toBe("PATCH");
+    fetch.mockResolvedValueOnce(response(200, { id: milk, collectionName: "items" })); await db.update(key("items", milk), { done: true }); expect(init(fetch, 1).method).toBe("PATCH");
     fetch.mockResolvedValueOnce(response(204)); await db.delete(key("items", milk)); expect(init(fetch, 2).method).toBe("DELETE");
   });
 
@@ -72,6 +72,20 @@ describe("PocketBaseDatabase", () => {
     await expect(small.get(key("items", milk))).rejects.toEqual(new PocketBaseRequestError());
     fetch.mockResolvedValueOnce(response(200, { items: [{ id: "bad\nrecord", done: false }] }));
     await expect(db.query(collection<{ done: boolean }>("items").query().build())).rejects.toEqual(new PocketBaseRequestError());
+  });
+
+  it("validates successful mutation identity and exact list page envelopes", async () => {
+    const { db, fetch } = setup(); const items = collection<{ done: boolean }>("items");
+    fetch.mockResolvedValueOnce(response(200, { id: bread, collectionName: "items" }));
+    await expect(db.insert(key("items", milk), {})).rejects.toEqual(new PocketBaseRequestError());
+    fetch.mockResolvedValueOnce(response(200, { id: milk, collectionName: "other" }));
+    await expect(db.update(key("items", milk), {})).rejects.toEqual(new PocketBaseRequestError());
+    fetch.mockResolvedValueOnce(response(200, { page: 2, perPage: 1, items: [] }));
+    await expect(db.query(items.query().limit(1).build())).rejects.toEqual(new PocketBaseRequestError());
+    fetch.mockResolvedValueOnce(response(200, { page: 1, perPage: 2, items: [] }));
+    await expect(db.query(items.query().limit(1).build())).rejects.toEqual(new PocketBaseRequestError());
+    fetch.mockResolvedValueOnce(response(200, { page: 1, perPage: 1, items: [{ id: milk }, { id: bread }] }));
+    await expect(db.query(items.query().limit(1).build())).rejects.toEqual(new PocketBaseRequestError());
   });
 
   it("requires HTTPS outside loopback and validates externally mapped collections", async () => {

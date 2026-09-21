@@ -220,7 +220,7 @@ export class PocketBaseDatabase implements Database {
   }
 
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
-    await this.request(this.recordsUrl(key.collection), "POST", { id: recordId(key), ...recordData(data, codecOrIdentity(codec)) }, false);
+    this.assertMutationRecord(await this.request(this.recordsUrl(key.collection), "POST", { id: recordId(key), ...recordData(data, codecOrIdentity(codec)) }, true), key);
   }
 
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
@@ -231,7 +231,7 @@ export class PocketBaseDatabase implements Database {
   }
 
   public async update(key: Key, data: UpdateData): Promise<void> {
-    try { await this.request(this.recordUrl(key), "PATCH", recordData(data, identityCodec as Codec<UpdateData>), false); }
+    try { this.assertMutationRecord(await this.request(this.recordUrl(key), "PATCH", recordData(data, identityCodec as Codec<UpdateData>), true), key); }
     catch (error) { if (error instanceof PocketBaseHttpError && error.status === 404) throw new NotFoundError(key, { cause: error }); throw error; }
   }
 
@@ -256,7 +256,7 @@ export class PocketBaseDatabase implements Database {
       return `${order.direction === "desc" ? "-" : "+"}${field(order.field)}`;
     }).join(","));
     const payload = await this.request(url, "GET", undefined, true);
-    if (!plainObject(payload) || !Array.isArray(payload.items) || !payload.items.every(plainObject)) throw new PocketBaseRequestError();
+    if (!plainObject(payload) || payload.page !== 1 || payload.perPage !== window || !Array.isArray(payload.items) || payload.items.length > window || !payload.items.every(plainObject)) throw new PocketBaseRequestError();
     return { records: payload.items.slice(offset, window).map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
   }
 
@@ -275,7 +275,7 @@ export class PocketBaseDatabase implements Database {
       const provided = await abortable(Promise.resolve().then(() => typeof this.#headers === "function" ? this.#headers() : this.#headers), controller.signal);
       if (provided !== undefined) validateHeaders(provided);
       const headers = new Headers(provided); headers.set("accept", "application/json"); if (text !== undefined) headers.set("content-type", "application/json");
-      const response = await abortable(Promise.resolve().then(() => this.#fetch(url, { method, headers, redirect: "error", credentials: "include", ...(text === undefined ? {} : { body: text }), signal: controller.signal })), controller.signal);
+      const response = await abortable(Promise.resolve().then(() => this.#fetch(url, { method, headers, redirect: "error", credentials: "omit", ...(text === undefined ? {} : { body: text }), signal: controller.signal })), controller.signal);
       if (!response.ok) { cancel(response.body); throw new PocketBaseHttpError(response.status); }
       if (!decode) { cancel(response.body); return undefined; }
       return await readJson(response, this.#maxResponseBytes, controller.signal);
@@ -289,5 +289,15 @@ export class PocketBaseDatabase implements Database {
     if (requested !== undefined && id !== recordId(requested)) throw new PocketBaseRequestError();
     const data = { ...row }; for (const name of RESERVED_FIELDS) delete data[name];
     return { key: parsed, exists: true, data: codecOrIdentity(codec).decode(data) };
+  }
+
+  private assertMutationRecord(row: unknown, requested: Key): void {
+    if (!plainObject(row) || responseRecordId(row.id) !== recordId(requested)) throw new PocketBaseRequestError();
+    const expectedCollection = collectionId(this.#collectionName(requested.collection));
+    const name = row.collectionName;
+    const id = row.collectionId;
+    if (name !== undefined && typeof name !== "string") throw new PocketBaseRequestError();
+    if (id !== undefined && typeof id !== "string") throw new PocketBaseRequestError();
+    if ((name !== undefined || id !== undefined) && name !== expectedCollection && id !== expectedCollection) throw new PocketBaseRequestError();
   }
 }

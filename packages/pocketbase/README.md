@@ -9,7 +9,8 @@ API.
 
 The adapter requires an HTTPS PocketBase URL, except for loopback development.
 For a browser application, provide a currently authenticated **auth-record
-user** token through `headers`; PocketBase collection `listRule`, `viewRule`,
+user** token through `headers`; requests use `credentials: "omit"` and do not
+depend on ambient cookies. PocketBase collection `listRule`, `viewRule`,
 `createRule`, `updateRule`, and `deleteRule` remain the authorization boundary.
 Configure PocketBase CORS for the exact site origin and required `Authorization`
 header. Test the deployed rule set: CORS approval is not authorization.
