@@ -8,6 +8,8 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 
 | Adapter | Local package |
 |---|---|
+| Algolia | [`@dal-go/dalgo2algolia`](packages/algolia) |
+| Appwrite | [`@dal-go/dalgo2appwrite`](packages/appwrite) |
 | BigQuery | [`@dal-go/dalgo2bigquery`](packages/bigquery) |
 | ClickHouse | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) |
 | Cosmos DB | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) |
@@ -90,8 +92,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | 20 | libSQL protocol / Turso | HTTP-capable | Yes | Yes | Yes | Yes | SQL | Yes | Hrana batches and batons; DALgo callback transactions unsupported | Replication/watch capabilities vary | Hrana v3 uses HTTP, but broad database tokens are not browser-safe; use a trusted runtime or narrowly scoped token broker. | Implemented: [`@dal-go/dalgo2libsql`](packages/libsql), a provider-neutral Hrana v3 adapter rather than a Turso-only wrapper. |
 | 21 | Qdrant REST | HTTP-capable | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Vector/filter search | Vector/search aggregation features | No DALgo-equivalent transactions | Updates/streaming are not general CDC | CORS may be deployment-specific and API keys normally require a trusted runtime or proxy. | Implemented: [`@dal-go/dalgo2qdrant`](packages/qdrant), with explicit vector search and no fake conditional-write semantics. |
 | 22 | Pinecone data API | HTTP-capable | Yes | Upsert | Update | Delete | Vector/filter search | Limited | No | No generic CDC | API keys are server credentials; use a proxy. | `dalgo2pinecone-js`; vector semantics only. |
-| 23 | Algolia Search API | Browser-ready | Yes | Server-side indexing | Server-side indexing | Server-side indexing | Search/filter | Facets | No | Browse/task polling, not CDC | Search-only keys are browser-safe; admin/index keys are not. | `dalgo2algolia-js`; browser read/search, trusted-runtime writes. |
-| 24 | Appwrite Databases API | Browser-ready | Yes | Yes | Yes | Yes | Queries | Limited | Product-specific | Realtime API | Session auth and permissions are public-client-oriented. | `dalgo2appwrite-js`. |
+| 23 | Algolia Search/Records APIs | Browser-ready for search; trusted-runtime writes | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Search/filter | Facets | No | Async indexing task receipts, not CDC | Restricted search-only keys are browser-safe; writes require an explicit trusted mode and a write-capable key. | Implemented: [`@dal-go/dalgo2algolia`](packages/algolia), with separate DSN read and write hosts. |
+| 24 | Appwrite TablesDB rows API | Browser-ready | Yes | Yes | Yes | Yes | JSON queries | Limited | No DALgo callback transactions | Realtime is a separate API | Browser sessions/JWT and row permissions are public-client-oriented; API keys require explicit trusted-server mode. | Implemented: [`@dal-go/dalgo2appwrite`](packages/appwrite), against the current TablesDB rows HTTP API. |
 | 25 | PocketBase records API | Browser-ready | Yes | Yes | Yes | Yes | Filter/sort/expand | Limited | No public multi-operation transaction | Realtime subscriptions | Browser SDK, collection rules, and user tokens. | `dalgo2pocketbase-js`. |
 
 ## Hyperscaler coverage
@@ -159,6 +161,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [libSQL Hrana over HTTP v3 specification](https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md)
 - [Qdrant interfaces](https://qdrant.tech/documentation/interfaces/)
 - [Algolia JavaScript API](https://www.algolia.com/developers/search-api-javascript)
+- [Appwrite TablesDB rows API](https://appwrite.io/docs/references/cloud/client-web/tablesDB)
 
 ## Delivery status
 
@@ -182,6 +185,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2libsql`](packages/libsql) | Implemented provider-neutral CRUD/query adapter over the libSQL Hrana v3 HTTP pipeline, with explicit table/key/projection mappings, bounded response handling, and no claim of DALgo callback-transaction support. |
 | [`@dal-go/dalgo2postgrest`](packages/postgrest) | Implemented bounded top-level CRUD/query adapter for the provider-neutral PostgREST protocol; callback transactions, cursors, embedding, and RPC remain explicitly unsupported. |
 | [`@dal-go/dalgo2qdrant`](packages/qdrant) | Implemented bounded point get/upsert/delete, filtered reads, and explicit vector search over Qdrant REST; atomic insert/update, transactions, generic ordering, and DALgo cursors remain explicitly unsupported. |
+| [`@dal-go/dalgo2appwrite`](packages/appwrite) | Implemented bounded TablesDB row CRUD/query with current JSON query encoding, explicit browser-session and trusted-server credential modes, and no claim of DALgo callback-transaction support. |
+| [`@dal-go/dalgo2algolia`](packages/algolia) | Implemented bounded object reads/search plus explicit trusted-runtime upsert/delete; atomic conditional writes, DALgo cursors, generic ordering, nesting, and transactions remain unsupported. |
 
 ## Adapter acceptance bar
 
