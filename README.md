@@ -35,6 +35,7 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 | Redshift | [`@dal-go/dalgo2redshift`](packages/redshift) |
 | Snowflake | [`@dal-go/dalgo2snowflake`](packages/snowflake) |
 | Solr | [`@dal-go/dalgo2solr`](packages/solr) |
+| Google Cloud Spanner | [`@dal-go/dalgo2spanner`](packages/spanner) |
 
 Import revisions and the completed standalone-repository cutover are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
 
@@ -111,7 +112,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | Firebase Realtime Database | Browser-ready | REST and Web SDK; candidate `dalgo2firebase-rtdb-js`. |
 | Firebase Data Connect | Not applicable | Generated, typed application GraphQL operations are not a generic database data plane for arbitrary DALgo collections. |
 | BigQuery | HTTP-capable | REST jobs/query/table data; candidate analytical adapter. |
-| Spanner | HTTP-capable | REST read, SQL, mutations, sessions and read-write transactions; candidate `dalgo2spanner-js`. |
+| Spanner | HTTP-capable | Implemented: [`@dal-go/dalgo2spanner`](packages/spanner), with session-backed parameterized reads/query and single-use atomic commits; callback transactions and silent continuation are rejected. |
 | Bigtable | Not applicable | Useful data API is gRPC rather than a general browser JSON/HTTP surface. |
 | AlloyDB | Not applicable | Administration is REST; data plane is PostgreSQL wire protocol. |
 | Cloud SQL PostgreSQL / MySQL / SQL Server | Not applicable | Administration is REST; data plane uses native database protocols/connectors. |
@@ -169,6 +170,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [Appwrite TablesDB rows API](https://appwrite.io/docs/references/cloud/client-web/tablesDB)
 - [PocketBase records API](https://pocketbase.io/docs/api-records/)
 - [Cloud Datastore v1 REST data API](https://cloud.google.com/datastore/docs/reference/data/rest)
+- [Cloud Spanner v1 REST data API](https://cloud.google.com/spanner/docs/reference/rest)
 
 ## Delivery status
 
@@ -198,6 +200,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) | Implemented bounded records CRUD/query with validated paging envelopes and stateless browser token auth; atomic upsert and callback transactions remain unsupported. |
 | [`@dal-go/dalgo2datastore`](packages/datastore) | Implemented bounded Datastore-mode lookup/commit/query with explicit namespace/key mapping and query-bound instance-local cursors; partial update and callback transactions remain unsupported. |
 | [`@dal-go/dalgo2azure-table`](packages/azure-table) | Implemented bounded PartitionKey/RowKey CRUD and OData query with ETag concurrency and query-bound continuation cursors; browser use requires configured CORS plus narrowly scoped ephemeral SAS/token brokerage. |
+| [`@dal-go/dalgo2spanner`](packages/spanner) | Implemented bounded, typed, parameterized Spanner reads/query and single-use atomic commits with explicit schema/key mappings; callback transactions and paginated continuation remain unsupported. |
 
 ## Adapter acceptance bar
 
