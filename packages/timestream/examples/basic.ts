@@ -7,7 +7,7 @@ const database = new TimestreamDatabase({
   region: "eu-west-1", database: "sensors",
   // Supply refreshed IAM role credentials. Do not expose them in browser code or URLs.
   credentials: () => ({ accessKeyId: "replace-me", secretAccessKey: "replace-me", sessionToken: "optional-session-token" }),
-  tables: { readings: { table: "readings", keyColumn: "reading_id", columns: { room: "room", temperature: "measure_value::double", time: "time" } } },
+  tables: { readings: { table: "readings", keyColumn: "reading_id", columns: { room: "room", temperature: "temperature", time: "time" } } },
 });
 
 const readings = collection<Reading>("readings");

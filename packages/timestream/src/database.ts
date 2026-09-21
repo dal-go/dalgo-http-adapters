@@ -22,6 +22,14 @@ function endpoint(value: string, label: string): string {
   if (url.username || url.password || url.search || url.hash || (url.pathname !== "" && url.pathname !== "/")) throw new TypeError(`${label} must be an origin without credentials, path, query, or fragment`);
   return url.origin;
 }
+function cellEndpoint(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) throw new TypeError("malformed Timestream endpoint address");
+  const candidate = value.includes("://") ? value : `https://${value}`;
+  const origin = endpoint(candidate, "Timestream cell endpoint");
+  if (!origin.startsWith("https://")) throw new TypeError("Timestream cell endpoint must use HTTPS");
+  return origin;
+}
+function browserWindow(): boolean { return typeof globalThis.window !== "undefined" && typeof globalThis.window.document !== "undefined"; }
 
 function tables(input: Readonly<Record<string, TimestreamTable>>): Readonly<Record<string, TimestreamTable>> {
   const result: Record<string, TimestreamTable> = {};
@@ -55,16 +63,20 @@ export class TimestreamHttpError extends Error {
 export class TimestreamDatabase implements Database {
   readonly #region: string; readonly #database: string; readonly #credentials: TimestreamDatabaseOptions["credentials"];
   readonly #tables: Readonly<Record<string, TimestreamTable>>; readonly #queryEndpoint: string; readonly #writeEndpoint: string;
-  readonly #maxRows: number; readonly #maxResponseBytes: number; readonly #maxWriteRecords: number; readonly #timeoutMs: number; readonly #fetch: NonNullable<TimestreamDatabaseOptions["fetch"]>;
+  readonly #maxRows: number; readonly #maxResponseBytes: number; readonly #maxRequestBytes: number; readonly #maxWriteRecords: number; readonly #timeoutMs: number; readonly #fetch: NonNullable<TimestreamDatabaseOptions["fetch"]>; readonly #clock: () => Date;
+  #queryCell: { readonly origin: string; readonly expiresAt: number } | undefined;
+  #writeCell: { readonly origin: string; readonly expiresAt: number } | undefined;
 
   public constructor(options: TimestreamDatabaseOptions) {
+    if (browserWindow() && options.trustedRuntime !== true) throw new UnsupportedError("Timestream refuses browser-window execution without trustedRuntime: true");
     if (!regionName.test(options.region)) throw new TypeError("region must be an AWS region identifier"); name(options.database, "database"); if (typeof options.credentials !== "function") throw new TypeError("credentials must be a refreshable function");
     this.#region = options.region; this.#database = options.database; this.#credentials = options.credentials; this.#tables = tables(options.tables);
     this.#queryEndpoint = endpoint(options.queryEndpoint ?? `https://query.timestream.${options.region}.amazonaws.com`, "queryEndpoint");
     this.#writeEndpoint = endpoint(options.writeEndpoint ?? `https://ingest.timestream.${options.region}.amazonaws.com`, "writeEndpoint");
     this.#maxRows = positive(options.maxRows, 1000, "maxRows"); if (this.#maxRows > 1000) throw new RangeError("maxRows cannot exceed Timestream Query MaxRows (1000)");
-    this.#maxResponseBytes = positive(options.maxResponseBytes, 1024 * 1024, "maxResponseBytes"); this.#maxWriteRecords = positive(options.maxWriteRecords, 100, "maxWriteRecords"); if (this.#maxWriteRecords > 100) throw new RangeError("maxWriteRecords cannot exceed WriteRecords batch limit (100)");
-    this.#timeoutMs = positive(options.timeoutMs, 30_000, "timeoutMs"); this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#maxResponseBytes = positive(options.maxResponseBytes, 1024 * 1024, "maxResponseBytes"); if (this.#maxResponseBytes > 8 * 1024 * 1024) throw new RangeError("maxResponseBytes cannot exceed 8 MiB");
+    this.#maxRequestBytes = positive(options.maxRequestBytes, 1024 * 1024, "maxRequestBytes"); if (this.#maxRequestBytes > 1024 * 1024) throw new RangeError("maxRequestBytes cannot exceed 1 MiB"); this.#maxWriteRecords = positive(options.maxWriteRecords, 100, "maxWriteRecords"); if (this.#maxWriteRecords > 100) throw new RangeError("maxWriteRecords cannot exceed WriteRecords batch limit (100)");
+    this.#timeoutMs = positive(options.timeoutMs, 30_000, "timeoutMs"); if (this.#timeoutMs > 120_000) throw new RangeError("timeoutMs cannot exceed 120000"); this.#fetch = options.fetch ?? globalThis.fetch; this.#clock = options.clock ?? (() => new Date());
   }
 
   public async get<T>(key: Key, valueCodec?: Codec<T>): Promise<RecordSnapshot<T>> {
@@ -73,7 +85,7 @@ export class TimestreamDatabase implements Database {
     const value = key.id.replaceAll("'", "''");
     const page = await this.querySql(`SELECT ${projection} FROM ${quoted(this.#database, "database")}.${quoted(table.table, "Timestream table")} WHERE ${quoted(table.keyColumn, "key column")} = '${value}' LIMIT 2`, 2);
     if (page.rows.length === 0) return { key, exists: false };
-    if (page.rows.length !== 1) throw new UnsupportedError("Timestream get requires a uniquely mapped key column");
+    if (page.rows.length !== 1) throw new UnsupportedError("Timestream get requires a uniquely mapped key column"); if (this.rowKey(page.rows[0] ?? {}) !== key.id) throw new TypeError("Timestream get returned a mismatched key");
     return this.snapshot(key, page.rows[0] ?? {}, valueCodec);
   }
 
@@ -94,20 +106,20 @@ export class TimestreamDatabase implements Database {
 
   /** Executes bounded read-only Timestream SQL. Pass the returned nextToken verbatim to continue pagination. */
   public async querySql(queryString: string, maxRows = this.#maxRows, nextToken?: string): Promise<TimestreamQueryPage> {
-    if (typeof queryString !== "string" || queryString.trim() === "" || queryString.includes("\u0000") || queryString.includes(";")) throw new TypeError("querySql requires one non-empty SQL statement without NUL or semicolon");
+    if (typeof queryString !== "string" || queryString.trim() === "" || queryString.includes("\u0000") || queryString.includes(";") || queryString.length > 262_144) throw new TypeError("querySql requires one non-empty SQL statement no longer than 262144 characters without NUL or semicolon");
     if (!/^\s*(select|with)\b/iu.test(queryString)) throw new UnsupportedError("querySql only permits read-only SELECT or WITH statements");
     if (!Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > this.#maxRows) throw new RangeError(`maxRows must be between 1 and ${String(this.#maxRows)}`);
     if (nextToken !== undefined && (typeof nextToken !== "string" || nextToken.length === 0 || nextToken.length > 2048)) throw new TypeError("nextToken must be a non-empty Timestream token");
     const request: JsonObject = { QueryString: queryString, MaxRows: maxRows, ...(nextToken === undefined ? {} : { NextToken: nextToken }) };
-    const parsed = await this.request(this.#queryEndpoint, "timestream-query", "Timestream_20181101.Query", request);
-    return this.parseQuery(parsed);
+    const parsed = await this.request(await this.discover("query"), "Timestream_20181101.Query", request);
+    return this.parseQuery(parsed, maxRows);
   }
 
   /** Writes at most the configured 100 native time-series records; this is not DALgo insert/set/update. */
   public async writeRecords(table: string, records: readonly TimestreamRecord[], commonAttributes?: TimestreamRecord): Promise<TimestreamWriteResult> {
     name(table, "Timestream table"); if (!Array.isArray(records) || records.length === 0 || records.length > this.#maxWriteRecords) throw new RangeError(`writeRecords requires 1 to ${String(this.#maxWriteRecords)} records`);
     for (const record of records) this.record(record); if (commonAttributes !== undefined) this.record(commonAttributes);
-    const parsed = await this.request(this.#writeEndpoint, "timestream-write", "Timestream_20181101.WriteRecords", { DatabaseName: this.#database, TableName: table, Records: records, ...(commonAttributes === undefined ? {} : { CommonAttributes: commonAttributes }) });
+    const parsed = await this.request(await this.discover("write"), "Timestream_20181101.WriteRecords", { DatabaseName: this.#database, TableName: table, Records: records, ...(commonAttributes === undefined ? {} : { CommonAttributes: commonAttributes }) });
     if (!object(parsed) || !object(parsed.RecordsIngested)) throw new TypeError("malformed Timestream WriteRecords response");
     const result: Record<string, number> = {}; for (const [kind, count] of Object.entries(parsed.RecordsIngested)) { if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) throw new TypeError("malformed Timestream ingested count"); result[kind] = count; }
     return { recordsIngested: Object.freeze(result) };
@@ -130,38 +142,51 @@ export class TimestreamDatabase implements Database {
     if (record.Dimensions !== undefined && (!Array.isArray(record.Dimensions) || record.Dimensions.some((dimension) => !object(dimension) || typeof dimension.Name !== "string" || typeof dimension.Value !== "string"))) throw new TypeError("Timestream dimensions must have string Name and Value");
   }
 
-  private async request(origin: string, service: "timestream-query" | "timestream-write", target: string, body: JsonObject): Promise<unknown> {
-    const text = JSON.stringify(body); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+  private async discover(kind: "query" | "write"): Promise<string> {
+    const cached = kind === "query" ? this.#queryCell : this.#writeCell; const now = this.#clock().getTime();
+    if (cached !== undefined && cached.expiresAt > now) return cached.origin;
+    const regional = kind === "query" ? this.#queryEndpoint : this.#writeEndpoint;
+    const parsed = await this.request(regional, "Timestream_20181101.DescribeEndpoints", {});
+    if (!object(parsed) || !Array.isArray(parsed.Endpoints) || parsed.Endpoints.length === 0 || !object(parsed.Endpoints[0])) throw new TypeError("malformed Timestream DescribeEndpoints response");
+    const first = parsed.Endpoints[0]; const origin = cellEndpoint(first.Address); const minutes = first.CachePeriodInMinutes;
+    if (typeof minutes !== "number" || !Number.isSafeInteger(minutes) || minutes < 1 || minutes > 24 * 60) throw new TypeError("malformed Timestream endpoint cache period");
+    const entry = Object.freeze({ origin, expiresAt: now + minutes * 60_000 }); if (kind === "query") this.#queryCell = entry; else this.#writeCell = entry; return origin;
+  }
+
+  private async request(origin: string, target: string, body: JsonObject): Promise<unknown> {
+    const text = JSON.stringify(body); if (encoder.encode(text).byteLength > this.#maxRequestBytes) throw new RangeError("Timestream request exceeds maxRequestBytes"); const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
     try {
-      const credentials = await this.credentials(controller.signal); const now = amzDate(new Date()); const payloadHash = await sha256(text); const host = new URL(origin).host;
+      const credentials = await this.credentials(controller.signal); const now = amzDate(this.#clock()); const payloadHash = await this.abortable(sha256(text), controller.signal); const host = new URL(origin).host;
       const headers: Record<string, string> = { "content-type": "application/x-amz-json-1.0", host, "x-amz-content-sha256": payloadHash, "x-amz-date": now, "x-amz-target": target };
       if (credentials.sessionToken !== undefined) headers["x-amz-security-token"] = credentials.sessionToken;
       const signedHeaders = Object.keys(headers).sort(); const canonicalHeaders = signedHeaders.map((header) => `${header}:${headers[header] ?? ""}\n`).join("");
-      const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders.join(";")}\n${payloadHash}`; const scope = `${day(now)}/${this.#region}/${service}/aws4_request`;
-      const stringToSign = `AWS4-HMAC-SHA256\n${now}\n${scope}\n${await sha256(canonicalRequest)}`; const signature = hex(await hmac(await signingKey(credentials.secretAccessKey, day(now), this.#region, service), stringToSign));
+      const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders.join(";")}\n${payloadHash}`; const scope = `${day(now)}/${this.#region}/timestream/aws4_request`;
+      const stringToSign = `AWS4-HMAC-SHA256\n${now}\n${scope}\n${await this.abortable(sha256(canonicalRequest), controller.signal)}`; const signature = hex(await this.abortable(hmac(await this.abortable(signingKey(credentials.secretAccessKey, day(now), this.#region, "timestream"), controller.signal), stringToSign), controller.signal));
       headers.authorization = `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders.join(";")}, Signature=${signature}`;
-      const response = await this.#fetch(origin, { method: "POST", redirect: "error", signal: controller.signal, headers, body: text });
+      const response = await this.abortable(Promise.resolve(this.#fetch(origin, { method: "POST", redirect: "error", signal: controller.signal, headers, body: text })), controller.signal);
       if (!response.ok) { void response.body?.cancel().catch(() => undefined); throw new TimestreamHttpError(response.status); }
-      const parsed = JSON.parse(await this.body(response)) as unknown; return parsed;
+      const parsed = JSON.parse(await this.body(response, controller.signal)) as unknown; return parsed;
     } finally { clearTimeout(timer); }
   }
 
   private async credentials(signal: AbortSignal): Promise<TimestreamCredentials> {
-    const result = await Promise.race([Promise.resolve(this.#credentials()), new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("Timestream request timed out")), { once: true }))]);
+    const result = await this.abortable(Promise.resolve(this.#credentials()), signal);
     if (!object(result) || typeof result.accessKeyId !== "string" || result.accessKeyId.trim() === "" || typeof result.secretAccessKey !== "string" || result.secretAccessKey.trim() === "" || (result.sessionToken !== undefined && (typeof result.sessionToken !== "string" || result.sessionToken === ""))) throw new TypeError("credentials must return non-empty AWS access key and secret");
     return result as TimestreamCredentials;
   }
 
-  private async body(response: Response): Promise<string> {
+  private async abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> { return Promise.race([promise, new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(new Error("Timestream request timed out")), { once: true }))]); }
+
+  private async body(response: Response, signal: AbortSignal): Promise<string> {
     const advertised = response.headers.get("content-length"); if (advertised !== null && (!/^\d+$/u.test(advertised) || Number(advertised) > this.#maxResponseBytes)) { void response.body?.cancel().catch(() => undefined); throw new RangeError("Timestream response exceeds maxResponseBytes"); }
     if (response.body === null) throw new TypeError("Timestream response has no body"); const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let length = 0;
-    try { for (;;) { const item = await reader.read(); if (item.done) break; length += item.value.byteLength; if (length > this.#maxResponseBytes) { await reader.cancel(); throw new RangeError("Timestream response exceeds maxResponseBytes"); } chunks.push(item.value); } } finally { reader.releaseLock(); }
+    try { for (;;) { const item = await this.abortable(reader.read(), signal); if (item.done) break; length += item.value.byteLength; if (length > this.#maxResponseBytes) { await reader.cancel(); throw new RangeError("Timestream response exceeds maxResponseBytes"); } chunks.push(item.value); } } finally { if (signal.aborted) void reader.cancel().catch(() => undefined); reader.releaseLock(); }
     const bytes = new Uint8Array(length); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; } return new TextDecoder().decode(bytes);
   }
 
-  private parseQuery(value: unknown): TimestreamQueryPage {
+  private parseQuery(value: unknown, maxRows: number): TimestreamQueryPage {
     if (!object(value) || !Array.isArray(value.ColumnInfo) || !Array.isArray(value.Rows) || typeof value.QueryId !== "string") throw new TypeError("malformed Timestream Query response");
-    const columns = value.ColumnInfo.map((column, index) => { if (!object(column) || typeof column.Name !== "string" || !object(column.Type)) throw new TypeError(`malformed Timestream column ${String(index)}`); return column; });
+    if (value.Rows.length > maxRows) throw new TypeError("Timestream Query returned more rows than requested MaxRows"); const columns = value.ColumnInfo.map((column, index) => { if (!object(column) || typeof column.Name !== "string" || !object(column.Type)) throw new TypeError(`malformed Timestream column ${String(index)}`); return column; });
     const names = columns.map((column) => column.Name as string); if (new Set(names).size !== names.length) throw new TypeError("Timestream Query returned duplicate column names");
     const rows = value.Rows.map((row, index) => { if (!object(row) || !Array.isArray(row.Data) || row.Data.length !== columns.length) throw new TypeError(`malformed Timestream row ${String(index)}`); const result: JsonObject = {}; for (let column = 0; column < columns.length; column += 1) { const info = columns[column]; const datum = row.Data[column]; if (info === undefined || datum === undefined) throw new TypeError("malformed Timestream row data"); result[info.Name as string] = this.datum(info.Type as JsonObject, datum); } return Object.freeze(result); });
     if (value.NextToken !== undefined && (typeof value.NextToken !== "string" || value.NextToken.length === 0)) throw new TypeError("malformed Timestream NextToken");
@@ -170,7 +195,7 @@ export class TimestreamDatabase implements Database {
 
   private datum(type: JsonObject, datum: unknown): unknown {
     if (!object(datum)) throw new TypeError("malformed Timestream datum"); if (datum.NullValue === true) return null;
-    if (typeof type.ScalarType === "string") { if (typeof datum.ScalarValue !== "string") throw new TypeError("malformed Timestream scalar"); const value = datum.ScalarValue; switch (type.ScalarType) { case "VARCHAR": case "TIMESTAMP": case "DATE": case "TIME": case "INTERVAL_DAY_TO_SECOND": case "INTERVAL_YEAR_TO_MONTH": case "UNKNOWN": return value; case "BOOLEAN": if (value === "true") return true; if (value === "false") return false; break; case "INTEGER": { const parsed = Number(value); if (Number.isSafeInteger(parsed)) return parsed; break; } case "BIGINT": try { return BigInt(value); } catch { break; } case "DOUBLE": { const parsed = Number(value); if (!Number.isNaN(parsed)) return parsed; break; } default: break; } throw new TypeError(`invalid Timestream ${type.ScalarType} scalar`); }
+    if (typeof type.ScalarType === "string") { if (typeof datum.ScalarValue !== "string") throw new TypeError("malformed Timestream scalar"); const value = datum.ScalarValue; switch (type.ScalarType) { case "VARCHAR": case "TIMESTAMP": case "DATE": case "TIME": case "INTERVAL_DAY_TO_SECOND": case "INTERVAL_YEAR_TO_MONTH": case "UNKNOWN": return value; case "BOOLEAN": if (value === "true") return true; if (value === "false") return false; break; case "INTEGER": { const parsed = Number(value); if (Number.isSafeInteger(parsed)) return parsed; break; } case "BIGINT": try { return BigInt(value); } catch { break; } case "DOUBLE": { const parsed = Number(value); if (Number.isFinite(parsed)) return parsed; break; } default: break; } throw new TypeError(`invalid Timestream ${type.ScalarType} scalar`); }
     const arrayInfo = type.ArrayColumnInfo;
     if (object(arrayInfo)) { const itemType = arrayInfo.Type; if (!object(itemType) || !Array.isArray(datum.ArrayValue)) throw new TypeError("malformed Timestream array"); return datum.ArrayValue.map((item) => this.datum(itemType, item)); }
     if (Array.isArray(type.RowColumnInfo)) { if (!object(datum.RowValue) || !Array.isArray(datum.RowValue.Data) || datum.RowValue.Data.length !== type.RowColumnInfo.length) throw new TypeError("malformed Timestream row datum"); const result: JsonObject = {}; for (let index = 0; index < type.RowColumnInfo.length; index += 1) { const info = type.RowColumnInfo[index]; const item = datum.RowValue.Data[index]; if (!object(info) || typeof info.Name !== "string" || !object(info.Type) || item === undefined) throw new TypeError("malformed Timestream row column"); result[info.Name] = this.datum(info.Type, item); } return result; }

@@ -11,11 +11,11 @@ const db = new TimestreamDatabase({
   region: "eu-west-1",
   database: "sensors",
   credentials: async () => ({ accessKeyId, secretAccessKey, sessionToken }), // refreshed IAM credentials
-  tables: { readings: { table: "readings", keyColumn: "reading_id", columns: { room: "room", temperature: "measure_value::double", time: "time" } } },
+  tables: { readings: { table: "readings", keyColumn: "reading_id", columns: { room: "room", temperature: "temperature", time: "time" } } },
 });
 ```
 
-`TimestreamDatabase` signs Query with service `timestream-query` and WriteRecords with `timestream-write`, both using SigV4. The configured region must match the endpoint. Default endpoints are the public AWS query and ingest endpoints; `queryEndpoint` and `writeEndpoint` exist for endpoint discovery, PrivateLink, and deterministic tests, and accept HTTPS origins only (loopback HTTP is accepted in tests).
+`TimestreamDatabase` signs Query, WriteRecords, and DescribeEndpoints with SigV4 service name `timestream`. Before every independently cached Query or Write cell session, it calls signed `DescribeEndpoints` against its regional endpoint; the regional endpoint receives only discovery, and the selected HTTPS cell endpoint is used until the returned `CachePeriodInMinutes` expires. The configured region must match the endpoint. `queryEndpoint` and `writeEndpoint` override regional discovery endpoints for PrivateLink and deterministic tests; loopback HTTP is accepted only for those test discovery endpoints.
 
 ## Semantics and limits
 
@@ -29,6 +29,6 @@ Query scalars decode as `string` (`VARCHAR`, timestamps, dates, times, intervals
 
 ## Deployment and credential safety
 
-The browser Fetch API does not make AWS Timestream data-plane endpoints CORS-safe, and static IAM credentials must never reach a browser. Use this package in a trusted server, Worker, or a private service layer that obtains short-lived, scope-bound credentials. Timestream endpoints may require VPC/PrivateLink networking and IAM permissions (`timestream:Query` and/or `timestream:WriteRecords`); the adapter does not discover endpoints, tunnel VPC traffic, or store credentials. Request URLs, response bodies, SQL, tokens, and credentials are intentionally excluded from errors.
+The browser Fetch API does not make AWS Timestream data-plane endpoints CORS-safe, and static IAM credentials must never reach a browser. A browser window is rejected unless `trustedRuntime: true` is explicitly set: that opt-in is only for a controlled environment that can protect credentials and satisfy the signed `Host` header. Use this package in a trusted server, Worker, or a private service layer that obtains short-lived, scope-bound credentials. Timestream endpoints may require VPC/PrivateLink networking and IAM permissions (`timestream:Query` and/or `timestream:WriteRecords`); the adapter discovers signed cells but does not tunnel VPC traffic or store credentials. Request URLs, response bodies, SQL, tokens, and credentials are intentionally excluded from errors.
 
 See the official [Query API](https://docs.aws.amazon.com/timestream/latest/APIReference/API_query_Query.html), [WriteRecords API](https://docs.aws.amazon.com/timestream/latest/APIReference/API_WriteRecords.html), [query pagination guidance](https://docs.aws.amazon.com/timestream/latest/developerguide/code-samples.run-query.html), and [supported query data types](https://docs.aws.amazon.com/timestream/latest/developerguide/supported-data-types.html).
