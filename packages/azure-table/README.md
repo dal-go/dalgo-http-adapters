@@ -23,6 +23,14 @@ browser adapter would violate that boundary; keep it at a proxy or have the
 broker exchange browser identity for a bearer token. CORS and browser-safe
 authentication are deployment responsibilities.
 
+The same documented Table REST entity protocol also applies to Azure Cosmos DB
+for Table, so a trusted runtime can target its table endpoint with a
+Cosmos-compatible per-request `authorization` provider. Cosmos DB for Table does
+not support CORS and differs in ordering, table-name case sensitivity, limits,
+and reserved properties. This adapter does not expose service ordering as a
+DALgo order and already applies the stricter 1,000-row/storage-compatible caps;
+do not treat Cosmos Table as browser-ready or reuse an Azure Storage OAuth token.
+
 ## Layout
 
 Each top-level DALgo collection maps to one existing Azure table and one fixed
@@ -105,6 +113,7 @@ the documented wildcard/no-precondition behavior described above.
 - [Insert Entity](https://learn.microsoft.com/en-us/rest/api/storageservices/insert-entity)
 - [Insert and update entities](https://learn.microsoft.com/en-us/rest/api/storageservices/inserting-and-updating-entities)
 - [Query timeout and pagination](https://learn.microsoft.com/en-us/rest/api/storageservices/query-timeout-and-pagination)
+- [Azure Cosmos DB for Table differences](https://learn.microsoft.com/en-us/azure/cosmos-db/table/faq)
 
 ## Verification
 
