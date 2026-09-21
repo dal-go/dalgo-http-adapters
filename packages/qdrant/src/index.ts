@@ -1,4 +1,4 @@
-export { QdrantDatabase, QdrantHttpError } from "./database.js";
+export { QdrantDatabase, QdrantHttpError, QdrantRequestError } from "./database.js";
 export type {
   QdrantCollectionMapping,
   QdrantDatabaseOptions,

@@ -1,7 +1,5 @@
 import {
-  AlreadyExistsError,
   Key,
-  NotFoundError,
   UnsupportedError,
   identityCodec,
   type Codec,
@@ -164,6 +162,13 @@ function pointsFromRetrieve(value: unknown): readonly QdrantPoint[] {
   return result.map((point) => pointFrom(point, "retrieve"));
 }
 
+function validateMutationResult(value: unknown): void {
+  const result = resultFrom(value, "mutation");
+  if (!isObject(result) || (result.status !== "acknowledged" && result.status !== "completed")) {
+    throw new TypeError("malformed Qdrant mutation result");
+  }
+}
+
 function identity(id: QdrantPointId): string {
   return `${typeof id}:${String(id)}`;
 }
@@ -216,6 +221,13 @@ export class QdrantHttpError extends Error {
     super(`Qdrant request failed with HTTP ${String(status)}`);
     this.name = "QdrantHttpError";
     this.status = status;
+  }
+}
+
+export class QdrantRequestError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "QdrantRequestError";
   }
 }
 
@@ -289,7 +301,9 @@ export class QdrantDatabase implements Database, WriteSession {
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
     const mapping = this.mappingForSource(query);
     const compiled = compileQdrantQuery(query, this.#maxQueryLimit, this.#maxQueryOffset);
-    const points = pointsFromQuery(await this.request("POST", `${this.pointsPath(mapping)}/query`, { ...compiled, with_payload: true, with_vector: false }).then((response) => response.body), "query");
+    const response = await this.request("POST", `${this.pointsPath(mapping)}/query`, { ...compiled, with_payload: true, with_vector: false });
+    const points = pointsFromQuery(response.body, "query");
+    this.assertQueryLimit(points, compiled.limit);
     return { records: points.map((point) => this.recordFromPoint(new Key(query.source.name, point.id), point, query.source.codec)) };
   }
 
@@ -297,36 +311,33 @@ export class QdrantDatabase implements Database, WriteSession {
   public async vectorSearch<T>(query: StructuredQuery<T>, vector: QdrantVector): Promise<QueryPage<T>> {
     const mapping = this.mappingForSource(query);
     const compiled = compileQdrantQuery(query, this.#maxQueryLimit, this.#maxQueryOffset);
-    const body = { ...compiled, query: vectorRequest(vector, mapping), ...(mapping.vectorName === undefined ? {} : { using: mapping.vectorName }), with_payload: true, with_vector: false };
+    const body = { ...compiled, query: vectorFrom(vector), ...(mapping.vectorName === undefined ? {} : { using: mapping.vectorName }), with_payload: true, with_vector: false };
     const response = await this.request("POST", `${this.pointsPath(mapping)}/query`, body);
     const points = pointsFromQuery(response.body, "vector query");
+    this.assertQueryLimit(points, compiled.limit);
     return { records: points.map((point) => this.recordFromPoint(new Key(query.source.name, point.id), point, query.source.codec, true)) };
   }
 
-  public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
-    const existing = await this.get(key);
-    if (existing.exists) throw new AlreadyExistsError(key);
-    await this.set(key, data, codec);
+  public insert<T>(...arguments_: [key: Key, data: T, codec?: Codec<T>]): Promise<void> {
+    return this.rejectUnsupportedWrite("Qdrant atomic insert", arguments_);
   }
 
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const mapping = this.mappingForKey(key);
     const payload = payloadFrom(codecOrIdentity(codec).encode(data));
     const vector = vectorRequest(mapping.vectorForWrite(payload, key), mapping);
-    await this.request("PUT", `${this.pointsPath(mapping)}?wait=true`, { points: [{ id: key.id, payload, vector }] });
+    const response = await this.request("PUT", `${this.pointsPath(mapping)}?wait=true`, { points: [{ id: key.id, payload, vector }] });
+    validateMutationResult(response.body);
   }
 
-  public async update(key: Key, data: UpdateData): Promise<void> {
-    const mapping = this.mappingForKey(key);
-    const existing = await this.get(key);
-    if (!existing.exists) throw new NotFoundError(key);
-    const payload = payloadFrom(data);
-    await this.request("POST", `${this.pointsPath(mapping)}/payload?wait=true`, { points: [key.id], payload });
+  public update(...arguments_: [key: Key, data: UpdateData]): Promise<void> {
+    return this.rejectUnsupportedWrite("Qdrant atomic update", arguments_);
   }
 
   public async delete(key: Key): Promise<void> {
     const mapping = this.mappingForKey(key);
-    await this.request("POST", `${this.pointsPath(mapping)}/delete?wait=true`, { points: [key.id] });
+    const response = await this.request("POST", `${this.pointsPath(mapping)}/delete?wait=true`, { points: [key.id] });
+    validateMutationResult(response.body);
   }
 
   public runReadwriteTransaction<Result>(callback: (transaction: ReadwriteTransaction) => Promise<Result>): Promise<Result> {
@@ -366,30 +377,54 @@ export class QdrantDatabase implements Database, WriteSession {
     return { key, exists: true, data: codecOrIdentity(codec).decode(point.payload), ...(recordMetadata === undefined ? {} : { metadata: recordMetadata }) };
   }
 
+  private assertQueryLimit(points: readonly QdrantPoint[], limit: number): void {
+    if (points.length > limit) throw new TypeError("Qdrant query response contains more points than the requested limit");
+  }
+
+  private rejectUnsupportedWrite(message: string, arguments_: readonly unknown[]): Promise<never> {
+    if (arguments_.length === 0) throw new TypeError("Qdrant write arguments are required");
+    return Promise.reject(new UnsupportedError(message));
+  }
+
   private async request(method: string, path: string, body?: unknown, acceptedStatuses: readonly number[] = []): Promise<QdrantResponse> {
-    let serialized: string | undefined;
-    if (body !== undefined) {
-      assertJsonSafe(body, "Qdrant request body");
-      serialized = JSON.stringify(body);
-      if (new TextEncoder().encode(serialized).byteLength > this.#maxRequestBytes) {
-        throw new RangeError(`Qdrant request body exceeds maxRequestBytes (${String(this.#maxRequestBytes)})`);
-      }
-    }
-    const configured = typeof this.#headers === "function" ? await this.#headers() : (this.#headers ?? {});
-    validateHeaders(configured);
     const controller = new AbortController();
+    const timeoutError = new QdrantRequestError("Qdrant request timed out");
+    let rejectTimeout: ((reason?: unknown) => void) | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      rejectTimeout = reject;
+    });
     const timeout = setTimeout(() => {
-      controller.abort(new Error("Qdrant request timed out"));
+      controller.abort(timeoutError);
+      rejectTimeout?.(timeoutError);
     }, this.#timeoutMs);
+    const stage = async <T>(operation: Promise<T> | T, name: string): Promise<T> => {
+      try {
+        return await Promise.race([operation, deadline]);
+      } catch (error) {
+        if (error === timeoutError) throw error;
+        if (error instanceof RangeError) throw error;
+        throw new QdrantRequestError(`Qdrant ${name} failed`);
+      }
+    };
     try {
-      const response = await this.#fetch(`${this.#baseUrl}${path}`, {
+      let serialized: string | undefined;
+      if (body !== undefined) {
+        assertJsonSafe(body, "Qdrant request body");
+        serialized = JSON.stringify(body);
+        if (new TextEncoder().encode(serialized).byteLength > this.#maxRequestBytes) {
+          throw new RangeError(`Qdrant request body exceeds maxRequestBytes (${String(this.#maxRequestBytes)})`);
+        }
+      }
+      const configured = await stage(typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {}), "header provider");
+      validateHeaders(configured);
+      const response = await stage(this.#fetch(`${this.#baseUrl}${path}`, {
         method,
         redirect: "error",
         signal: controller.signal,
         headers: { ...configured, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) },
         ...(serialized === undefined ? {} : { body: serialized }),
-      });
-      const text = await responseText(response, this.#maxResponseBytes);
+      }), "transport");
+      const text = await stage(responseText(response, this.#maxResponseBytes), "response body");
       if (!response.ok && !acceptedStatuses.includes(response.status)) throw new QdrantHttpError(response.status);
       let parsed: unknown;
       try { parsed = text.length === 0 ? undefined : JSON.parse(text); } catch { parsed = text; }

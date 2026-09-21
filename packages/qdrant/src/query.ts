@@ -19,9 +19,9 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 export function validateQdrantPointId(value: unknown): asserts value is QdrantPointId {
-  if (typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= 256) return;
+  if (typeof value === "string" && isUuid(value)) return;
   if (isFiniteNumber(value) && Number.isSafeInteger(value) && value >= 0) return;
-  throw new TypeError("Qdrant point IDs must be non-empty strings up to 256 bytes or non-negative safe integers");
+  throw new TypeError("Qdrant point IDs must be UUID strings or non-negative safe integers representable in JavaScript");
 }
 
 export function validateQdrantCollectionName(value: string): void {
@@ -43,6 +43,11 @@ function matchValue(value: unknown, operator: string): string | number | boolean
   throw new UnsupportedError(`Qdrant ${operator} filters require string, finite-number, or boolean payload values`);
 }
 
+function matchAnyValue(value: unknown, operator: string): string | number {
+  if (typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value)) return value;
+  throw new UnsupportedError(`Qdrant ${operator} filters require keyword strings or safe integers`);
+}
+
 function ids(value: unknown, operator: string): readonly QdrantPointId[] {
   const values = operator === "==" ? [value] : value;
   if (!Array.isArray(values) || values.length === 0) throw new TypeError(`Qdrant ${operator} document-ID filters require a non-empty array`);
@@ -58,6 +63,10 @@ function hasControlCharacter(value: string): boolean {
     if (code < 32 || code === 127) return true;
   }
   return false;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value);
 }
 
 function filterClause<T>(filter: QueryFilter<T>): QdrantFilter {
@@ -77,7 +86,7 @@ function filterClause<T>(filter: QueryFilter<T>): QdrantFilter {
       if (!Array.isArray(filter.value) || filter.value.length === 0) {
         throw new TypeError(`Qdrant ${filter.operator} filters require a non-empty array`);
       }
-      return { key, match: { any: filter.value.map((value) => matchValue(value, filter.operator)) } };
+      return { key, match: { any: filter.value.map((value) => matchAnyValue(value, filter.operator)) } };
     }
     case "<":
       return { key, range: { lt: rangeValue(filter.value, filter.operator) } };

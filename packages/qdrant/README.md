@@ -15,19 +15,19 @@ const database = new QdrantDatabase({
 });
 ```
 
-Each DALgo collection has an explicit Qdrant collection mapping. `set` and `insert` encode a DALgo document as a Qdrant payload and require `vectorForWrite`, because Qdrant point upserts require a vector. Point IDs preserve DALgo string and non-negative safe-integer IDs.
+Each DALgo collection has an explicit Qdrant collection mapping. `set` encodes a DALgo document as a Qdrant payload and requires `vectorForWrite`, because Qdrant point upserts require a vector. Point IDs are UUID strings or non-negative safe integers, matching Qdrant's documented point-ID forms that JavaScript can represent exactly.
 
 ## Supported surface
 
-- `get`, `getMany`, `set`, `insert`, `update`, and idempotent `delete`
+- `get`, `getMany`, `set`, and idempotent `delete`
 - Bounded top-level collection queries with equality, membership, array membership, numeric ranges, `DOCUMENT_ID` equality/membership, `limit`, and `offset`
 - `vectorSearch(query, vector)` for vector similarity. It is deliberately separate because DALgo `StructuredQuery` has no vector input.
 
-Qdrant's [query endpoint](https://api.qdrant.tech/api-reference/search/query-points) is used for filtered reads and vector search; [upsert](https://api.qdrant.tech/api-reference/points/upsert-points), [set payload](https://api.qdrant.tech/api-reference/points/set-payload), and [delete](https://api.qdrant.tech/api-reference/points/delete-points) are used for writes.
+Qdrant's [query endpoint](https://api.qdrant.tech/api-reference/search/query-points) is used for filtered reads and vector search; [upsert](https://api.qdrant.tech/api-reference/points/upsert-points) and [delete](https://api.qdrant.tech/api-reference/points/delete-points) are used for writes.
 
 ## Deliberate limitations
 
-Qdrant has no DALgo-equivalent transactions, aggregations, generic payload ordering, cursors, collection-group/nested queries, or semantically reliable negative/null filters, so the adapter rejects them. `insert` and `update` preflight a point to produce DALgo conflict/not-found errors; Qdrant has no conditional upsert or transaction, so concurrent writers can still race. Do not use these operations when atomic create/update semantics are required.
+Qdrant has no DALgo-equivalent transactions, aggregations, generic payload ordering, cursors, collection-group/nested queries, or semantically reliable negative/null filters, so the adapter rejects them. It also rejects DALgo `insert` and `update`: Qdrant has no conditional upsert or transaction to preserve their atomic create/update semantics. Use `set` only when an upsert is explicitly intended.
 
 Errors expose only the HTTP status, never response bodies, URLs with credentials, or configured headers. Request and response sizes are bounded; redirects are rejected. `baseUrl` must be HTTPS except loopback development, and credentials belong in injected headers, not URLs.
 

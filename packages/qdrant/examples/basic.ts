@@ -16,7 +16,7 @@ const database = new QdrantDatabase({
 });
 
 const products = collection<Product>("products");
-await database.set(products.key("product-1"), { title: "Example", price: 12 });
+await database.set(products.key("123e4567-e89b-12d3-a456-426614174000"), { title: "Example", price: 12 });
 const filtered = await database.query(products.query().where("price", ">=", 10).limit(10).build());
 const similar = await database.vectorSearch(products.query().limit(10).build(), [0.2, 0.8]);
 console.log({ filtered, similar });

@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import { compileQdrantQuery } from "../src/query.js";
 
 interface Product { price: number; tags: string[]; status: string }
+const productOne = "123e4567-e89b-12d3-a456-426614174000";
 
 describe("compileQdrantQuery", () => {
   it("maps honest payload and point-ID filters to Qdrant filter clauses", () => {
     const query = collection<Product>("products").query()
       .where("price", ">=", 10)
       .where("tags", "array-contains-any", ["sale", "new"])
-      .where(DOCUMENT_ID, "in", ["p1", 2])
+      .where(DOCUMENT_ID, "in", [productOne, 2])
       .limit(5)
       .offset(3)
       .build();
@@ -17,7 +18,7 @@ describe("compileQdrantQuery", () => {
       filter: { must: [
         { key: "price", range: { gte: 10 } },
         { key: "tags", match: { any: ["sale", "new"] } },
-        { has_id: ["p1", 2] },
+        { has_id: [productOne, 2] },
       ] },
       limit: 5,
       offset: 3,
@@ -37,6 +38,8 @@ describe("compileQdrantQuery", () => {
     expect(() => compileQdrantQuery(collection<Product>("products").query().where("status", "!=", "hidden").build())).toThrow(UnsupportedError);
     expect(() => compileQdrantQuery(collection<Product>("products").query().where("status", "==", null).build())).toThrow(UnsupportedError);
     expect(() => compileQdrantQuery(collection("products").query().where(DOCUMENT_ID, "==", -1).build())).toThrow("point IDs");
+    expect(() => compileQdrantQuery(collection("products").query().where(DOCUMENT_ID, "==", "a/b").build())).toThrow("UUID");
     expect(() => compileQdrantQuery(collection("products").query().where(DOCUMENT_ID, "in", []).build())).toThrow("non-empty array");
+    expect(() => compileQdrantQuery(collection<Product>("products").query().where("tags", "array-contains-any", [true]).build())).toThrow(UnsupportedError);
   });
 });
