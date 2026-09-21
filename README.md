@@ -10,6 +10,7 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 |---|---|
 | Algolia | [`@dal-go/dalgo2algolia`](packages/algolia) |
 | Appwrite | [`@dal-go/dalgo2appwrite`](packages/appwrite) |
+| Azure Table Storage | [`@dal-go/dalgo2azure-table`](packages/azure-table) |
 | BigQuery | [`@dal-go/dalgo2bigquery`](packages/bigquery) |
 | ClickHouse | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) |
 | Cosmos DB | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) |
@@ -138,7 +139,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 |---|---|---|
 | Cosmos DB for NoSQL | HTTP-capable / ephemeral-token browser | HTTPS document CRUD, SQL query, change feed, and partition-scoped transactions; browser use requires a backend-issued resource token or carefully designed Entra/network setup; candidate `dalgo2cosmosdb-js`. |
 | Cosmos DB MongoDB / Cassandra / Gremlin APIs | Not applicable to generic HTTP DALgo | Data uses MongoDB, CQL, or Gremlin driver protocols; keep separate protocol adapters if pursued. |
-| Cosmos DB Table API / Azure Table Storage | Browser + ephemeral SAS | Table REST/OData CRUD and query, same-partition entity-group transactions, documented CORS; only narrowly scoped short-lived SAS is suitable for browser use, never account keys; candidate `dalgo2azure-table-js`. |
+| Cosmos DB Table API / Azure Table Storage | Browser + ephemeral SAS | Azure Table Storage implemented as [`@dal-go/dalgo2azure-table`](packages/azure-table): REST/OData CRUD/query, ETag concurrency, query-bound continuation cursors, and documented CORS. Only narrowly scoped short-lived SAS is suitable for browser use, never account keys; Cosmos Table compatibility is not assumed without separate verification. |
 | Azure SQL Database / Managed Instance | Not applicable | ARM is management-only; data plane is TDS unless a separate application gateway is introduced. |
 | Azure Database for PostgreSQL / MySQL | Not applicable | ARM is management-only; data uses native protocols. |
 | Azure Managed Redis | Not applicable | ARM is management-only; data uses RESP. |
@@ -196,6 +197,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2pinecone`](packages/pinecone) | Implemented bounded fetch/upsert/delete and explicit vector search with collision-free collection namespaces; conditional writes, DALgo transactions, and generic queries remain unsupported. |
 | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) | Implemented bounded records CRUD/query with validated paging envelopes and stateless browser token auth; atomic upsert and callback transactions remain unsupported. |
 | [`@dal-go/dalgo2datastore`](packages/datastore) | Implemented bounded Datastore-mode lookup/commit/query with explicit namespace/key mapping and query-bound instance-local cursors; partial update and callback transactions remain unsupported. |
+| [`@dal-go/dalgo2azure-table`](packages/azure-table) | Implemented bounded PartitionKey/RowKey CRUD and OData query with ETag concurrency and query-bound continuation cursors; browser use requires configured CORS plus narrowly scoped ephemeral SAS/token brokerage. |
 
 ## Adapter acceptance bar
 
