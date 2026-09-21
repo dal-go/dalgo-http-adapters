@@ -16,6 +16,7 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 | Couchbase | [`@dal-go/dalgo2couchbase`](packages/couchbase) |
 | CouchDB | [`@dal-go/dalgo2couchdb`](packages/couchdb) |
 | Databricks | [`@dal-go/dalgo2databricks`](packages/databricks) |
+| Google Cloud Datastore | [`@dal-go/dalgo2datastore`](packages/datastore) |
 | DynamoDB | [`@dal-go/dalgo2dynamodb`](packages/dynamodb) |
 | Elasticsearch | [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) |
 | Firebase Realtime Database | [`@dal-go/dalgo2firebase-rtdb`](packages/firebase-rtdb) |
@@ -105,7 +106,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | Product | Class | Qualifying data plane and decision |
 |---|---|---|
 | Firestore native mode | Browser-ready | Existing Firestore Web SDK adapter; REST provides CRUD, queries, aggregation, transactions, and a streaming Listen RPC, while normal browser realtime listeners use the Firebase Web SDK. |
-| Firestore in Datastore mode | HTTP-capable | REST lookup/commit/query/aggregation and transactions; candidate `dalgo2datastore-js`. Browser use needs user OAuth or a token broker, never a service-account key. |
+| Firestore in Datastore mode | HTTP-capable | Implemented: [`@dal-go/dalgo2datastore`](packages/datastore), using REST lookup/commit/runQuery with explicit key/schema mappings and instance-owned cursors. Browser use needs user OAuth or a token broker, never a service-account key. |
 | Firebase Realtime Database | Browser-ready | REST and Web SDK; candidate `dalgo2firebase-rtdb-js`. |
 | Firebase Data Connect | Not applicable | Generated, typed application GraphQL operations are not a generic database data plane for arbitrary DALgo collections. |
 | BigQuery | HTTP-capable | REST jobs/query/table data; candidate analytical adapter. |
@@ -166,6 +167,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [Algolia JavaScript API](https://www.algolia.com/developers/search-api-javascript)
 - [Appwrite TablesDB rows API](https://appwrite.io/docs/references/cloud/client-web/tablesDB)
 - [PocketBase records API](https://pocketbase.io/docs/api-records/)
+- [Cloud Datastore v1 REST data API](https://cloud.google.com/datastore/docs/reference/data/rest)
 
 ## Delivery status
 
@@ -193,6 +195,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2algolia`](packages/algolia) | Implemented bounded object reads/search plus explicit trusted-runtime upsert/delete; atomic conditional writes, DALgo cursors, generic ordering, nesting, and transactions remain unsupported. |
 | [`@dal-go/dalgo2pinecone`](packages/pinecone) | Implemented bounded fetch/upsert/delete and explicit vector search with collision-free collection namespaces; conditional writes, DALgo transactions, and generic queries remain unsupported. |
 | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) | Implemented bounded records CRUD/query with validated paging envelopes and stateless browser token auth; atomic upsert and callback transactions remain unsupported. |
+| [`@dal-go/dalgo2datastore`](packages/datastore) | Implemented bounded Datastore-mode lookup/commit/query with explicit namespace/key mapping and query-bound instance-local cursors; partial update and callback transactions remain unsupported. |
 
 ## Adapter acceptance bar
 
