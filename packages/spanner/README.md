@@ -62,14 +62,21 @@ as DALgo string IDs.
   requires re-running the callback against a managed transaction, which this
   small HTTP adapter intentionally does not fake. Use the official client for
   that need.
+- Query limits are probed with one extra row. Because this package does not
+  implement a DALgo continuation cursor, it rejects a query that has more rows
+  than its requested limit instead of returning a falsely complete page.
 - Collection groups, nested keys, offsets, cursors, array filters, aggregation,
   streaming result sets, composite keys, and null range filters reject.
 - Each DALgo operation creates and best-effort releases a REST session. Large
   results are bounded by `maxRows` and `maxResponseBytes`; this package uses
   `executeSql`, not the streaming API.
 
-The adapter has an end-to-end deadline, rejects redirects, redacts transport
-and HTTP response bodies, and calls the token provider for every request.
+Result metadata must exactly match the configured projection and declared
+Spanner scalar types. `INT64` remains a decimal string (including values beyond
+JavaScript's safe-integer range), while `JSON` is parsed before the DALgo codec
+runs. The adapter has an end-to-end deadline, rejects redirects, bounds and
+cancels streamed response reads, redacts transport and HTTP response bodies,
+and calls the token provider for every request.
 
 ## Verification
 

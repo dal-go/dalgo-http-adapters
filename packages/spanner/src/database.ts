@@ -63,6 +63,17 @@ function writeData<T>(data: T, codec: Codec<T>): Record<string, unknown> {
   const encoded = codec.encode(data);
   return object(encoded, "record data");
 }
+function decodeScalar(value: unknown, column: SpannerColumn): unknown {
+  if (value === null) return null;
+  switch (column.type) {
+    case "BOOL": if (typeof value !== "boolean") throw new TypeError("malformed Cloud Spanner BOOL value"); return value;
+    case "INT64": if (typeof value !== "string" || !/^-?(?:0|[1-9]\d*)$/u.test(value)) throw new TypeError("malformed Cloud Spanner INT64 value"); return value;
+    case "FLOAT64": if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError("malformed Cloud Spanner FLOAT64 value"); return value;
+    case "JSON": if (typeof value !== "string") throw new TypeError("malformed Cloud Spanner JSON value"); try { return JSON.parse(value) as unknown; } catch { throw new TypeError("malformed Cloud Spanner JSON value"); }
+    default: if (typeof value !== "string") throw new TypeError(`malformed Cloud Spanner ${column.type} value`); return value;
+  }
+}
+function cancel(reader: ReadableStreamDefaultReader<Uint8Array>): void { void reader.cancel().catch(() => undefined); }
 
 export class SpannerDatabase implements Database {
   readonly #database: string;
@@ -91,7 +102,9 @@ export class SpannerDatabase implements Database {
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
     const table = this.table(key); const row = await this.select(table, `WHERE ${quoted(table.keyColumn.column, "key column")} = @key LIMIT 2`, parameter("key", key.id, table.keyColumn), paramType("key", table.keyColumn));
     if (row.length === 0) return { key, exists: false }; if (row.length !== 1) throw new UnsupportedError("Cloud Spanner key mapping returned more than one row");
-    return this.snapshot(key, row[0] as Record<string, unknown>, codec);
+    const only = row[0] as Record<string, unknown>;
+    if (String(only.__dalgo_key) !== String(key.id)) throw new TypeError("Cloud Spanner point read returned a different key");
+    return this.snapshot(key, only, codec);
   }
   public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
     if (keys.length === 0) return []; if (keys.length > this.#maxRows) throw new UnsupportedError("Cloud Spanner getMany exceeds maxRows");
@@ -113,13 +126,16 @@ export class SpannerDatabase implements Database {
       Object.assign(params, parameter(name, filter.value, field)); Object.assign(types, paramType(name, field)); clauses.push(`${col} ${operator} @${name}`);
     }
     const orders = query.orders.map((order) => { const col = order.field === DOCUMENT_ID ? table.keyColumn : table.columns[String(order.field)]; if (col === undefined) throw new UnsupportedError(`Cloud Spanner unmapped order field: ${String(order.field)}`); if (order.direction !== "asc" && order.direction !== "desc") throw new TypeError("invalid Cloud Spanner order direction"); return `${quoted(col.column, "order column")} ${order.direction.toUpperCase()}`; });
-    const rows = await this.select(table, `${clauses.length === 0 ? "" : `WHERE ${clauses.join(" AND ")}`} ${orders.length === 0 ? "" : `ORDER BY ${orders.join(", ")}`} LIMIT ${String(requested)}`, params, types);
+    // Fetch one sentinel row. This adapter has no DALgo cursor implementation,
+    // so it rejects a result that would otherwise be silently truncated.
+    const rows = await this.select(table, `${clauses.length === 0 ? "" : `WHERE ${clauses.join(" AND ")}`} ${orders.length === 0 ? "" : `ORDER BY ${orders.join(", ")}`} LIMIT ${String(requested + 1)}`, params, types);
+    if (rows.length > requested) throw new UnsupportedError("Cloud Spanner query continuation requires a cursor");
     return { records: rows.map((row) => { const value = row.__dalgo_key; if (typeof value !== "string" && typeof value !== "number") throw new TypeError("Cloud Spanner key must be string or number"); return this.snapshot(new Key(query.source.name, String(value)), row, query.source.codec) as ExistingRecord<T>; }) };
   }
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { try { await this.mutate("insert", key, writeData(data, codecOrIdentity(codec)), true); } catch (error) { if (error instanceof SpannerHttpError && error.status === 409) throw new AlreadyExistsError(key, { cause: error }); throw error; } }
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { await this.mutate("replace", key, writeData(data, codecOrIdentity(codec)), true); }
   public async update(key: Key, data: Readonly<Record<string, unknown>>): Promise<void> { if (Object.keys(data).length === 0) return; try { await this.mutate("update", key, data, false); } catch (error) { if (error instanceof SpannerHttpError && error.status === 404) throw new NotFoundError(key, { cause: error }); throw error; } }
-  public async delete(key: Key): Promise<void> { const table = this.table(key); await this.withSession(async (session, deadline) => { await this.request("POST", `${session}:commit`, { singleUseTransaction: { readWrite: {} }, mutations: [{ delete: { table: table.table, keySet: { keys: [[scalar(key.id, table.keyColumn)]] } } }] }, deadline); }); }
+  public async delete(key: Key): Promise<void> { const table = this.table(key); await this.withSession(async (session, deadline) => { this.assertCommit(await this.request("POST", `${session}:commit`, { singleUseTransaction: { readWrite: {} }, mutations: [{ delete: { table: table.table, keySet: { keys: [[scalar(key.id, table.keyColumn)]] } } }] }, deadline)); }); }
   public runReadwriteTransaction<Result>(callback: (transaction: ReadwriteTransaction) => Promise<Result>): Promise<Result> { if (typeof callback !== "function") return Promise.reject(new TypeError("transaction callback is required")); return Promise.reject(new UnsupportedError("Cloud Spanner callback transactions; use the official client for retries")); }
 
   private table(key: Key): SpannerTable { noParent(key); return this.tableForCollection(key.collection); }
@@ -133,24 +149,52 @@ export class SpannerDatabase implements Database {
     const table = this.table(key); const fields = Object.keys(raw); if (fields.some((field) => field === "__dalgo_key" || table.columns[field] === undefined)) throw new UnsupportedError("Cloud Spanner unmapped write field");
     if (requireComplete && fields.length !== Object.keys(table.columns).length) throw new UnsupportedError("Cloud Spanner insert/set requires every mapped data field");
     const columns = [table.keyColumn.column, ...fields.map((field) => (table.columns[field] as SpannerColumn).column)]; const values = [scalar(key.id, table.keyColumn), ...fields.map((field) => scalar(raw[field], table.columns[field] as SpannerColumn))];
-    await this.withSession(async (session, deadline) => { await this.request("POST", `${session}:commit`, { singleUseTransaction: { readWrite: {} }, mutations: [{ [operation]: { table: table.table, columns, values: [values] } }] }, deadline); });
+    await this.withSession(async (session, deadline) => { this.assertCommit(await this.request("POST", `${session}:commit`, { singleUseTransaction: { readWrite: {} }, mutations: [{ [operation]: { table: table.table, columns, values: [values] } }] }, deadline)); });
+  }
+  private assertCommit(value: unknown): void {
+    const response = object(value, "commit response");
+    if (typeof response.commitTimestamp !== "string" || !/^\d{4}-\d{2}-\d{2}T/u.test(response.commitTimestamp) || Number.isNaN(Date.parse(response.commitTimestamp))) throw new TypeError("malformed Cloud Spanner commit response");
   }
   private rows(value: unknown, table: SpannerTable): readonly Record<string, unknown>[] {
     const result = object(value, "result"); const metadata = object(result.metadata, "result metadata"); const rowType = object(metadata.rowType, "result row type"); if (!Array.isArray(rowType.fields) || !Array.isArray(result.rows)) throw new TypeError("malformed Cloud Spanner result rows");
-    const expected = ["__dalgo_key", ...Object.keys(table.columns)]; if (rowType.fields.length !== expected.length) throw new TypeError("malformed Cloud Spanner result projection");
-    for (const [index, expectedName] of expected.entries()) { const field = rowType.fields[index]; if (typeof field !== "object" || field === null || (field as Field).name !== expectedName) throw new TypeError("malformed Cloud Spanner result projection"); }
-    return result.rows.map((row, rowIndex) => { if (!Array.isArray(row) || row.length !== expected.length) throw new TypeError(`malformed Cloud Spanner row ${String(rowIndex)}`); return Object.fromEntries(expected.map((name, index) => [name, row[index]])); });
+    const names = ["__dalgo_key", ...Object.keys(table.columns)]; const columns = [table.keyColumn, ...Object.values(table.columns)]; if (rowType.fields.length !== names.length) throw new TypeError("malformed Cloud Spanner result projection");
+    for (const [index, expectedName] of names.entries()) {
+      const field = rowType.fields[index]; const column = columns[index];
+      if (column === undefined || typeof field !== "object" || field === null || (field as Field).name !== expectedName || (field as Field).type?.code !== column.type) throw new TypeError("malformed Cloud Spanner result projection");
+    }
+    return result.rows.map((row, rowIndex) => {
+      if (!Array.isArray(row) || row.length !== names.length) throw new TypeError(`malformed Cloud Spanner row ${String(rowIndex)}`);
+      return Object.fromEntries(names.map((name, index) => [name, decodeScalar(row[index], columns[index] as SpannerColumn)]));
+    });
   }
   private async withSession<T>(callback: (session: string, deadline: number) => Promise<T>): Promise<T> {
-    const deadline = Date.now() + this.#timeout; const created = object(await this.request("POST", `${this.#database}/sessions`, {}, deadline), "session"); if (typeof created.name !== "string" || !created.name.startsWith(`${this.#database}/sessions/`)) throw new TypeError("malformed Cloud Spanner session name");
+    const deadline = Date.now() + this.#timeout; const created = object(await this.request("POST", `${this.#database}/sessions`, { session: {} }, deadline), "session"); if (typeof created.name !== "string" || !created.name.startsWith(`${this.#database}/sessions/`)) throw new TypeError("malformed Cloud Spanner session name");
     try { return await callback(created.name, deadline); } finally { void this.request("DELETE", created.name, undefined, deadline).catch(() => undefined); }
   }
   private async request(method: "POST" | "DELETE", resource: string, body: unknown, deadline: number): Promise<unknown> {
     const token = await this.deadline(Promise.resolve().then(this.#accessToken), deadline); if (typeof token !== "string" || token.trim() === "") throw new TypeError("accessToken must return a non-empty token");
     const controller = new AbortController(); const left = deadline - Date.now(); if (left <= 0) throw new SpannerRequestError(); const timer = setTimeout(() => controller.abort(), left);
     try { let response: Response; try { response = await this.deadline(Promise.resolve().then(() => this.#fetch(`${API}/${resource}`, { method, redirect: "error", signal: controller.signal, headers: { authorization: `Bearer ${token}`, accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })), deadline); } catch { throw new SpannerRequestError(); }
-      const length = response.headers.get("content-length"); if (length !== null && (!/^\d+$/u.test(length) || Number(length) > this.#maxResponseBytes)) throw new SpannerRequestError(); let text: string; try { text = await this.deadline(response.text(), deadline); } catch { throw new SpannerRequestError(); } if (text.length > this.#maxResponseBytes) throw new SpannerRequestError(); if (!response.ok) throw new SpannerHttpError(response.status); if (text === "") return {}; try { return JSON.parse(text) as unknown; } catch { throw new TypeError("Cloud Spanner response was not JSON"); }
+      const text = await this.readText(response, deadline);
+      if (!response.ok) throw new SpannerHttpError(response.status); if (text === "") return {}; try { return JSON.parse(text) as unknown; } catch { throw new TypeError("Cloud Spanner response was not JSON"); }
     } finally { clearTimeout(timer); }
+  }
+  private async readText(response: Response, deadline: number): Promise<string> {
+    const length = response.headers.get("content-length");
+    if (length !== null && (!/^\d+$/u.test(length) || Number(length) > this.#maxResponseBytes)) { void response.body?.cancel().catch(() => undefined); throw new SpannerRequestError(); }
+    if (response.body === null) return "";
+    const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
+    try {
+      for (;;) {
+        let item: ReadableStreamReadResult<Uint8Array>;
+        try { item = await this.deadline(reader.read(), deadline); } catch { cancel(reader); throw new SpannerRequestError(); }
+        if (item.done) break; total += item.value.byteLength;
+        if (total > this.#maxResponseBytes) { cancel(reader); throw new SpannerRequestError(); }
+        chunks.push(item.value);
+      }
+    } finally { try { reader.releaseLock(); } catch { /* browser may retain an in-flight cancelled read */ } }
+    const bytes = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return new TextDecoder().decode(bytes);
   }
   private async deadline<T>(promise: Promise<T>, deadline: number): Promise<T> { const remaining = deadline - Date.now(); if (remaining <= 0) throw new SpannerRequestError(); return new Promise<T>((resolve, reject) => { const timer = setTimeout(() => reject(new SpannerRequestError()), remaining); void promise.then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); reject(new SpannerRequestError()); }); }); }
 }
