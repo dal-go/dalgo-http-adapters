@@ -61,6 +61,7 @@ jobs:
           echo "tag=$PACKAGE@v$VERSION" >> "$GITHUB_OUTPUT"
       - name: Create package tag without overwriting an existing tag
         env:
+          PACKAGE: ${{ inputs.package }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
