@@ -1,6 +1,6 @@
-import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, collection, collectionGroup, key } from "@dalgo/core";
+import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, UnsupportedError, collection, collectionGroup, key, type StructuredQuery } from "@dalgo/core";
 import { IDBFactory } from "fake-indexeddb";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { IndexedDbDatabase } from "../src/index.js";
 
 interface Item {
@@ -18,6 +18,17 @@ function database(): IndexedDbDatabase {
 const items = collection<Item>("items");
 
 describe("IndexedDbDatabase", () => {
+  it("rejects a raw recursive query before opening a database", async () => {
+    const factory = new IDBFactory();
+    const open = vi.spyOn(factory, "open");
+    const db = new IndexedDbDatabase({ name: "reject-recursive", factory });
+    const recursive = { kind: "recursive-dtql", from: { kind: "table", name: "items", joins: [] } } as unknown as StructuredQuery<Item>;
+    await expect(db.query(recursive)).rejects.toThrow(UnsupportedError);
+    await expect(db.query(recursive)).rejects.toThrow("core recursive executor");
+    const disguised = { ...recursive, source: { kind: "collection", name: "items" }, filters: [], orders: [] } as unknown as StructuredQuery<Item>;
+    await expect(db.query(disguised)).rejects.toThrow(UnsupportedError);
+    expect(open).not.toHaveBeenCalled();
+  });
   it("uses separate named object stores when collections are configured", async () => {
     const factory = new IDBFactory();
     const db = new IndexedDbDatabase({
