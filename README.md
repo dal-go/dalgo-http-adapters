@@ -20,9 +20,11 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 | Firestore | [`@dal-go/dalgo2firestore`](packages/firestore) |
 | IndexedDB | [`@dal-go/dalgo2indexeddb`](packages/indexeddb) |
 | InfluxDB | [`@dal-go/dalgo2influxdb`](packages/influxdb) |
+| libSQL | [`@dal-go/dalgo2libsql`](packages/libsql) |
 | Neo4j | [`@dal-go/dalgo2neo4j`](packages/neo4j) |
 | OpenSearch | [`@dal-go/dalgo2opensearch`](packages/opensearch) |
 | OpenVaultDB | [`@dal-go/dalgo2ovdb`](packages/ovdb) |
+| PostgREST | [`@dal-go/dalgo2postgrest`](packages/postgrest) |
 | Redshift | [`@dal-go/dalgo2redshift`](packages/redshift) |
 | Snowflake | [`@dal-go/dalgo2snowflake`](packages/snowflake) |
 | Solr | [`@dal-go/dalgo2solr`](packages/solr) |
@@ -83,8 +85,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | 16 | Google Firestore | Browser-ready | Yes | Yes | Yes | Yes | Structured query | Count/sum/average | Batched writes / transactions | Realtime listeners | Firebase Auth and Security Rules are designed for public clients. | Implemented: [`@dal-go/dalgo2firestore`](packages/firestore). |
 | 17 | Firebase Realtime Database REST/Web SDK | Browser-ready | Yes | Yes | Yes | Yes | Key/range query | No server aggregation | Atomic updates / client transaction retries | SSE/WebSocket | Firebase Auth and Security Rules; browser-first. | `dalgo2firebase-rtdb-js`; tree/path semantics and limited query composition. |
 | 18 | Apache CouchDB HTTP | Browser-ready | Yes | Yes | Yes | Yes | Mango / views | Views | Per-document MVCC, bulk is not ACID | `_changes` feeds | CORS configurable; use scoped users/proxy as appropriate. | `dalgo2couchdb-js`; expose revision/conflict semantics. |
-| 19 | PostgREST protocol / Supabase | Browser-ready | Yes | Yes | Yes | Yes | URL filters / embedding / RPC | Yes | One request; multi-step logic via PostgreSQL functions | Provider-specific realtime is separate | CORS plus JWT/RLS enables public clients when policies are correct. | `dalgo2postgrest-js`, not a Supabase-only adapter. |
-| 20 | libSQL protocol / Turso | HTTP-capable (browser contract pending) | Yes | Yes | Yes | Yes | SQL | Yes | Yes | Replication/watch capabilities vary | Do not classify as browser-ready until the current official web transport, CORS, and token-scope contract is verified; broad database tokens are never browser-safe. | `dalgo2libsql-js` only after the browser/auth contract is verified; otherwise trusted runtime. |
+| 19 | PostgREST protocol / Supabase | Browser-ready | Yes | Yes | Yes | Yes | URL filters / embedding / RPC | Yes | One request; multi-step logic via PostgreSQL functions | Provider-specific realtime is separate | CORS plus JWT/RLS enables public clients when policies are correct. | [`@dal-go/dalgo2postgrest`](packages/postgrest), not a Supabase-only adapter. |
+| 20 | libSQL protocol / Turso | HTTP-capable | Yes | Yes | Yes | Yes | SQL | Yes | Hrana batches and batons; DALgo callback transactions unsupported | Replication/watch capabilities vary | Hrana v3 uses HTTP, but broad database tokens are not browser-safe; use a trusted runtime or narrowly scoped token broker. | Implemented: [`@dal-go/dalgo2libsql`](packages/libsql), a provider-neutral Hrana v3 adapter rather than a Turso-only wrapper. |
 | 21 | Qdrant REST | HTTP-capable | Yes | Yes | Yes | Yes | Vector/filter search | Vector/search aggregation features | Limited | Updates/streaming are not general CDC | Official JS client and CORS exist; API keys normally require proxy/scoping. | `dalgo2qdrant-js`; vector semantics only. |
 | 22 | Pinecone data API | HTTP-capable | Yes | Upsert | Update | Delete | Vector/filter search | Limited | No | No generic CDC | API keys are server credentials; use a proxy. | `dalgo2pinecone-js`; vector semantics only. |
 | 23 | Algolia Search API | Browser-ready | Yes | Server-side indexing | Server-side indexing | Server-side indexing | Search/filter | Facets | No | Browse/task polling, not CDC | Search-only keys are browser-safe; admin/index keys are not. | `dalgo2algolia-js`; browser read/search, trusted-runtime writes. |
@@ -153,6 +155,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [Azure Table Service REST API](https://learn.microsoft.com/rest/api/storageservices/table-service-rest-api)
 - [CouchDB changes feed](https://docs.couchdb.org/en/stable/api/database/changes.html)
 - [PostgREST API](https://docs.postgrest.org/en/stable/references/api.html)
+- [libSQL Hrana over HTTP v3 specification](https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md)
 - [Qdrant interfaces](https://qdrant.tech/documentation/interfaces/)
 - [Algolia JavaScript API](https://www.algolia.com/developers/search-api-javascript)
 
@@ -175,6 +178,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2opensearch`](packages/opensearch) | Implemented bounded provider-neutral OpenSearch REST CRUD/query adapter with direct-index and string-ID contracts; AWS SigV4 signing remains an injected trusted-runtime responsibility. |
 | [`@dal-go/dalgo2redshift`](packages/redshift) | Implemented bounded read/query adapter over the asynchronous Redshift Data API with explicit table/key/projection mappings; writes and DALgo callback transactions remain unsupported. |
 | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) | Implemented bounded, partition-scoped Cosmos DB for NoSQL REST CRUD/query adapter with opaque continuation cursors and an explicit ephemeral-token/trusted-proxy authentication boundary. |
+| [`@dal-go/dalgo2libsql`](packages/libsql) | Implemented provider-neutral CRUD/query adapter over the libSQL Hrana v3 HTTP pipeline, with explicit table/key/projection mappings, bounded response handling, and no claim of DALgo callback-transaction support. |
+| [`@dal-go/dalgo2postgrest`](packages/postgrest) | Implemented bounded top-level CRUD/query adapter for the provider-neutral PostgREST protocol; callback transactions, cursors, embedding, and RPC remain explicitly unsupported. |
 
 ## Adapter acceptance bar
 

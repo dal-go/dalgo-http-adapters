@@ -309,6 +309,28 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
 
+  packages/libsql:
+    dependencies:
+      '@dal-go/dalgo':
+        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+    devDependencies:
+      '@eslint/js':
+        specifier: 10.0.1
+        version: 10.0.1(eslint@10.11.0)
+      eslint:
+        specifier: 10.11.0
+        version: 10.11.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      typescript-eslint:
+        specifier: 8.70.0
+        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
+
   packages/neo4j:
     dependencies:
       '@dal-go/dalgo':
@@ -354,6 +376,28 @@ importers:
         version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
 
   packages/ovdb:
+    dependencies:
+      '@dal-go/dalgo':
+        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+    devDependencies:
+      '@eslint/js':
+        specifier: 10.0.1
+        version: 10.0.1(eslint@10.11.0)
+      eslint:
+        specifier: 10.11.0
+        version: 10.11.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      typescript-eslint:
+        specifier: 8.70.0
+        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
+
+  packages/postgrest:
     dependencies:
       '@dal-go/dalgo':
         specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
@@ -545,7 +589,7 @@ packages:
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==}
 
   '@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d':
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d}
+    resolution: {gitHosted: true, integrity: sha512-g8zbFuq9eZOL2w2REhoNuPZh2OcmxxOvfuMA0cxElUqXXgai0864uaAZ4g21+088GdalzAbY8816Ks0k7p3Seg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d}
     version: 0.1.0
     engines: {node: '>=20'}
 
