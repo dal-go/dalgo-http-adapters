@@ -20,6 +20,8 @@ export interface IndexedDbDatabaseOptions {
   readonly name: string;
   readonly version?: number;
   readonly factory?: IDBFactory;
+  /** When supplied, create one object store per named collection instead of the shared record store. */
+  readonly collections?: readonly string[];
 }
 
 function codecOrIdentity<T>(codec?: Codec<T>): Codec<T> {
@@ -96,14 +98,14 @@ function applyUpdate(data: unknown, update: UpdateData): unknown {
 }
 
 class IndexedDbReadwriteTransaction implements ReadwriteTransaction {
-  readonly #store: IDBObjectStore;
+  readonly #storeForKey: (key: Key) => IDBObjectStore;
 
-  public constructor(store: IDBObjectStore) {
-    this.#store = store;
+  public constructor(storeForKey: (key: Key) => IDBObjectStore) {
+    this.#storeForKey = storeForKey;
   }
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
-    const stored = await requestResult(this.#store.get(key.path)) as StoredRecord | undefined;
+    const stored = await requestResult(this.#storeForKey(key).get(key.path)) as StoredRecord | undefined;
     return snapshot(key, stored, codec);
   }
 
@@ -115,7 +117,7 @@ class IndexedDbReadwriteTransaction implements ReadwriteTransaction {
 
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     try {
-      await requestResult(this.#store.add(storedRecord(key, data, codec)), true);
+      await requestResult(this.#storeForKey(key).add(storedRecord(key, data, codec)), true);
     } catch (error) {
       if (error instanceof DOMException && error.name === "ConstraintError") {
         throw new AlreadyExistsError(key, { cause: error });
@@ -125,17 +127,18 @@ class IndexedDbReadwriteTransaction implements ReadwriteTransaction {
   }
 
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
-    await requestResult(this.#store.put(storedRecord(key, data, codec)));
+    await requestResult(this.#storeForKey(key).put(storedRecord(key, data, codec)));
   }
 
   public async update(key: Key, data: UpdateData): Promise<void> {
-    const existing = await requestResult(this.#store.get(key.path)) as StoredRecord | undefined;
+    const store = this.#storeForKey(key);
+    const existing = await requestResult(store.get(key.path)) as StoredRecord | undefined;
     if (existing === undefined) throw new NotFoundError(key);
-    await requestResult(this.#store.put({ ...existing, data: applyUpdate(existing.data, data) }));
+    await requestResult(store.put({ ...existing, data: applyUpdate(existing.data, data) }));
   }
 
   public async delete(key: Key): Promise<void> {
-    await requestResult(this.#store.delete(key.path));
+    await requestResult(this.#storeForKey(key).delete(key.path));
   }
 }
 
@@ -143,6 +146,7 @@ export class IndexedDbDatabase implements Database {
   public readonly name: string;
   public readonly version: number;
   readonly #factory: IDBFactory;
+  readonly #collections: readonly string[] | undefined;
   #databasePromise: Promise<IDBDatabase> | undefined;
 
   public constructor(options: IndexedDbDatabaseOptions) {
@@ -151,27 +155,45 @@ export class IndexedDbDatabase implements Database {
       throw new RangeError("IndexedDB version must be a positive safe integer");
     }
     const factory = options.factory ?? globalThis.indexedDB;
+    if (options.collections !== undefined) {
+      if (options.collections.length === 0 || options.collections.some((name) =>
+        name.trim().length === 0 || name.includes("/") || name === DALGO_RECORD_STORE
+      ) || new Set(options.collections).size !== options.collections.length) {
+        throw new TypeError("IndexedDB collections must be unique, nonempty collection names");
+      }
+    }
     this.name = options.name;
     this.version = options.version ?? 1;
     this.#factory = factory;
+    this.#collections = options.collections === undefined ? undefined : [...options.collections];
+  }
+
+  private storeName(collection: string): string {
+    if (this.#collections === undefined) return DALGO_RECORD_STORE;
+    if (!this.#collections.includes(collection)) throw new TypeError(`IndexedDB collection is not configured: ${collection}`);
+    return collection;
+  }
+
+  private storeNames(): readonly string[] {
+    return this.#collections ?? [DALGO_RECORD_STORE];
   }
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
     const database = await this.open();
-    const transaction = database.transaction(DALGO_RECORD_STORE, "readonly");
+    const storeName = this.storeName(key.collection);
+    const transaction = database.transaction(storeName, "readonly");
     const done = transactionDone(transaction);
-    const record = await requestResult(transaction.objectStore(DALGO_RECORD_STORE).get(key.path)) as StoredRecord | undefined;
+    const record = await requestResult(transaction.objectStore(storeName).get(key.path)) as StoredRecord | undefined;
     await done;
     return snapshot(key, record, codec);
   }
 
   public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
     const database = await this.open();
-    const transaction = database.transaction(DALGO_RECORD_STORE, "readonly");
+    const transaction = database.transaction(this.storeNames(), "readonly");
     const done = transactionDone(transaction);
-    const store = transaction.objectStore(DALGO_RECORD_STORE);
     const records = await Promise.all(keys.map(async (key) => {
-      const record = await requestResult(store.get(key.path)) as StoredRecord | undefined;
+      const record = await requestResult(transaction.objectStore(this.storeName(key.collection)).get(key.path)) as StoredRecord | undefined;
       return snapshot(key, record, codec);
     }));
     await done;
@@ -180,9 +202,10 @@ export class IndexedDbDatabase implements Database {
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
     const database = await this.open();
-    const transaction = database.transaction(DALGO_RECORD_STORE, "readonly");
+    const storeName = this.storeName(query.source.name);
+    const transaction = database.transaction(storeName, "readonly");
     const done = transactionDone(transaction);
-    const result = await executeQuery(transaction.objectStore(DALGO_RECORD_STORE), query);
+    const result = await executeQuery(transaction.objectStore(storeName), query);
     await done;
     return result;
   }
@@ -191,9 +214,9 @@ export class IndexedDbDatabase implements Database {
     callback: (transaction: ReadwriteTransaction) => Promise<Result>,
   ): Promise<Result> {
     const database = await this.open();
-    const nativeTransaction = database.transaction(DALGO_RECORD_STORE, "readwrite");
+    const nativeTransaction = database.transaction(this.storeNames(), "readwrite");
     const done = transactionDone(nativeTransaction);
-    const transaction = new IndexedDbReadwriteTransaction(nativeTransaction.objectStore(DALGO_RECORD_STORE));
+    const transaction = new IndexedDbReadwriteTransaction((key) => nativeTransaction.objectStore(this.storeName(key.collection)));
     try {
       const result = await callback(transaction);
       await done;
@@ -220,12 +243,14 @@ export class IndexedDbDatabase implements Database {
       const request = this.#factory.open(this.name, this.version);
       request.addEventListener("upgradeneeded", () => {
         const database = request.result;
-        const store = database.objectStoreNames.contains(DALGO_RECORD_STORE)
-          ? request.transaction?.objectStore(DALGO_RECORD_STORE)
-          : database.createObjectStore(DALGO_RECORD_STORE, { keyPath: "path" });
-        if (store === undefined) throw new Error("IndexedDB upgrade transaction is unavailable");
-        if (!store.indexNames.contains("collectionPath")) store.createIndex("collectionPath", "collectionPath");
-        if (!store.indexNames.contains("collectionName")) store.createIndex("collectionName", "collectionName");
+        for (const storeName of this.storeNames()) {
+          const store = database.objectStoreNames.contains(storeName)
+            ? request.transaction?.objectStore(storeName)
+            : database.createObjectStore(storeName, { keyPath: "path" });
+          if (store === undefined) throw new Error("IndexedDB upgrade transaction is unavailable");
+          if (!store.indexNames.contains("collectionPath")) store.createIndex("collectionPath", "collectionPath");
+          if (!store.indexNames.contains("collectionName")) store.createIndex("collectionName", "collectionName");
+        }
       });
       request.addEventListener("success", () => {
         request.result.addEventListener("versionchange", () => {
