@@ -35,10 +35,11 @@ Mappings are deliberate: collection, schema/table, key type/key column, and ever
 ## DALgo semantics
 
 - `get`, bounded `getMany`, and top-level collection `query` are supported. Queries support scalar equality/inequality/comparison filters, ordering, `limit`, and `offset`. Cursors, collection groups, nested collections, membership/array operators, aggregate queries, and realtime streams are unsupported.
-- `insert`, `update`, and `delete` are enabled only where `uniqueKey: true` confirms the database constraint. Each mutation validates the Data API affected-row count to detect an invalid mapping. `insert` requires a complete configured projection; `update` permits a mapped partial projection.
-- `set` is intentionally unsupported. PostgreSQL and MySQL require different atomic upsert syntax, and choosing one behind a provider-neutral adapter would silently change behavior. A caller may use `insert`/`update` and handle a conflict explicitly, or use a database-specific DALgo adapter later.
+- `update` and idempotent `delete` are enabled only where `uniqueKey: true` confirms the database constraint. `update` requires exactly one affected row and maps zero rows to `NotFoundError`; `delete` accepts zero or one row. More than one affected row is an invalid mapping and fails closed.
+- `insert` and `set` are intentionally unsupported. A duplicate-key response arrives as a redacted Data API database failure, so this adapter cannot safely map it to DALgo's `AlreadyExistsError`; a preliminary read/insert introduces a race. PostgreSQL and MySQL also use different atomic upsert syntax. Choosing either hidden behavior would fake DALgo semantics.
 - The RDS Data API offers `BeginTransaction`, `CommitTransaction`, and `RollbackTransaction`, but this package rejects DALgo callback transactions for now. It does not claim a callback's multiple reads/writes are atomically routed on one server transaction until that lifecycle is implemented and tested. Database transactions therefore remain available through application-owned RDS Data API calls, not this DALgo abstraction.
 - Responses must have exactly the generated projection metadata (`__dalgo_key` followed by mapped fields), bounded row counts, and valid scalar field unions. Invalid or oversized responses fail closed.
+- `ExecuteStatement` has AWS's documented 1 MiB binary result cap and no continuation token for a truncated result. Keep projections and `limit` small enough to fit; this adapter cannot resume a truncated response. For ordered pagination, callers are responsible for a deterministic order (normally including a unique final column); no order means database order, and cursor pagination is unsupported.
 
 ## Security and browser use
 

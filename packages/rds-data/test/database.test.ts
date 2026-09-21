@@ -1,5 +1,5 @@
 import { ExecuteStatementCommand } from "@aws-sdk/client-rds-data";
-import { UnsupportedError, collection, key } from "@dal-go/dalgo";
+import { NotFoundError, UnsupportedError, collection, key } from "@dal-go/dalgo";
 import { describe, expect, it } from "vitest";
 import { RdsDataDatabase } from "../src/index.js";
 
@@ -35,14 +35,15 @@ describe("RdsDataDatabase", () => {
     await expect(db([{ columnMetadata: metadata, records: [[{ longValue: 2 }, { stringValue: "no" }, { booleanValue: false }]] }]).database.get(key("todos", 1))).rejects.toThrow("requested key");
   });
 
-  it("writes only through confirmed unique key mappings and validates affected rows", async () => {
-    const inserted = db([{ numberOfRecordsUpdated: 1 }]);
-    await inserted.database.insert(key("todos", 1), { title: "new", done: false });
-    const insert = inserted.commands[0] as ExecuteStatementCommand;
-    expect(insert.input.sql).toContain("INSERT INTO");
-    expect(insert.input.parameters).toEqual([{ name: "key", value: { longValue: 1 } }, { name: "vtitle", value: { stringValue: "new" } }, { name: "vdone", value: { booleanValue: false } }]);
+  it("requires exactly one update, keeps delete idempotent, and rejects unclassifiable inserts", async () => {
+    await expect(db([]).database.insert(key("todos", 1), { title: "new", done: false })).rejects.toThrow(UnsupportedError);
+    const updated = db([{ numberOfRecordsUpdated: 1 }]);
+    await updated.database.update(key("todos", 1), { title: "new" });
+    expect((updated.commands[0] as ExecuteStatementCommand).input.parameters).toEqual([{ name: "vtitle", value: { stringValue: "new" } }, { name: "key", value: { longValue: 1 } }]);
+    await expect(db([{ numberOfRecordsUpdated: 0 }]).database.update(key("todos", 1), { title: "missing" })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(db([{ numberOfRecordsUpdated: 0 }]).database.delete(key("todos", 1))).resolves.toBeUndefined();
     await expect(db([], { tables: { todos: { ...table, uniqueKey: false } } }).database.delete(key("todos", 1))).rejects.toThrow(UnsupportedError);
-    await expect(db([{ numberOfRecordsUpdated: 2 }]).database.delete(key("todos", 1))).rejects.toThrow("multiple");
+    await expect(db([{ numberOfRecordsUpdated: 2 }]).database.update(key("todos", 1), { title: "bad" })).rejects.toThrow("multiple");
   });
 
   it("keeps dialect-dependent set and callback transactions explicitly unsupported", async () => {
@@ -63,6 +64,10 @@ describe("RdsDataDatabase", () => {
     await expect(db([{ columnMetadata: [], records: [] }]).database.query(collection("todos").query().build())).rejects.toThrow("metadata");
     await expect(db([{ columnMetadata: metadata, records: [[{ longValue: 1, stringValue: "x" }, { stringValue: "x" }, { booleanValue: true }]] }]).database.query(collection("todos").query().build())).rejects.toThrow("field union");
     try { await db([new Error("server SQL secret")]).database.get(key("todos", 1)); } catch (error) { expect(String(error)).toContain("request failed"); expect(String(error)).not.toContain("secret"); }
+  });
+
+  it("rejects a service response that exceeds the requested SQL limit", async () => {
+    await expect(db([{ columnMetadata: metadata, records: [row, row] }]).database.query(collection("todos").query().limit(1).build())).rejects.toThrow("requested SQL limit");
   });
 
   it("aborts a non-responsive SDK call at the configured deadline", async () => {

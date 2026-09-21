@@ -1,5 +1,5 @@
 import { ExecuteStatementCommand, type ExecuteStatementCommandOutput, type Field, type SqlParameter } from "@aws-sdk/client-rds-data";
-import { AlreadyExistsError, Key, UnsupportedError, identityCodec, type Codec, type Database, type ExistingRecord, type QueryPage, type ReadwriteTransaction, type RecordSnapshot, type StructuredQuery, type UpdateData } from "@dal-go/dalgo";
+import { Key, NotFoundError, UnsupportedError, identityCodec, type Codec, type Database, type ExistingRecord, type QueryPage, type ReadwriteTransaction, type RecordSnapshot, type StructuredQuery, type UpdateData } from "@dal-go/dalgo";
 import { compileRdsQuery, quoteIdentifier, quoteTable, rdsKeyValue, rdsScalar, type RdsParameter } from "./sql.js";
 import type { RdsDataDatabaseOptions, RdsDataTable } from "./types.js";
 
@@ -77,7 +77,7 @@ export class RdsDataDatabase implements Database {
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
     const table = this.#tableForKey(key); this.#key(key.id, table);
     const query = compileRdsQuery(table, this.#options.dialect, { source: { kind: "collection", name: key.collection }, filters: [{ field: "__name__", operator: "==", value: key.id }], orders: [] }, 2, undefined);
-    const rows = await this.#select(query.sql, query.parameters, table);
+    const rows = await this.#select(query.sql, query.parameters, table, 2);
     if (rows.length === 0) return { key, exists: false };
     if (rows.length !== 1 || rows[0]?.__dalgo_key !== key.id) throw new RdsDataError("RDS Data API point read did not return exactly the requested key");
     return this.#snapshot(key, rows[0] ?? {}, codec);
@@ -93,17 +93,13 @@ export class RdsDataDatabase implements Database {
     if (requested !== undefined && (!Number.isSafeInteger(requested) || requested < 1)) throw new TypeError("query limit must be a positive safe integer");
     if (requested !== undefined && requested > this.#maxRows) throw new UnsupportedError(`RDS Data API query limit exceeded maxRows (${String(this.#maxRows)})`);
     const limit = requested ?? this.#maxRows + 1; const compiled = compileRdsQuery(table, this.#options.dialect, query, limit, query.offset);
-    const rows = await this.#select(compiled.sql, compiled.parameters, table);
+    const rows = await this.#select(compiled.sql, compiled.parameters, table, limit);
     if (requested === undefined && rows.length > this.#maxRows) throw new UnsupportedError(`RDS Data API query exceeded maxRows (${String(this.#maxRows)})`);
     return { records: rows.map((row) => { const id = row.__dalgo_key; this.#key(id, table); return this.#snapshot(new Key(query.source.name, id), row, query.source.codec) as ExistingRecord<T>; }) };
   }
 
-  public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
-    const table = this.#writable(key); const dataValues = this.#full(data, codec, table); const fields = Object.keys(table.columns);
-    const columns = [table.keyColumn, ...fields.map((field) => table.columns[field] ?? "")]; const params = [{ name: "key", value: key.id }, ...fields.map((field) => ({ name: `v${field}`, value: dataValues[field] }))];
-    const sql = `INSERT INTO ${quoteTable(table, this.#options.dialect)} (${columns.map((column) => quoteIdentifier(column, this.#options.dialect, "column")).join(", ")}) VALUES (${params.map((item) => `:${item.name}`).join(", ")})`;
-    try { this.#assertOne(await this.#mutate(sql, params)); } catch (error) { if (error instanceof RdsDataError) throw error; throw new AlreadyExistsError(key); }
-  }
+  /** A duplicate-key error is not safely classifiable after a redacted Data API failure. */
+  public insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { void [key, data, codec]; return Promise.reject(new UnsupportedError("RDS Data API insert cannot provide dialect-neutral atomic conflict semantics")); }
 
   /** Provider-neutral SQL has no atomic MySQL/PostgreSQL upsert spelling; set is intentionally unsupported. */
   public set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { void [key, data, codec]; return Promise.reject(new UnsupportedError("RDS Data API set requires dialect-specific upsert semantics")); }
@@ -111,18 +107,18 @@ export class RdsDataDatabase implements Database {
   public async update(key: Key, data: UpdateData): Promise<void> {
     const table = this.#writable(key); const values = this.#partial(data, table); const fields = Object.keys(values); if (fields.length === 0) return;
     const sql = `UPDATE ${quoteTable(table, this.#options.dialect)} SET ${fields.map((field) => `${quoteIdentifier(table.columns[field] ?? "", this.#options.dialect, "column")} = :v${field}`).join(", ")} WHERE ${quoteIdentifier(table.keyColumn, this.#options.dialect, "keyColumn")} = :key`;
-    this.#assertAtMostOne(await this.#mutate(sql, [...fields.map((field) => ({ name: `v${field}`, value: values[field] })), { name: "key", value: key.id }]));
+    this.#assertUpdated(await this.#mutate(sql, [...fields.map((field) => ({ name: `v${field}`, value: values[field] })), { name: "key", value: key.id }]), key);
   }
 
   public async delete(key: Key): Promise<void> { const table = this.#writable(key); this.#assertAtMostOne(await this.#mutate(`DELETE FROM ${quoteTable(table, this.#options.dialect)} WHERE ${quoteIdentifier(table.keyColumn, this.#options.dialect, "keyColumn")} = :key`, [{ name: "key", value: key.id }])); }
   public runReadwriteTransaction<Result>(callback: (transaction: ReadwriteTransaction) => Promise<Result>): Promise<Result> { void callback; return Promise.reject(new UnsupportedError("RDS Data API callback transactions are not implemented")); }
 
-  async #select(sql: string, params: readonly RdsParameter[], table: RdsDataTable): Promise<readonly Record<string, Scalar>[]> {
+  async #select(sql: string, params: readonly RdsParameter[], table: RdsDataTable, requestedLimit: number): Promise<readonly Record<string, Scalar>[]> {
     const output = await this.#execute(sql, params, true); const metadata = output.columnMetadata;
     const names = ["__dalgo_key", ...Object.keys(table.columns)];
     if (!Array.isArray(metadata) || metadata.length !== names.length || metadata.some((column, index) => !isObject(column) || column.name !== names[index])) throw new RdsDataError("RDS Data API result metadata did not match configured projection");
     if (!Array.isArray(output.records)) throw new RdsDataError("RDS Data API query omitted records");
-    if (output.records.length > this.#maxRows + 1) throw new UnsupportedError("RDS Data API result exceeded configured bound");
+    if (output.records.length > requestedLimit) throw new RdsDataError("RDS Data API result exceeded requested SQL limit");
     return output.records.map((row) => { if (!Array.isArray(row) || row.length !== names.length) throw new RdsDataError("RDS Data API result row did not match configured projection"); return Object.fromEntries(names.map((name, index) => [name, resultValue(row[index])])) as Record<string, Scalar>; });
   }
   async #mutate(sql: string, params: readonly RdsParameter[]): Promise<number> {
@@ -145,8 +141,7 @@ export class RdsDataDatabase implements Database {
   #writable(key: Key): RdsDataTable { const table = this.#tableForKey(key); this.#key(key.id, table); if (table.uniqueKey !== true) throw new UnsupportedError("RDS Data API writes require uniqueKey: true"); return table; }
   #key(value: unknown, table: RdsDataTable): asserts value is string | number { rdsKeyValue(value, table); }
   #snapshot<T>(key: Key, row: Record<string, Scalar>, codec?: Codec<T>): RecordSnapshot<T> { const data = { ...row }; delete data.__dalgo_key; return { key, exists: true, data: codecOr(codec).decode(data) }; }
-  #full<T>(data: T, codec: Codec<T> | undefined, table: RdsDataTable): Record<string, Scalar> { const encoded = codecOr(codec).encode(data); const fields = Object.keys(table.columns); if (!isObject(encoded) || Object.keys(encoded).length !== fields.length || fields.some((field) => !Object.hasOwn(encoded, field))) throw new UnsupportedError("RDS Data API insert data must exactly match the declared projection"); return this.#partial(encoded, table); }
   #partial(data: unknown, table: RdsDataTable): Record<string, Scalar> { if (!isObject(data)) throw new UnsupportedError("RDS Data API update data must be a top-level object"); const result: Record<string, Scalar> = {}; for (const [field, value] of Object.entries(data)) { if (table.columns[field] === undefined) throw new UnsupportedError(`RDS Data API field is not declared in table mapping: ${field}`); result[field] = rdsScalar(value) as Scalar; } return result; }
-  #assertOne(count: number): void { if (count !== 1) throw new RdsDataError("RDS Data API insert did not affect exactly one record"); }
+  #assertUpdated(count: number, key: Key): void { if (count === 0) throw new NotFoundError(key); if (count !== 1) throw new RdsDataError("RDS Data API key update affected multiple records"); }
   #assertAtMostOne(count: number): void { if (count > 1) throw new RdsDataError("RDS Data API key mutation affected multiple records"); }
 }
