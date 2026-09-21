@@ -27,6 +27,7 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 | OpenSearch | [`@dal-go/dalgo2opensearch`](packages/opensearch) |
 | OpenVaultDB | [`@dal-go/dalgo2ovdb`](packages/ovdb) |
 | Pinecone | [`@dal-go/dalgo2pinecone`](packages/pinecone) |
+| PocketBase | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) |
 | PostgREST | [`@dal-go/dalgo2postgrest`](packages/postgrest) |
 | Qdrant | [`@dal-go/dalgo2qdrant`](packages/qdrant) |
 | Redshift | [`@dal-go/dalgo2redshift`](packages/redshift) |
@@ -95,7 +96,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | 22 | Pinecone data API | HTTP-capable | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Vector/filter search | Limited | No | No generic CDC | API keys are server credentials; use a trusted runtime or proxy. | Implemented: [`@dal-go/dalgo2pinecone`](packages/pinecone), with explicit collection-to-namespace isolation. |
 | 23 | Algolia Search/Records APIs | Browser-ready for search; trusted-runtime writes | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Search/filter | Facets | No | Async indexing task receipts, not CDC | Restricted search-only keys are browser-safe; writes require an explicit trusted mode and a write-capable key. | Implemented: [`@dal-go/dalgo2algolia`](packages/algolia), with separate DSN read and write hosts. |
 | 24 | Appwrite TablesDB rows API | Browser-ready | Yes | Yes | Yes | Yes | JSON queries | Limited | No DALgo callback transactions | Realtime is a separate API | Browser sessions/JWT and row permissions are public-client-oriented; API keys require explicit trusted-server mode. | Implemented: [`@dal-go/dalgo2appwrite`](packages/appwrite), against the current TablesDB rows HTTP API. |
-| 25 | PocketBase records API | Browser-ready | Yes | Yes | Yes | Yes | Filter/sort/expand | Limited | No public multi-operation transaction | Realtime subscriptions | Browser SDK, collection rules, and user tokens. | `dalgo2pocketbase-js`. |
+| 25 | PocketBase records API | Browser-ready | Yes | Yes | Yes | Yes | Filter/sort | Limited | No public multi-operation transaction | Realtime subscriptions are separate | Stateless user-token auth, collection rules, and CORS support public clients; superuser credentials remain server-only. | Implemented: [`@dal-go/dalgo2pocketbase`](packages/pocketbase), with explicit collection mappings and no fake atomic upsert. |
 
 ## Hyperscaler coverage
 
@@ -164,6 +165,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [Pinecone data-plane API](https://docs.pinecone.io/reference/api/latest/data-plane)
 - [Algolia JavaScript API](https://www.algolia.com/developers/search-api-javascript)
 - [Appwrite TablesDB rows API](https://appwrite.io/docs/references/cloud/client-web/tablesDB)
+- [PocketBase records API](https://pocketbase.io/docs/api-records/)
 
 ## Delivery status
 
@@ -190,6 +192,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2appwrite`](packages/appwrite) | Implemented bounded TablesDB row CRUD/query with current JSON query encoding, explicit browser-session and trusted-server credential modes, and no claim of DALgo callback-transaction support. |
 | [`@dal-go/dalgo2algolia`](packages/algolia) | Implemented bounded object reads/search plus explicit trusted-runtime upsert/delete; atomic conditional writes, DALgo cursors, generic ordering, nesting, and transactions remain unsupported. |
 | [`@dal-go/dalgo2pinecone`](packages/pinecone) | Implemented bounded fetch/upsert/delete and explicit vector search with collision-free collection namespaces; conditional writes, DALgo transactions, and generic queries remain unsupported. |
+| [`@dal-go/dalgo2pocketbase`](packages/pocketbase) | Implemented bounded records CRUD/query with validated paging envelopes and stateless browser token auth; atomic upsert and callback transactions remain unsupported. |
 
 ## Adapter acceptance bar
 
