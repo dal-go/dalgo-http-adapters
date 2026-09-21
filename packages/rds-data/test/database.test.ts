@@ -42,6 +42,9 @@ describe("RdsDataDatabase", () => {
     expect((updated.commands[0] as ExecuteStatementCommand).input.parameters).toEqual([{ name: "vtitle", value: { stringValue: "new" } }, { name: "key", value: { longValue: 1 } }]);
     await expect(db([{ numberOfRecordsUpdated: 0 }]).database.update(key("todos", 1), { title: "missing" })).rejects.toBeInstanceOf(NotFoundError);
     await expect(db([{ numberOfRecordsUpdated: 0 }]).database.delete(key("todos", 1))).resolves.toBeUndefined();
+    const empty = db([]);
+    await expect(empty.database.update(key("todos", 1), {})).rejects.toThrow(UnsupportedError);
+    expect(empty.commands).toHaveLength(0);
     await expect(db([], { tables: { todos: { ...table, uniqueKey: false } } }).database.delete(key("todos", 1))).rejects.toThrow(UnsupportedError);
     await expect(db([{ numberOfRecordsUpdated: 2 }]).database.update(key("todos", 1), { title: "bad" })).rejects.toThrow("multiple");
   });

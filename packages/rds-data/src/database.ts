@@ -105,7 +105,8 @@ export class RdsDataDatabase implements Database {
   public set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { void [key, data, codec]; return Promise.reject(new UnsupportedError("RDS Data API set requires dialect-specific upsert semantics")); }
 
   public async update(key: Key, data: UpdateData): Promise<void> {
-    const table = this.#writable(key); const values = this.#partial(data, table); const fields = Object.keys(values); if (fields.length === 0) return;
+    const table = this.#writable(key); const values = this.#partial(data, table); const fields = Object.keys(values);
+    if (fields.length === 0) throw new UnsupportedError("RDS Data API update data must contain at least one mapped field");
     const sql = `UPDATE ${quoteTable(table, this.#options.dialect)} SET ${fields.map((field) => `${quoteIdentifier(table.columns[field] ?? "", this.#options.dialect, "column")} = :v${field}`).join(", ")} WHERE ${quoteIdentifier(table.keyColumn, this.#options.dialect, "keyColumn")} = :key`;
     this.#assertUpdated(await this.#mutate(sql, [...fields.map((field) => ({ name: `v${field}`, value: values[field] })), { name: "key", value: key.id }]), key);
   }
