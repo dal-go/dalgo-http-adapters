@@ -27,6 +27,7 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 | Azure Data Explorer / Kusto | [`@dal-go/dalgo2kusto`](packages/kusto) |
 | libSQL | [`@dal-go/dalgo2libsql`](packages/libsql) |
 | Neo4j | [`@dal-go/dalgo2neo4j`](packages/neo4j) |
+| Amazon Neptune | [`@dal-go/dalgo2neptune`](packages/neptune) |
 | OpenSearch | [`@dal-go/dalgo2opensearch`](packages/opensearch) |
 | OpenVaultDB | [`@dal-go/dalgo2ovdb`](packages/ovdb) |
 | Pinecone | [`@dal-go/dalgo2pinecone`](packages/pinecone) |
@@ -129,7 +130,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | Aurora PostgreSQL / MySQL | HTTP-capable where Data API is enabled | Implemented: [`@dal-go/dalgo2rds-data`](packages/rds-data), a trusted-runtime adapter with explicit dialect/table/key mappings, bounded reads/query, guarded update/delete, and intentionally unsupported insert/set/callback transactions. |
 | RDS PostgreSQL / MySQL / MariaDB / SQL Server / Oracle | Not applicable | RDS HTTP APIs manage instances; data uses native wire protocols. |
 | DocumentDB | Not applicable | MongoDB wire protocol; no generic HTTP data API. |
-| Neptune | HTTP-capable | HTTPS openCypher, SPARQL, and Neptune data APIs; specialized graph adapter with SigV4/VPC constraints. |
+| Neptune | HTTP-capable | Implemented as [`@dal-go/dalgo2neptune`](packages/neptune): bounded node CRUD/query over the parameterized openCypher HTTPS endpoint, with explicit collection/label/ID namespaces. IAM deployments require final-payload SigV4 signing; browser access is not practical for normal VPC endpoints. |
 | Timestream | HTTP-capable | HTTPS WriteRecords and Query; specialized time-series adapter. |
 | Keyspaces for Apache Cassandra | Not applicable | The HTTPS AWS API manages keyspaces/tables; row CRUD uses CQL over TLS on port 9142, so there is no qualifying HTTP data plane. |
 | MemoryDB / ElastiCache Redis or Valkey | Not applicable | Data plane uses RESP in a VPC; HTTP APIs are management-only. |
@@ -175,6 +176,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [Cloud Spanner v1 REST data API](https://cloud.google.com/spanner/docs/reference/rest)
 - [AWS RDS Data API](https://docs.aws.amazon.com/rdsdataservice/latest/APIReference/Welcome.html)
 - [Azure Data Explorer REST API](https://learn.microsoft.com/en-us/kusto/api/rest/)
+- [Amazon Neptune openCypher HTTPS endpoint](https://docs.aws.amazon.com/neptune/latest/userguide/access-graph-opencypher-queries.html)
 
 ## Delivery status
 
@@ -207,6 +209,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2spanner`](packages/spanner) | Implemented bounded, typed, parameterized Spanner reads/query and single-use atomic commits with explicit schema/key mappings; callback transactions and paginated continuation remain unsupported. |
 | [`@dal-go/dalgo2rds-data`](packages/rds-data) | Implemented bounded parameterized reads/query and guarded update/delete for Data-API-enabled Aurora PostgreSQL/MySQL; insert, set, and DALgo callback transactions remain unsupported rather than faking database-error semantics. |
 | [`@dal-go/dalgo2kusto`](packages/kusto) | Implemented bounded, typed, parameterized KQL reads/query over the v2 REST query endpoint; mutations, callback transactions, cursors, joins, grouping, and nested collection paths remain explicitly unsupported. |
+| [`@dal-go/dalgo2neptune`](packages/neptune) | Implemented bounded parameterized openCypher node CRUD/query with collision-free custom-ID namespaces, capped request/response transport, and injected final-payload signing; relationships, nested collections, and callback transactions remain unsupported. |
 
 ## Adapter acceptance bar
 
