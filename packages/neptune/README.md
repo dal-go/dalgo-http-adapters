@@ -73,8 +73,9 @@ rather than silently adopting Neptune's graph/property semantics.
   `delete` refuses to detach relationships, so linked-node deletion fails rather
   than silently deleting graph edges.
 - The adapter uses an absolute 30-second deadline by default (maximum 60
-  seconds), rejects redirects, streams and bounds each response to 1 MiB by
-  default (maximum 10 MiB), validates response structure, and does not put
+  seconds), rejects redirects, bounds an encoded request to 256 KiB by default
+  (maximum 1 MiB), streams and bounds each response to 1 MiB by default
+  (maximum 10 MiB), validates response structure, and does not put
   server response text in thrown HTTP errors. Invalid JSON after an HTTP 200 is
   still treated as a failed query.
 - Queries are never unbounded: `maxRows` defaults to 1,000 (maximum 10,000).

@@ -32,8 +32,8 @@ function database(recording: ReturnType<typeof fakeFetch>): NeptuneDatabase {
 
 function body(recording: ReturnType<typeof fakeFetch>, index = 0): URLSearchParams {
   const value = recording.calls[index]?.init?.body;
-  if (!(value instanceof URLSearchParams)) throw new Error("expected URLSearchParams");
-  return value;
+  if (typeof value !== "string") throw new Error("expected encoded request string");
+  return new URLSearchParams(value);
 }
 
 function url(input: URL | RequestInfo | undefined): string | undefined {
@@ -116,6 +116,17 @@ describe("NeptuneDatabase", () => {
     await expect(db.query(forged as never)).rejects.toThrow("limit");
   });
 
+  it("does not create a cursor when the exact bounded page has no sentinel row", async () => {
+    const recording = fakeFetch(reply({ results: [{ node: node("items:a", { rank: 1 }) }] }));
+    const db = new NeptuneDatabase({
+      baseUrl: "https://cluster.neptune.amazonaws.com:8182", collections: { items: { label: "Item" } }, fetch: recording.fetch, maxRows: 1,
+    });
+    const page = await db.query(collection<{ rank: number }>("items").query().orderBy("rank").build());
+    expect(body(recording).get("query")).toContain("LIMIT 2");
+    expect(page.records).toHaveLength(1);
+    expect(page.nextCursor).toBeUndefined();
+  });
+
   it("rejects prefix-overlapping mappings and oversized response bodies", async () => {
     expect(() => new NeptuneDatabase({
       baseUrl: "https://cluster.neptune.amazonaws.com:8182",
@@ -126,5 +137,25 @@ describe("NeptuneDatabase", () => {
       baseUrl: "https://cluster.neptune.amazonaws.com:8182", collections: { items: { label: "Item" } }, fetch: recording.fetch, maxResponseBytes: 20,
     });
     await expect(db.get(collection("items").key("a"))).rejects.toThrow("exceeds 20 bytes");
+  });
+
+  it("rejects oversized encoded requests before transport and cancels a hung stream", async () => {
+    const oversized = fakeFetch();
+    const smallRequest = new NeptuneDatabase({
+      baseUrl: "https://cluster.neptune.amazonaws.com:8182", collections: { items: { label: "Item" } }, fetch: oversized.fetch, maxRequestBytes: 20,
+    });
+    await expect(smallRequest.get(collection("items").key("this-key-is-too-long"))).rejects.toThrow("request exceeds 20 bytes");
+    expect(oversized.calls).toHaveLength(0);
+
+    let cancelled = false;
+    const hungFetch = (() => Promise.resolve(new Response(new ReadableStream({
+      pull: () => new Promise<void>(() => undefined),
+      cancel: () => { cancelled = true; },
+    })))) as typeof fetch;
+    const hung = new NeptuneDatabase({
+      baseUrl: "https://cluster.neptune.amazonaws.com:8182", collections: { items: { label: "Item" } }, fetch: hungFetch, timeoutMs: 5,
+    });
+    await expect(hung.get(collection("items").key("a"))).rejects.toThrow("timed out");
+    expect(cancelled).toBe(true);
   });
 });

@@ -61,6 +61,7 @@ export class NeptuneDatabase implements Database {
   readonly #timeoutMs: number;
   readonly #maxRows: number;
   readonly #maxResponseBytes: number;
+  readonly #maxRequestBytes: number;
   readonly #fetch: typeof fetch;
 
   public constructor(options: NeptuneDatabaseOptions) {
@@ -73,6 +74,8 @@ export class NeptuneDatabase implements Database {
     if (!Number.isSafeInteger(this.#maxRows) || this.#maxRows < 1 || this.#maxRows > 10_000) throw new RangeError("Neptune maxRows must be a safe integer between 1 and 10000");
     this.#maxResponseBytes = options.maxResponseBytes ?? 1_048_576;
     if (!Number.isSafeInteger(this.#maxResponseBytes) || this.#maxResponseBytes < 1 || this.#maxResponseBytes > 10_485_760) throw new RangeError("Neptune maxResponseBytes must be a safe integer between 1 and 10485760");
+    this.#maxRequestBytes = options.maxRequestBytes ?? 262_144;
+    if (!Number.isSafeInteger(this.#maxRequestBytes) || this.#maxRequestBytes < 1 || this.#maxRequestBytes > 1_048_576) throw new RangeError("Neptune maxRequestBytes must be a safe integer between 1 and 1048576");
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 
@@ -163,7 +166,10 @@ export class NeptuneDatabase implements Database {
     const timer = setTimeout(() => { controller.abort(); rejectDeadline(timeoutError); }, this.#timeoutMs);
     const wait = async <Value>(work: () => Promise<Value> | Value): Promise<Value> => Promise.race([Promise.resolve().then(work), deadline]);
     try {
-      const body = new URLSearchParams({ query, parameters: JSON.stringify(parameters) });
+      const body = new URLSearchParams({ query, parameters: JSON.stringify(parameters) }).toString();
+      if (new TextEncoder().encode(body).byteLength > this.#maxRequestBytes) {
+        throw new TypeError(`Neptune openCypher request exceeds ${this.#maxRequestBytes.toString()} bytes`);
+      }
       const response = await wait(async () => this.#fetch(new URL("/openCypher", this.#baseUrl), {
         method: "POST", headers: await this.requestHeaders(wait), body, signal: controller.signal, redirect: "error",
       }));
@@ -188,19 +194,27 @@ export class NeptuneDatabase implements Database {
     const decoder = new TextDecoder();
     let bytes = 0;
     let text = "";
+    let complete = false;
     try {
       for (;;) {
         const chunk = await wait(async () => reader.read());
-        if (chunk.done) return text + decoder.decode();
+        if (chunk.done) {
+          complete = true;
+          return text + decoder.decode();
+        }
         bytes += chunk.value.byteLength;
         if (bytes > this.#maxResponseBytes) {
-          controller.abort();
-          await reader.cancel().catch(() => undefined);
           throw new TypeError(`Neptune openCypher response exceeds ${this.#maxResponseBytes.toString()} bytes`);
         }
         text += decoder.decode(chunk.value, { stream: true });
       }
-    } finally { reader.releaseLock(); }
+    } finally {
+      if (!complete) {
+        controller.abort();
+        await reader.cancel().catch(() => undefined);
+      }
+      reader.releaseLock();
+    }
   }
 
   private boundedCode(value: string | null): string | undefined {

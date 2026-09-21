@@ -21,6 +21,8 @@ export interface NeptuneDatabaseOptions {
   readonly maxRows?: number;
   /** Maximum bytes read from one HTTP response; defaults to 1 MiB and is bounded to 10 MiB. */
   readonly maxResponseBytes?: number;
+  /** Maximum UTF-8 bytes in one encoded form request; defaults to 256 KiB and is bounded to 1 MiB. */
+  readonly maxRequestBytes?: number;
   /** A custom fetch may SigV4-sign the final URL, headers, and form body. */
   readonly fetch?: typeof fetch;
 }
