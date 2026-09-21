@@ -7,7 +7,7 @@
   "sideEffects": false,
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "files": ["dist", "LICENSE", "README.md"],
-  "scripts": { "build": "tsc -p tsconfig.build.json", "check": "eslint . && vitest run && tsc -p tsconfig.build.json", "lint": "eslint .", "prepack": "npm run build", "test": "vitest run", "test:watch": "vitest" },
+  "scripts": { "build": "tsc -p tsconfig.build.json", "check": "eslint . && vitest run && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json", "lint": "eslint .", "prepack": "npm run build", "test": "vitest run", "test:watch": "vitest" },
   "repository": { "type": "git", "url": "git+https://github.com/dal-go/dalgo-http-adapters.git", "directory": "packages/spanner" },
   "bugs": { "url": "https://github.com/dal-go/dalgo-http-adapters/issues" },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/spanner#readme",
