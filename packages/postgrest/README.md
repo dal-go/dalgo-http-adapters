@@ -56,9 +56,9 @@ have only the needed database permissions.
 | `get` | Bounded `GET /relation?id=eq.value&limit=1`; an empty result is a missing snapshot. |
 | `getMany` | Ordered, bounded, bounded-parallel point reads. |
 | `insert` | `POST /relation` with an adapter-owned ID column; HTTP 409 becomes `AlreadyExistsError`. |
-| `set` | `POST /relation` with `Prefer: resolution=merge-duplicates`; requires a compatible primary/unique constraint and fresh schema cache. |
-| `update` | `PATCH /relation?id=eq.value`; an empty returned representation becomes `NotFoundError`. |
-| `delete` | `DELETE /relation?id=eq.value`; deleting a missing row is idempotent. |
+| `set` | Single-row `PUT /relation?id=eq.value` with the complete payload; exactly one returned row is required. |
+| `update` | `PATCH /relation?id=eq.value` with strict `max-affected=1`; an empty returned representation becomes `NotFoundError`. |
+| `delete` | `DELETE /relation?id=eq.value` with strict `max-affected=1`; an empty returned representation is an idempotent missing delete. |
 | `query` | Direct top-level relation `GET` with PostgREST filters, ordering, bounded `limit`, and `offset`. |
 
 The adapter-owned ID column is removed before codec decoding. Consequently,
@@ -79,12 +79,22 @@ top-level DALgo keys from its value.
   PostgreSQL-array containment/overlap; relation and field names are limited to
   simple SQL identifiers. No resource embedding, JSON paths, full-text search,
   aggregates, RPC, or server management API is exposed.
+- `set` is full replacement, not merge-upsert: the supplied DALgo value is the
+  complete replacement record (apart from the adapter-owned ID). Fields omitted
+  from it are not sent for merge. PostgREST must expose a relation for which its
+  documented single-row `PUT` semantics are available.
+- `update` and `delete` ask PostgREST for `handling=strict, max-affected=1`
+  and verify returned cardinality. `set` verifies one returned `PUT` row;
+  PostgREST documents `max-affected` for PATCH and DELETE, not PUT.
 - PostgREST errors may contain database details and row values. Response bodies
   are cancelled and discarded for non-2xx replies; `PostgrestHttpError` exposes
-  only the HTTP status. Successful writes request `return=minimal` and cancel
-  any unexpected response body. JSON request/response bodies are limited to 1 MiB by
+  only the HTTP status. Header-provider, fetch, redirect, timeout, body-stream,
+  and JSON failures become a generic `PostgrestRequestError`, never their
+  original text. Inserts request `return=minimal` and cancel any unexpected
+  response body; keyed writes read a bounded representation to prove their
+  cardinality. JSON request/response bodies are limited to 1 MiB by
   default, `getMany` to 100 keys and 8 concurrent requests, queries to 100
-  rows, and header wait time to 15 seconds (all configurable within hard caps).
+  rows, and one end-to-end request deadline of 15 seconds (all configurable within hard caps).
 - The HTTP-contract tests inject `fetch`; they do not exercise a live
   PostgREST server, deployed CORS policy, JWT verifier, row-level security,
   table/view privileges, or schema cache.

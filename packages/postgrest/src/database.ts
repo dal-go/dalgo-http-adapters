@@ -56,6 +56,14 @@ export class PostgrestHttpError extends Error {
   }
 }
 
+/** A redacted failure while obtaining headers, following a request, or consuming a response. */
+export class PostgrestRequestError extends Error {
+  public constructor() {
+    super("PostgREST request could not be completed");
+    this.name = "PostgrestRequestError";
+  }
+}
+
 function positive(value: number | undefined, fallback: number, field: string, maximum = 16_777_216): number {
   const result = value ?? fallback;
   if (!Number.isSafeInteger(result) || result < 1 || result > maximum) {
@@ -160,7 +168,16 @@ function filterParameter<T>(filter: QueryFilter<T>, idColumn: string): readonly 
   }
 }
 
-async function readJson(response: Response, maximum: number): Promise<unknown> {
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new PostgrestRequestError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(new PostgrestRequestError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+async function readJson(response: Response, maximum: number, signal: AbortSignal): Promise<unknown> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) > maximum)) {
     await response.body?.cancel();
@@ -172,7 +189,7 @@ async function readJson(response: Response, maximum: number): Promise<unknown> {
   let total = 0;
   try {
     for (;;) {
-      const item = await reader.read();
+      const item = await abortable(reader.read(), signal);
       if (item.done) break;
       total += item.value.byteLength;
       if (total > maximum) {
@@ -182,6 +199,7 @@ async function readJson(response: Response, maximum: number): Promise<unknown> {
       chunks.push(item.value);
     }
   } finally {
+    if (signal.aborted) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
   const bytes = new Uint8Array(total);
@@ -229,8 +247,7 @@ export class PostgrestDatabase implements Database, WriteSession {
     const url = this.keyUrl(key);
     url.searchParams.set("select", "*");
     url.searchParams.set("limit", "1");
-    const response = await this.request(url, "GET", { accept: "application/json" });
-    const rows = await this.rows(response);
+    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal) => this.rows(response, signal));
     const row = rows[0];
     return row === undefined ? { key, exists: false } : this.record(row, key, codec);
   }
@@ -255,8 +272,7 @@ export class PostgrestDatabase implements Database, WriteSession {
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const payload = this.payload(key, data, codec);
     try {
-      const response = await this.request(this.relationUrl(key), "POST", this.writeHeaders("return=minimal"), payload);
-      await response.body?.cancel();
+      await this.request(this.relationUrl(key), "POST", this.writeHeaders("return=minimal"), payload, this.discard);
     } catch (error) {
       if (error instanceof PostgrestHttpError && error.status === 409) throw new AlreadyExistsError(key, { cause: error });
       throw error;
@@ -265,19 +281,21 @@ export class PostgrestDatabase implements Database, WriteSession {
 
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const payload = this.payload(key, data, codec);
-    const response = await this.request(this.relationUrl(key), "POST", this.writeHeaders("resolution=merge-duplicates, return=minimal"), payload);
-    await response.body?.cancel();
+    const rows = await this.request(this.keyUrl(key), "PUT", this.writeHeaders("return=representation"), payload, (response, signal) => this.rows(response, signal));
+    this.assertExactlyOne(rows);
   }
 
   public async update(key: Key, data: UpdateData): Promise<void> {
     const payload = encodedRecord(data, identityCodec as Codec<UpdateData>, this.#idColumn);
-    const response = await this.request(this.keyUrl(key), "PATCH", this.writeHeaders("return=representation"), payload);
-    if ((await this.rows(response)).length === 0) throw new NotFoundError(key);
+    const rows = await this.request(this.keyUrl(key), "PATCH", this.writeHeaders("handling=strict, max-affected=1, return=representation"), payload, (response, signal) => this.rows(response, signal));
+    if (rows.length === 0) throw new NotFoundError(key);
+    this.assertExactlyOne(rows);
   }
 
   public async delete(key: Key): Promise<void> {
-    const response = await this.request(this.keyUrl(key), "DELETE", this.writeHeaders("return=minimal"));
-    await response.body?.cancel();
+    const rows = await this.request(this.keyUrl(key), "DELETE", this.writeHeaders("handling=strict, max-affected=1, return=representation"), undefined, (response, signal) => this.rows(response, signal));
+    if (rows.length === 0) return;
+    this.assertExactlyOne(rows);
   }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
@@ -306,8 +324,7 @@ export class PostgrestDatabase implements Database, WriteSession {
       if (!Number.isSafeInteger(query.offset) || query.offset < 0) throw new TypeError("PostgREST query offset must be a non-negative safe integer");
       url.searchParams.set("offset", String(query.offset));
     }
-    const response = await this.request(url, "GET", { accept: "application/json" });
-    const rows = await this.rows(response);
+    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal) => this.rows(response, signal));
     return { records: rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
   }
 
@@ -341,32 +358,54 @@ export class PostgrestDatabase implements Database, WriteSession {
     return { accept: "application/json", "content-type": "application/json", prefer };
   }
 
-  private async request(url: URL, method: string, requiredHeaders: Record<string, string>, body?: unknown): Promise<Response> {
+  private readonly discard = async (response: Response): Promise<void> => {
+    await response.body?.cancel().catch(() => undefined);
+  };
+
+  private async request<T>(
+    url: URL,
+    method: string,
+    requiredHeaders: Record<string, string>,
+    body: unknown | undefined,
+    consume: (response: Response, signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
     const text = body === undefined ? undefined : JSON.stringify(body);
     if (text !== undefined && new TextEncoder().encode(text).byteLength > this.#maxRequestBytes) throw new RangeError("PostgREST request exceeds maxRequestBytes");
-    const provided = typeof this.#headers === "function" ? await this.#headers() : this.#headers;
-    if (provided !== undefined) validateHeaders(provided);
-    const headers = new Headers(provided);
-    for (const [name, value] of Object.entries(requiredHeaders)) headers.set(name, value);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
-    let response: Response;
     try {
-      response = await this.#fetch(url, { method, headers, ...(text === undefined ? {} : { body: text }), signal: controller.signal });
+      const provided = await abortable(Promise.resolve(typeof this.#headers === "function" ? this.#headers() : this.#headers), controller.signal);
+      if (provided !== undefined) validateHeaders(provided);
+      const headers = new Headers(provided);
+      for (const [name, value] of Object.entries(requiredHeaders)) headers.set(name, value);
+      const response = await abortable(this.#fetch(url, {
+        method,
+        headers,
+        redirect: "error",
+        ...(text === undefined ? {} : { body: text }),
+        signal: controller.signal,
+      }), controller.signal);
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new PostgrestHttpError(response.status);
+      }
+      return await consume(response, controller.signal);
+    } catch (error) {
+      if (error instanceof PostgrestHttpError || error instanceof PostgrestRequestError) throw error;
+      throw new PostgrestRequestError();
     } finally {
       clearTimeout(timeout);
     }
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new PostgrestHttpError(response.status);
-    }
-    return response;
   }
 
-  private async rows(response: Response): Promise<readonly Record<string, unknown>[]> {
-    const body = await readJson(response, this.#maxResponseBytes);
+  private async rows(response: Response, signal: AbortSignal): Promise<readonly Record<string, unknown>[]> {
+    const body = await readJson(response, this.#maxResponseBytes, signal);
     if (!Array.isArray(body) || !body.every(isPlainObject)) throw new TypeError("PostgREST response must be a JSON array of row objects");
     return body;
+  }
+
+  private assertExactlyOne(rows: readonly Record<string, unknown>[]): void {
+    if (rows.length !== 1) throw new PostgrestRequestError();
   }
 
   private record<T>(

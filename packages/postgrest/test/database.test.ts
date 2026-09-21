@@ -1,7 +1,7 @@
 import { DOCUMENT_ID, UnsupportedError, collection, key } from "@dal-go/dalgo";
 import { describe, expect, it, vi } from "vitest";
 
-import { PostgrestDatabase, PostgrestHttpError } from "../src/index.js";
+import { PostgrestDatabase, PostgrestHttpError, PostgrestRequestError } from "../src/index.js";
 
 function response(status: number, body?: unknown, headers: Record<string, string> = {}): Response {
   return new Response(body === undefined ? undefined : JSON.stringify(body), { status, headers });
@@ -36,7 +36,7 @@ describe("PostgrestDatabase", () => {
     expect(headers).toHaveBeenCalledTimes(1);
   });
 
-  it("creates, upserts, updates, and deletes through PostgREST write verbs", async () => {
+  it("creates, fully replaces, updates, and deletes through PostgREST write verbs", async () => {
     const { database: db, fetch } = database();
     fetch.mockResolvedValueOnce(response(201, [{ id: "milk", done: false }]));
     await db.insert(key("items", "milk"), { done: false });
@@ -45,18 +45,25 @@ describe("PostgrestDatabase", () => {
     expect(header(fetch, "prefer")).toBe("return=minimal");
     expect(header(fetch, "content-type")).toBe("application/json");
 
-    fetch.mockResolvedValueOnce(response(201, [{ id: "milk", done: true }]));
+    fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: true }]));
     await db.set(key("items", "milk"), { done: true });
-    expect(header(fetch, "prefer", 1)).toBe("resolution=merge-duplicates, return=minimal");
+    expect(request(fetch, 1).method).toBe("PUT");
+    expect(fetch.mock.calls[1]?.[0].toString()).toContain("id=eq.%22milk%22");
+    expect(header(fetch, "prefer", 1)).toBe("return=representation");
+    expect(JSON.parse(request(fetch, 1).body as string)).toEqual({ id: "milk", done: true });
+    expect(JSON.parse(request(fetch, 1).body as string)).not.toHaveProperty("legacyField");
+    expect(header(fetch, "prefer", 1)).not.toContain("resolution=merge-duplicates");
 
     fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: true }]));
     await db.update(key("items", "milk"), { done: true });
     expect(request(fetch, 2).method).toBe("PATCH");
     expect(fetch.mock.calls[2]?.[0].toString()).toContain("id=eq.%22milk%22");
+    expect(header(fetch, "prefer", 2)).toBe("handling=strict, max-affected=1, return=representation");
 
     fetch.mockResolvedValueOnce(response(200, []));
     await db.delete(key("items", "milk"));
     expect(request(fetch, 3).method).toBe("DELETE");
+    expect(header(fetch, "prefer", 3)).toBe("handling=strict, max-affected=1, return=representation");
   });
 
   it("maps uniqueness conflicts and missing partial updates to DALgo errors", async () => {
@@ -103,8 +110,40 @@ describe("PostgrestDatabase", () => {
     await expect(db.insert(key("items", "milk"), { long: "this request is too large" })).rejects.toThrow("maxRequestBytes");
     expect(() => new PostgrestDatabase({ baseUrl: "https://user:password@api.example.com/rest/v1" })).toThrow("credentials");
     const unsafe = new PostgrestDatabase({ baseUrl: "https://api.example.com/rest/v1", fetch, headers: () => ({ authorization: "bad\nheader" }) });
-    await expect(unsafe.get(key("items", "milk"))).rejects.toThrow("CR/LF");
+    await expect(unsafe.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
     fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: false }], { "content-length": "99" }));
-    await expect(db.get(key("items", "milk"))).rejects.toThrow("maxResponseBytes");
+    await expect(db.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
+  });
+
+  it("rejects unexpected multi-row keyed write representations", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, [{ id: "milk" }, { id: "eggs" }]));
+    await expect(db.set(key("items", "milk"), { done: true })).rejects.toEqual(new PostgrestRequestError());
+    fetch.mockResolvedValueOnce(response(200, [{ id: "milk" }, { id: "eggs" }]));
+    await expect(db.update(key("items", "milk"), { done: true })).rejects.toEqual(new PostgrestRequestError());
+    fetch.mockResolvedValueOnce(response(200, [{ id: "milk" }, { id: "eggs" }]));
+    await expect(db.delete(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
+  });
+
+  it("uses redirect errors and redacts header, fetch, and timeout failures", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockRejectedValueOnce(new Error("fetch failed with Bearer secret-token https://private.example"));
+    await expect(db.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
+    expect(request(fetch).redirect).toBe("error");
+
+    const badHeaders = new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      headers: () => { throw new Error("token secret must not propagate"); },
+      fetch,
+    });
+    await expect(badHeaders.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
+
+    const hangingHeaders = new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      headers: () => new Promise<Readonly<Record<string, string>>>(() => undefined),
+      fetch,
+      timeoutMs: 1,
+    });
+    await expect(hangingHeaders.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
   });
 });
