@@ -81,7 +81,9 @@ this generic JSON mapping.
   accidentally replacing omitted fields: Datastore commit mode
   is `NON_TRANSACTIONAL`, so multi-request read-modify-write is not atomic.
 - Cursor continuation uses a validated adapter-generated opaque envelope around
-  the server cursor. Raw or hand-constructed DALgo cursor values are rejected.
+  the server cursor, bound to this adapter instance and its canonical kind,
+  namespace, filters, order, offset, and limit query shape. Raw, forged, and
+  cross-query DALgo cursor values are rejected before a request is sent.
 - Datastore disallows arrays directly inside arrays; encoding rejects them. The
   adapter also rejects incompatible disjunctive filters, multiple inequality
   properties, missing first inequality order, and duplicate order properties
