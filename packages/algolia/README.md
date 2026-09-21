@@ -18,7 +18,7 @@ const database = new AlgoliaDatabase({
 
 The adapter maps each DALgo collection explicitly to an Algolia index and owns the `objectID` field. DALgo IDs are non-empty strings, matching Algolia object IDs. `getMany` uses Algolia's [multiple object retrieval](https://www.algolia.com/doc/libraries/sdk/v1/methods/get-objects), whose response order and missing-item representation map directly to DALgo.
 
-`set` uses Algolia's documented [add-or-replace operation](https://www.algolia.com/doc/libraries/sdk/methods/search/add-or-update-object), and `delete` uses [delete object](https://www.algolia.com/doc/rest-api/search/delete-object). Successful write responses only confirm that Algolia queued an indexing task: writes are not guaranteed searchable until that task completes.
+`set` uses Algolia's documented [add-or-replace operation](https://www.algolia.com/doc/libraries/sdk/methods/search/add-or-update-object), and `delete` uses [delete object](https://www.algolia.com/doc/rest-api/search/delete-object). Search requests use Algolia's DSN search host; mutations use the application API host. Successful write responses only confirm that Algolia queued an indexing task: writes are not guaranteed searchable until that task completes.
 
 ## Deliberate limitations
 

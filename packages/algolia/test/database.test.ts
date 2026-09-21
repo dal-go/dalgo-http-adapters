@@ -50,7 +50,7 @@ describe("AlgoliaDatabase", () => {
     await write.set(key("products", "one"), { title: "One" });
     await write.delete(key("products", "one"));
     expect((fetch.mock.calls as unknown as [string, RequestInit][]).map(([url, init]) => [url, init.method])).toEqual([
-      ["https://my-app-dsn.algolia.net/1/indexes/products_v1/one", "PUT"], ["https://my-app-dsn.algolia.net/1/indexes/products_v1/one", "DELETE"],
+      ["https://my-app.algolia.net/1/indexes/products_v1/one", "PUT"], ["https://my-app.algolia.net/1/indexes/products_v1/one", "DELETE"],
     ]);
     expect(JSON.parse((fetch.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({ title: "One", objectID: "one" });
   });
@@ -79,6 +79,18 @@ describe("AlgoliaDatabase", () => {
     await expect(oversized.get(key("products", "one"))).rejects.toBeInstanceOf(AlgoliaRequestError);
   });
 
+  it("cancels an oversized streamed response before retaining it", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => { controller.enqueue(new TextEncoder().encode('{"objectID":"one","title":"exceeds"}')); },
+      cancel,
+    });
+    const fetch = vi.fn().mockResolvedValue(new Response(stream, { headers: { "content-type": "application/json" } }));
+    const db = new AlgoliaDatabase({ applicationId: "app", apiKey: "key", fetch, maxResponseBytes: 8, indexes: { products: "products" } });
+    await expect(db.get(key("products", "one"))).rejects.toThrow("maxResponseBytes");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("validates mappings, data ownership, malformed responses, and header safety", async () => {
     expect(() => new AlgoliaDatabase({ applicationId: "bad id", apiKey: "key", indexes: {} })).toThrow("applicationId");
     const db = new AlgoliaDatabase({ applicationId: "app", apiKey: "key", access: "write", indexes: { products: "products" }, fetch: vi.fn().mockResolvedValue(json({ taskID: 1 })), headers: { "x-algolia-api-key": "no" } });
@@ -87,5 +99,12 @@ describe("AlgoliaDatabase", () => {
     await expect(malformed.get(key("products", "one"))).rejects.toThrow("does not match");
     const ownsId = database(vi.fn(), "write");
     await expect(ownsId.set(key("products", "one"), { objectID: "wrong" })).rejects.toThrow("adapter-owned");
+  });
+
+  it("requires an exact safe task response for a replacement write", async () => {
+    const unsafeTask = database(vi.fn().mockResolvedValue(json({ taskID: 9_007_199_254_740_992 })), "write");
+    await expect(unsafeTask.set(key("products", "one"), {})).rejects.toThrow("task");
+    const wrongObject = database(vi.fn().mockResolvedValue(json({ taskID: 1, objectID: "other" })), "write");
+    await expect(wrongObject.set(key("products", "one"), {})).rejects.toThrow("does not match");
   });
 });

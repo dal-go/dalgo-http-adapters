@@ -192,8 +192,39 @@ interface AlgoliaResponse { readonly status: number; readonly body: unknown; }
 
 function cancelBody(body: ReadableStream<Uint8Array> | null): void { void body?.cancel().catch(() => undefined); }
 
+async function responseText(response: Response, maximum: number): Promise<string> {
+  const length = response.headers.get("content-length");
+  if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximum)) {
+    cancelBody(response.body);
+    throw new RangeError("Algolia response exceeds maxResponseBytes");
+  }
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const item = await reader.read();
+      if (item.done) break;
+      total += item.value.byteLength;
+      if (total > maximum) {
+        void reader.cancel().catch(() => undefined);
+        throw new RangeError("Algolia response exceeds maxResponseBytes");
+      }
+      chunks.push(item.value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* a cancelled reader may retain its lock */ }
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+
 export class AlgoliaDatabase implements Database, WriteSession {
-  readonly #host: string;
+  readonly #searchHost: string;
+  readonly #writeHost: string;
   readonly #applicationId: string;
   readonly #apiKey: string;
   readonly #access: AlgoliaAccess;
@@ -215,7 +246,8 @@ export class AlgoliaDatabase implements Database, WriteSession {
       if (typeof index !== "string") throw new TypeError("each Algolia index mapping must be a string");
       safeName(index, "index name");
     }
-    this.#host = `https://${options.applicationId}-dsn.algolia.net`;
+    this.#searchHost = `https://${options.applicationId}-dsn.algolia.net`;
+    this.#writeHost = `https://${options.applicationId}.algolia.net`;
     this.#applicationId = options.applicationId;
     this.#apiKey = options.apiKey;
     this.#access = options.access ?? "search";
@@ -231,7 +263,7 @@ export class AlgoliaDatabase implements Database, WriteSession {
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
     const id = documentId(key);
-    const response = await this.request("GET", `/1/indexes/${encodeURIComponent(this.indexForKey(key))}/${encodeURIComponent(id)}`, undefined, [404]);
+    const response = await this.request("search", "GET", `/1/indexes/${encodeURIComponent(this.indexForKey(key))}/${encodeURIComponent(id)}`, undefined, [404]);
     if (response.status === 404) return { key, exists: false };
     return { key, exists: true, data: codecOrIdentity(codec).decode(recordPayload(response.body, id, "get")) };
   }
@@ -240,7 +272,7 @@ export class AlgoliaDatabase implements Database, WriteSession {
     if (keys.length === 0) return [];
     if (keys.length > this.#maxGetManyKeys) throw new RangeError(`Algolia getMany supports at most ${String(this.#maxGetManyKeys)} keys per request`);
     const requests = keys.map((key) => ({ indexName: this.indexForKey(key), objectID: documentId(key) }));
-    const response = await this.request("POST", "/1/indexes/*/objects", { requests });
+    const response = await this.request("search", "POST", "/1/indexes/*/objects", { requests });
     const body = responseObject(response.body, "getMany");
     if (!Array.isArray(body.results) || body.results.length !== keys.length) throw new TypeError("malformed Algolia getMany response");
     return body.results.map((item, index) => {
@@ -260,7 +292,7 @@ export class AlgoliaDatabase implements Database, WriteSession {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#maxQueryLimit) throw new RangeError(`Algolia query limit must be a positive safe integer no greater than ${String(this.#maxQueryLimit)}`);
     const offset = query.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset % limit !== 0) throw new UnsupportedError("Algolia query offset must be a non-negative multiple of limit");
-    const response = await this.request("POST", `/1/indexes/${encodeURIComponent(this.indexForCollection(query.source.name))}/query`, {
+    const response = await this.request("search", "POST", `/1/indexes/${encodeURIComponent(this.indexForCollection(query.source.name))}/query`, {
       query: "",
       hitsPerPage: limit,
       page: offset / limit,
@@ -281,8 +313,8 @@ export class AlgoliaDatabase implements Database, WriteSession {
     this.requireWrite();
     const id = documentId(key);
     const body = { ...encodedRecord(data, codecOrIdentity(codec)), objectID: id };
-    const response = await this.request("PUT", `/1/indexes/${encodeURIComponent(this.indexForKey(key))}/${encodeURIComponent(id)}`, body);
-    this.validateTask(response.body, "set");
+    const response = await this.request("write", "PUT", `/1/indexes/${encodeURIComponent(this.indexForKey(key))}/${encodeURIComponent(id)}`, body);
+    this.validateTask(response.body, "set", id);
   }
 
   public update(...arguments_: [key: Key, data: UpdateData]): Promise<void> { return this.rejectUnsupported("Algolia atomic update", arguments_); }
@@ -290,7 +322,7 @@ export class AlgoliaDatabase implements Database, WriteSession {
   public async delete(key: Key): Promise<void> {
     this.requireWrite();
     documentId(key);
-    const response = await this.request("DELETE", `/1/indexes/${encodeURIComponent(this.indexForKey(key))}/${encodeURIComponent(documentId(key))}`);
+    const response = await this.request("write", "DELETE", `/1/indexes/${encodeURIComponent(this.indexForKey(key))}/${encodeURIComponent(documentId(key))}`);
     this.validateTask(response.body, "delete");
   }
 
@@ -310,11 +342,12 @@ export class AlgoliaDatabase implements Database, WriteSession {
     if (arguments_.length === 0) throw new TypeError("write arguments are required");
     return Promise.reject(new UnsupportedError(message));
   }
-  private validateTask(value: unknown, context: string): void {
+  private validateTask(value: unknown, context: string, expectedId?: string): void {
     const body = responseObject(value, context);
-    if (typeof body.taskID !== "number" || !Number.isFinite(body.taskID)) throw new TypeError(`malformed Algolia ${context} task response`);
+    if (typeof body.taskID !== "number" || !Number.isSafeInteger(body.taskID)) throw new TypeError(`malformed Algolia ${context} task response`);
+    if (expectedId !== undefined && body.objectID !== undefined && body.objectID !== expectedId) throw new TypeError(`Algolia ${context} response does not match the requested objectID`);
   }
-  private async request(method: string, path: string, body?: unknown, acceptedStatuses: readonly number[] = []): Promise<AlgoliaResponse> {
+  private async request(target: "search" | "write", method: string, path: string, body?: unknown, acceptedStatuses: readonly number[] = []): Promise<AlgoliaResponse> {
     let serialized: string | undefined;
     if (body !== undefined) {
       plainJson(body, "Algolia request body");
@@ -336,18 +369,13 @@ export class AlgoliaDatabase implements Database, WriteSession {
     try {
       const configured = await stage(() => typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {}));
       validateHeaders(configured);
-      const response = await stage(() => this.#fetch(`${this.#host}${path}`, {
+      const host = target === "search" ? this.#searchHost : this.#writeHost;
+      const response = await stage(() => this.#fetch(`${host}${path}`, {
         method, redirect: "error", signal: controller.signal,
         headers: { ...configured, "x-algolia-application-id": this.#applicationId, "x-algolia-api-key": this.#apiKey, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) },
         ...(serialized === undefined ? {} : { body: serialized }),
       }));
-      const text = await stage(async () => {
-        const length = response.headers.get("content-length");
-        if (length !== null && (!/^\d+$/u.test(length) || Number(length) > this.#maxResponseBytes)) { cancelBody(response.body); throw new RangeError("Algolia response exceeds maxResponseBytes"); }
-        const text = await response.text();
-        if (new TextEncoder().encode(text).byteLength > this.#maxResponseBytes) throw new RangeError("Algolia response exceeds maxResponseBytes");
-        return text;
-      });
+      const text = await stage(() => responseText(response, this.#maxResponseBytes));
       if (!response.ok && !acceptedStatuses.includes(response.status)) throw new AlgoliaHttpError(response.status);
       try { return { status: response.status, body: text.length === 0 ? undefined : JSON.parse(text) }; }
       catch { throw new AlgoliaRequestError(); }
