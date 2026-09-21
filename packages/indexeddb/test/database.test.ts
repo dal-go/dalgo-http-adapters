@@ -1,4 +1,4 @@
-import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, UnsupportedError, collection, collectionGroup, key, type StructuredQuery } from "@dalgo/core";
+import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, UnsupportedError, collection, collectionGroup, executeRecursiveDTQLQuery, key, parseRecursiveDTQL, type DTQLSchema, type StructuredQuery } from "@dalgo/core";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { IndexedDbDatabase } from "../src/index.js";
@@ -28,6 +28,22 @@ describe("IndexedDbDatabase", () => {
     const disguised = { ...recursive, source: { kind: "collection", name: "items" }, filters: [], orders: [] } as unknown as StructuredQuery<Item>;
     await expect(db.query(disguised)).rejects.toThrow(UnsupportedError);
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it("runs core recursive DTQL through bounded IndexedDB leaf scans", async () => {
+    const db = database();
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(items.key("milk"), { title: "Milk", done: false, rank: 1, tags: [] });
+      await transaction.set(items.key("bread"), { title: "Bread", done: false, rank: 2, tags: [] });
+      await transaction.set(items.key("walk"), { title: "Walk", done: true, rank: 3, tags: [] });
+    });
+    const schema: DTQLSchema = { tables: [{ name: "items", fields: ["title", "done", "rank", "tags"] }] };
+    const recursive = parseRecursiveDTQL("from: {name: items, alias: outer}\nwhere:\n  exists:\n    query:\n      from: {name: items, alias: inner}\n      where: {left: {field: done, source: inner}, op: '==', right: {field: done, source: outer}}\norderBy: [{field: rank, source: outer}]\nlimit: 1\ncolumns: [{field: title, source: outer}]\n", schema);
+
+    const page = await executeRecursiveDTQLQuery(db, recursive, { maxFetchedRows: 20 });
+
+    expect(page.records.map((record) => record.data)).toEqual([{ title: "Milk" }]);
+    await db.close();
   });
   it("uses separate named object stores when collections are configured", async () => {
     const factory = new IDBFactory();

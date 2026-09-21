@@ -65,6 +65,15 @@ Strings can also be used when the DALgo collection name and IndexedDB object sto
 
 Collection and collection-group selection uses IndexedDB indexes. DALgo filters, ordering, cursors, offsets, and limits are then evaluated in memory, so this initial driver favors correctness and a small stable schema over large-query performance. Use a remote adapter or add purpose-built indexes before querying very large local collections.
 
+## Recursive DTQL
+
+Run recursive DTQL through `executeRecursiveDTQLQuery` from `@dalgo/core`.
+The core sends this adapter ordinary, bounded leaf queries; calling
+`IndexedDbDatabase.query()` with a recursive AST is rejected before the database
+opens. The current leaf path uses IndexedDB `getAll()` for its selected store,
+so `EXISTS` can stop its logical evaluation after a match but cannot stop the
+physical IndexedDB read after the first matching record.
+
 `runReadwriteTransaction` uses a real IndexedDB read-write transaction. Its callback should await only DALgo operations; awaiting timers, network calls, or unrelated work can allow the browser to make the native transaction inactive.
 
 ## Runtime and testing

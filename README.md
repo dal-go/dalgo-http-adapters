@@ -58,7 +58,15 @@ Firestore and IndexedDB are the first packages prepared for publication under
 the `@dalgo` npm scope. The remaining catalog entries are local workspace
 packages and should not be assumed to be published.
 
-After publishing either first package, manually run the
+For a browser adapter release, run the
+[publish workflow](.github/workflows/publish-browser-adapter.yml) on `main`
+with `package` and the exact version from its manifest. Each npm package must
+trust `dal-go/dalgo-http-adapters` and the workflow filename
+`publish-browser-adapter.yml` for GitHub Actions OIDC publishing. The workflow
+checks the source commit, version, core dependency, and complete workspace gate
+before publishing.
+
+After publishing a package, manually run the
 [tagging workflow](.github/workflows/tag-published-package.yml) on `main` with
 its package name and version. It verifies npm's published `gitHead` and the
 matching source manifest, then tags that exact commit as

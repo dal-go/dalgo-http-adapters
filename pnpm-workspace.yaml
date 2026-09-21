@@ -11,3 +11,4 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - '@dalgo/core@0.1.0'
+  - '@dalgo/core@0.2.0'

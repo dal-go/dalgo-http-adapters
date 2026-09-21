@@ -1,4 +1,4 @@
-import { collection, key } from "@dalgo/core";
+import { collection, executeRecursiveDTQLQuery, key, parseRecursiveDTQL, type DTQLSchema } from "@dalgo/core";
 import { deleteApp, initializeApp } from "firebase/app";
 import {
   connectFirestoreEmulator,
@@ -79,5 +79,13 @@ describe("FirestoreDatabase", () => {
       items.query().where("done", "==", true).limit(10).build(),
     );
     expect(completed.records.map(({ data }) => data.title)).toEqual(["Milk"]);
+
+    const schema: DTQLSchema = { tables: [{ name: "items", fields: ["title", "done", "rank"] }] };
+    const recursive = parseRecursiveDTQL("from: {name: items, alias: outer}\nwhere:\n  exists:\n    query:\n      from: {name: items, alias: inner}\n      where: {left: {field: done, source: inner}, op: '==', right: {field: done, source: outer}}\norderBy: [{field: rank, source: outer}]\nlimit: 1\ncolumns: [{field: title, source: outer}]\n", schema);
+    const page = await executeRecursiveDTQLQuery(db, recursive, {
+      maxFetchedRows: 10,
+      resolveSource: () => items.source,
+    });
+    expect(page.records.map((record) => record.data)).toEqual([{ title: "Milk" }]);
   });
 });
