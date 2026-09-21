@@ -24,13 +24,18 @@ const DEFAULT_MAX_QUERY_LIMIT = 100;
 export type AppwriteFetch = typeof globalThis.fetch;
 export type AppwriteHeaders = Readonly<Record<string, string>>;
 export type AppwriteHeaderProvider = AppwriteHeaders | (() => AppwriteHeaders | Promise<AppwriteHeaders>);
+export type AppwriteCredentialMode = "browser-session" | "trusted-server";
 
 export interface AppwriteDatabaseOptions {
   /** Appwrite API endpoint, including `/v1` (for example `https://cloud.appwrite.io/v1`). */
   readonly endpoint: string;
   readonly projectId: string;
   readonly databaseId: string;
-  /** Re-evaluated per request: use a browser session/JWT header provider, never an API key in a browser. */
+  /** Defaults to browser-session, which sends fetch credentials for Appwrite's session cookie. */
+  readonly credentialMode?: AppwriteCredentialMode;
+  /** Required only in trusted-server mode. Never pass an Appwrite API key to browser code. */
+  readonly apiKey?: string;
+  /** Re-evaluated per request: use this for a browser JWT, not an Appwrite API key. */
   readonly headers?: AppwriteHeaderProvider;
   readonly fetch?: AppwriteFetch;
   readonly timeoutMs?: number;
@@ -111,33 +116,42 @@ function field(value: unknown): string {
   return value;
 }
 
-function queryValue(value: unknown): string {
+function queryValue(value: unknown): unknown {
   if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") throw new UnsupportedError("Appwrite query value types");
   json(value);
-  return JSON.stringify(value);
+  return value;
 }
 
-function compileFilter<T>(filter: QueryFilter<T>): string {
+interface AppwriteQuery { readonly method: string; readonly column?: string; readonly values?: readonly unknown[]; }
+
+function queryWire(query: AppwriteQuery): string { return JSON.stringify(query); }
+
+function compileFilter<T>(filter: QueryFilter<T>): AppwriteQuery {
   const name = field(filter.field);
-  const values = Array.isArray(filter.value) ? filter.value : [filter.value];
-  if (values.length === 0) throw new TypeError("Appwrite array query filters require a non-empty array");
-  const argument = `[${values.map(queryValue).join(",")}]`;
+  const one = (): readonly unknown[] => [queryValue(filter.value)];
+  const many = (): readonly unknown[] => {
+    if (!Array.isArray(filter.value) || filter.value.length === 0) throw new TypeError("Appwrite in query filters require a non-empty array");
+    return filter.value.map(queryValue);
+  };
   switch (filter.operator) {
-    case "==": return `equal(${JSON.stringify(name)},${argument})`;
-    case "!=": return `notEqual(${JSON.stringify(name)},${argument})`;
-    case "<": return `lessThan(${JSON.stringify(name)},${argument})`;
-    case "<=": return `lessThanEqual(${JSON.stringify(name)},${argument})`;
-    case ">": return `greaterThan(${JSON.stringify(name)},${argument})`;
-    case ">=": return `greaterThanEqual(${JSON.stringify(name)},${argument})`;
-    case "in": return `equal(${JSON.stringify(name)},${argument})`;
-    case "not-in": return `notEqual(${JSON.stringify(name)},${argument})`;
-    case "array-contains": return `contains(${JSON.stringify(name)},${argument})`;
+    case "==": return { method: "equal", column: name, values: one() };
+    case "!=": return { method: "notEqual", column: name, values: one() };
+    case "<": return { method: "lessThan", column: name, values: one() };
+    case "<=": return { method: "lessThanEqual", column: name, values: one() };
+    case ">": return { method: "greaterThan", column: name, values: one() };
+    case ">=": return { method: "greaterThanEqual", column: name, values: one() };
+    case "in": return { method: "equal", column: name, values: many() };
+    case "not-in": return { method: "notEqual", column: name, values: many() };
+    case "array-contains": return { method: "contains", column: name, values: one() };
     default: throw new UnsupportedError(`Appwrite ${String(filter.operator)} query filters`);
   }
 }
 
 function validateHeaders(headers: AppwriteHeaders): void {
-  for (const [name, value] of Object.entries(headers)) if (typeof value !== "string" || /[\r\n]/u.test(name) || /[\r\n]/u.test(value)) throw new TypeError("Appwrite configured headers must be CR/LF-safe strings");
+  for (const [name, value] of Object.entries(headers)) {
+    if (typeof value !== "string" || /[\r\n]/u.test(name) || /[\r\n]/u.test(value)) throw new TypeError("Appwrite configured headers must be CR/LF-safe strings");
+    if (name.toLowerCase() === "x-appwrite-key") throw new TypeError("Appwrite API keys require explicit trusted-server credential mode");
+  }
 }
 
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -171,7 +185,7 @@ async function readJson(response: Response, maximum: number, signal: AbortSignal
 }
 
 export class AppwriteDatabase implements Database {
-  readonly #base: string; readonly #projectId: string; readonly #headers: AppwriteHeaderProvider | undefined;
+  readonly #base: string; readonly #projectId: string; readonly #credentialMode: AppwriteCredentialMode; readonly #apiKey: string | undefined; readonly #headers: AppwriteHeaderProvider | undefined;
   readonly #fetch: AppwriteFetch; readonly #timeoutMs: number; readonly #maxRequestBytes: number; readonly #maxResponseBytes: number;
   readonly #maxGetManyKeys: number; readonly #maxParallelReads: number; readonly #maxQueryLimit: number;
 
@@ -182,8 +196,12 @@ export class AppwriteDatabase implements Database {
     if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) throw new TypeError("endpoint must not contain credentials, a query, or a fragment");
     if (!options.projectId || !options.databaseId) throw new TypeError("projectId and databaseId are required");
     tableId(options.databaseId);
+    const credentialMode = options.credentialMode ?? "browser-session";
+    if (credentialMode !== "browser-session" && credentialMode !== "trusted-server") throw new TypeError("credentialMode must be browser-session or trusted-server");
+    if (credentialMode === "browser-session" && options.apiKey !== undefined) throw new TypeError("Appwrite API keys require trusted-server credential mode");
+    if (credentialMode === "trusted-server" && (!options.apiKey || /[\r\n]/u.test(options.apiKey))) throw new TypeError("trusted-server mode requires a CR/LF-safe API key");
     this.#base = `${endpoint.toString().replace(/\/+$/u, "")}/tablesdb/${encodeURIComponent(options.databaseId)}/tables/`;
-    this.#projectId = options.projectId; this.#headers = options.headers; this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#projectId = options.projectId; this.#credentialMode = credentialMode; this.#apiKey = options.apiKey; this.#headers = options.headers; this.#fetch = options.fetch ?? globalThis.fetch;
     this.#timeoutMs = positive(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs", 120_000);
     this.#maxRequestBytes = positive(options.maxRequestBytes, DEFAULT_MAX_BYTES, "maxRequestBytes"); this.#maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_MAX_BYTES, "maxResponseBytes");
     this.#maxGetManyKeys = positive(options.maxGetManyKeys, DEFAULT_MAX_GET_MANY, "maxGetManyKeys", 1_000);
@@ -228,9 +246,9 @@ export class AppwriteDatabase implements Database {
     const limit = query.limit ?? this.#maxQueryLimit;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#maxQueryLimit) throw new UnsupportedError(`Appwrite query limit above ${String(this.#maxQueryLimit)}`);
     if (query.offset !== undefined && (!Number.isSafeInteger(query.offset) || query.offset < 0)) throw new TypeError("Appwrite query offset must be a non-negative safe integer");
-    const url = this.rowsUrl(query.source.name); for (const item of query.filters) url.searchParams.append("queries[]", compileFilter(item));
-    for (const order of query.orders) { if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("Appwrite query order directions"); url.searchParams.append("queries[]", `${order.direction === "asc" ? "orderAsc" : "orderDesc"}(${JSON.stringify(field(order.field))})`); }
-    url.searchParams.append("queries[]", `limit(${String(limit)})`); if (query.offset !== undefined) url.searchParams.append("queries[]", `offset(${String(query.offset)})`);
+    const url = this.rowsUrl(query.source.name); for (const item of query.filters) url.searchParams.append("queries[]", queryWire(compileFilter(item)));
+    for (const order of query.orders) { if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("Appwrite query order directions"); url.searchParams.append("queries[]", queryWire({ method: order.direction === "asc" ? "orderAsc" : "orderDesc", column: field(order.field) })); }
+    url.searchParams.append("queries[]", queryWire({ method: "limit", values: [limit] })); if (query.offset !== undefined) url.searchParams.append("queries[]", queryWire({ method: "offset", values: [query.offset] }));
     const payload = await this.request(url, "GET", undefined, true);
     if (!plainObject(payload) || !Array.isArray(payload.rows) || !payload.rows.every(plainObject)) throw new AppwriteRequestError();
     return { records: payload.rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
@@ -251,8 +269,9 @@ export class AppwriteDatabase implements Database {
       const provided = await abortable(Promise.resolve().then(() => typeof this.#headers === "function" ? this.#headers() : this.#headers), controller.signal);
       if (provided !== undefined) validateHeaders(provided);
       const headers = new Headers(provided); headers.set("x-appwrite-project", this.#projectId); headers.set("accept", "application/json");
+      if (this.#apiKey !== undefined) headers.set("x-appwrite-key", this.#apiKey);
       if (text !== undefined) headers.set("content-type", "application/json");
-      const response = await abortable(this.#fetch(url, { method, headers, redirect: "error", ...(text === undefined ? {} : { body: text }), signal: controller.signal }), controller.signal);
+      const response = await abortable(this.#fetch(url, { method, headers, redirect: "error", credentials: this.#credentialMode === "browser-session" ? "include" : "omit", ...(text === undefined ? {} : { body: text }), signal: controller.signal }), controller.signal);
       if (!response.ok) { cancel(response.body); throw new AppwriteHttpError(response.status); }
       if (!decode) { cancel(response.body); return undefined; }
       return await readJson(response, this.#maxResponseBytes, controller.signal);

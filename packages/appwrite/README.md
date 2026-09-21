@@ -8,17 +8,23 @@ use the deprecated Documents/Databases API or management-only endpoints.
 
 The adapter requires an HTTPS Appwrite endpoint (except loopback development),
 a project ID, and database ID. It sends `X-Appwrite-Project` on every request.
+Its default `browser-session` mode uses `fetch` with `credentials: "include"`.
 For browser use, authenticate as the signed-in Appwrite user: rely on the
-configured Appwrite session/cookie policy or supply a refreshed, narrowly
-scoped `X-Appwrite-JWT` from a header provider. Tables and rows must grant that
-user only the required permissions. Configure Appwrite's Web platform/CORS,
-allowed origin, and cookie policy for the exact browser origin.
+configured Appwrite session cookie or supply a refreshed, narrowly scoped
+`X-Appwrite-JWT` from a header provider. Tables and rows must grant that user
+only the required permissions. Configure Appwrite's Web platform/CORS for the
+exact browser origin, including a non-wildcard `Access-Control-Allow-Origin`,
+`Access-Control-Allow-Credentials: true`, and allowed Appwrite/JWT request
+headers when credentialed cross-origin requests are used.
 
 An `X-Appwrite-Key` is a server API key with scopes: it is for a trusted server
 or Function only and must never be passed to browser code, a URL, source
-control, analytics, or error reports. The adapter does not log headers or
-response bodies. Its HTTP errors expose status only; credential-provider,
-fetch, redirect, timeout, stream, and JSON errors are redacted.
+control, analytics, or error reports. API keys are accepted only through the
+explicit `credentialMode: "trusted-server"` plus `apiKey` option; browser mode
+rejects `X-Appwrite-Key` from a header provider. Trusted-server requests use
+`credentials: "omit"`. The adapter does not log headers or response bodies.
+Its HTTP errors expose status only; credential-provider, fetch, redirect,
+timeout, stream, and JSON errors are redacted.
 
 ## Setup
 
@@ -60,6 +66,11 @@ aggregations, realtime subscriptions, permissions mutations, schema management,
 and DALgo callback transactions are rejected. Appwrite has a transaction API,
 but its explicit staged-operation lifecycle cannot safely implement DALgo's
 atomic, retryable callback contract.
+
+Raw REST query parameters are JSON objects serialized as `queries[]` values,
+following Appwrite's current REST contract (for example
+`{"method":"equal","column":"done","values":[false]}`). This adapter does
+not use the legacy-looking `equal("done",[false])` shorthand.
 
 Requests and decoded responses default to 1 MiB, `getMany` to 100 keys/8
 parallel reads, queries to 100 rows, and each request (including credentials
