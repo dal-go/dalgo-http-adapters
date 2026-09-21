@@ -573,6 +573,31 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
 
+  packages/rds-data:
+    dependencies:
+      '@dal-go/dalgo':
+        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+    devDependencies:
+      '@aws-sdk/client-rds-data':
+        specifier: ^3.0.0
+        version: 3.1136.0
+      '@eslint/js':
+        specifier: 10.0.1
+        version: 10.0.1(eslint@10.11.0)
+      eslint:
+        specifier: 10.11.0
+        version: 10.11.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      typescript-eslint:
+        specifier: 8.70.0
+        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
+
   packages/redshift:
     dependencies:
       '@aws-sdk/client-redshift-data':
@@ -642,10 +667,36 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
 
+  packages/spanner:
+    dependencies:
+      '@dal-go/dalgo':
+        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+    devDependencies:
+      '@eslint/js':
+        specifier: 10.0.1
+        version: 10.0.1(eslint@10.11.0)
+      eslint:
+        specifier: 10.11.0
+        version: 10.11.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      typescript-eslint:
+        specifier: 8.70.0
+        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
+
 packages:
 
   '@aws-sdk/client-dynamodb@3.1136.0':
     resolution: {integrity: sha512-EEgixP37uQV7UqFxl1JaWGYA7QQeeP0yKSN5uCkAbNw9gBifGGk2cqm8qt1Mz+kzw0OwpL8W445R1UT+RTRBhA==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-rds-data@3.1136.0':
+    resolution: {integrity: sha512-7WRGIYfVz60B/2VVLCOr0vSbUEnIf1QuIJ5gkRFgJ0xoG0HC5/jXxqXS8DS0XFYAL5fajWRdKzNhp/IZUlLxLw==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/client-redshift-data@3.1136.0':
@@ -1943,6 +1994,17 @@ snapshots:
       '@aws-sdk/credential-provider-node': 3.972.83
       '@aws-sdk/dynamodb-codec': 3.973.45
       '@aws-sdk/middleware-endpoint-discovery': 3.972.30
+      '@aws-sdk/types': 3.974.5
+      '@smithy/core': 3.34.1
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.12.1
+      '@smithy/types': 4.18.0
+      tslib: 2.8.1
+
+  '@aws-sdk/client-rds-data@3.1136.0':
+    dependencies:
+      '@aws-sdk/core': 3.978.0
+      '@aws-sdk/credential-provider-node': 3.972.83
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.34.1
       '@smithy/fetch-http-handler': 5.8.0

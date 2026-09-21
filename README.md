@@ -32,9 +32,11 @@ The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore).
 | PocketBase | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) |
 | PostgREST | [`@dal-go/dalgo2postgrest`](packages/postgrest) |
 | Qdrant | [`@dal-go/dalgo2qdrant`](packages/qdrant) |
+| AWS RDS Data API | [`@dal-go/dalgo2rds-data`](packages/rds-data) |
 | Redshift | [`@dal-go/dalgo2redshift`](packages/redshift) |
 | Snowflake | [`@dal-go/dalgo2snowflake`](packages/snowflake) |
 | Solr | [`@dal-go/dalgo2solr`](packages/solr) |
+| Google Cloud Spanner | [`@dal-go/dalgo2spanner`](packages/spanner) |
 
 Import revisions and the completed standalone-repository cutover are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
 
@@ -111,7 +113,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | Firebase Realtime Database | Browser-ready | REST and Web SDK; candidate `dalgo2firebase-rtdb-js`. |
 | Firebase Data Connect | Not applicable | Generated, typed application GraphQL operations are not a generic database data plane for arbitrary DALgo collections. |
 | BigQuery | HTTP-capable | REST jobs/query/table data; candidate analytical adapter. |
-| Spanner | HTTP-capable | REST read, SQL, mutations, sessions and read-write transactions; candidate `dalgo2spanner-js`. |
+| Spanner | HTTP-capable | Implemented: [`@dal-go/dalgo2spanner`](packages/spanner), with session-backed parameterized reads/query and single-use atomic commits; callback transactions and silent continuation are rejected. |
 | Bigtable | Not applicable | Useful data API is gRPC rather than a general browser JSON/HTTP surface. |
 | AlloyDB | Not applicable | Administration is REST; data plane is PostgreSQL wire protocol. |
 | Cloud SQL PostgreSQL / MySQL / SQL Server | Not applicable | Administration is REST; data plane uses native database protocols/connectors. |
@@ -123,7 +125,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 |---|---|---|
 | DynamoDB | Browser-ready | HTTPS JSON API and browser-capable AWS SDK with temporary IAM credentials; high-priority adapter. |
 | Redshift | HTTP-capable | Redshift Data API; server-oriented analytical adapter. |
-| Aurora PostgreSQL / MySQL | HTTP-capable where Data API is enabled | RDS Data API provides SQL, batches, and explicit transactions using IAM plus Secrets Manager; candidate trusted-runtime adapter. |
+| Aurora PostgreSQL / MySQL | HTTP-capable where Data API is enabled | Implemented: [`@dal-go/dalgo2rds-data`](packages/rds-data), a trusted-runtime adapter with explicit dialect/table/key mappings, bounded reads/query, guarded update/delete, and intentionally unsupported insert/set/callback transactions. |
 | RDS PostgreSQL / MySQL / MariaDB / SQL Server / Oracle | Not applicable | RDS HTTP APIs manage instances; data uses native wire protocols. |
 | DocumentDB | Not applicable | MongoDB wire protocol; no generic HTTP data API. |
 | Neptune | HTTP-capable | HTTPS openCypher, SPARQL, and Neptune data APIs; specialized graph adapter with SigV4/VPC constraints. |
@@ -169,6 +171,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [Appwrite TablesDB rows API](https://appwrite.io/docs/references/cloud/client-web/tablesDB)
 - [PocketBase records API](https://pocketbase.io/docs/api-records/)
 - [Cloud Datastore v1 REST data API](https://cloud.google.com/datastore/docs/reference/data/rest)
+- [Cloud Spanner v1 REST data API](https://cloud.google.com/spanner/docs/reference/rest)
+- [AWS RDS Data API](https://docs.aws.amazon.com/rdsdataservice/latest/APIReference/Welcome.html)
 
 ## Delivery status
 
@@ -198,6 +202,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) | Implemented bounded records CRUD/query with validated paging envelopes and stateless browser token auth; atomic upsert and callback transactions remain unsupported. |
 | [`@dal-go/dalgo2datastore`](packages/datastore) | Implemented bounded Datastore-mode lookup/commit/query with explicit namespace/key mapping and query-bound instance-local cursors; partial update and callback transactions remain unsupported. |
 | [`@dal-go/dalgo2azure-table`](packages/azure-table) | Implemented bounded PartitionKey/RowKey CRUD and OData query with ETag concurrency and query-bound continuation cursors; browser use requires configured CORS plus narrowly scoped ephemeral SAS/token brokerage. |
+| [`@dal-go/dalgo2spanner`](packages/spanner) | Implemented bounded, typed, parameterized Spanner reads/query and single-use atomic commits with explicit schema/key mappings; callback transactions and paginated continuation remain unsupported. |
+| [`@dal-go/dalgo2rds-data`](packages/rds-data) | Implemented bounded parameterized reads/query and guarded update/delete for Data-API-enabled Aurora PostgreSQL/MySQL; insert, set, and DALgo callback transactions remain unsupported rather than faking database-error semantics. |
 
 ## Adapter acceptance bar
 
