@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { DOCUMENT_ID, UnsupportedError, collection, collectionGroup, key } from "@dalgo/core";
+import { DOCUMENT_ID, UnsupportedError, collection, collectionGroup, key, type StructuredQuery } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 import { compileFirestoreQuery, toFirestoreDocumentIdValue } from "../src/index.js";
 
@@ -13,6 +13,13 @@ const app = initializeApp({ projectId: "demo-dalgo-js" }, "dalgo2firestore-tests
 const firestore = getFirestore(app);
 
 describe("compileFirestoreQuery", () => {
+  it("rejects a raw recursive query before Firestore receives it", () => {
+    const recursive = { kind: "recursive-dtql", from: { kind: "table", name: "items", joins: [] } } as unknown as StructuredQuery<Item>;
+    expect(() => compileFirestoreQuery(firestore, recursive)).toThrow(UnsupportedError);
+    expect(() => compileFirestoreQuery(firestore, recursive)).toThrow("core recursive executor");
+    const disguised = { ...recursive, source: { kind: "collection", name: "items" }, filters: [], orders: [] } as unknown as StructuredQuery<Item>;
+    expect(() => compileFirestoreQuery(firestore, disguised)).toThrow(UnsupportedError);
+  });
   it("compiles collection filters and adds document id as a stable tiebreaker", () => {
     const query = collection<Item>("items")
       .query()

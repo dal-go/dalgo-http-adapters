@@ -12,6 +12,7 @@ import {
   type UpdateData,
 } from "@dalgo/core";
 import { serializeKey } from "./path.js";
+import { assertLeafQuery } from "./guard.js";
 import { executeQuery, type StoredRecord } from "./query.js";
 
 export const DALGO_RECORD_STORE = "__dalgo_records";
@@ -208,6 +209,7 @@ export class IndexedDbDatabase implements Database {
   }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
+    assertLeafQuery(query);
     const database = await this.open();
     const storeName = this.storeName(query.source.name);
     const transaction = database.transaction(storeName, "readonly");

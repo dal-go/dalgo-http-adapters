@@ -1,0 +1,65 @@
+name: Publish browser adapter
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Adapter package to publish
+        required: true
+        type: choice
+        options:
+          - firestore
+          - indexeddb
+      version:
+        description: Exact package version without v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-browser-${{ inputs.package }}-${{ inputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify release identity
+        env:
+          PACKAGE: ${{ inputs.package }}
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PACKAGE" == 'firestore' || "$PACKAGE" == 'indexeddb' ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$(jq -r .version "packages/$PACKAGE/package.json")" == "$VERSION" ]]
+          [[ "$(git rev-parse HEAD)" == "$SHA" ]]
+          git fetch origin main
+          git merge-base --is-ancestor "$SHA" origin/main
+          npm_version=$(npm --version)
+          [[ "$(printf '%s\n' '11.5.1' "$npm_version" | sort -V | head -n1)" == '11.5.1' ]]
+          [[ "$(npm view @dalgo/core@0.2.0 version)" == '0.2.0' ]]
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm --filter @dalgo/firestore run test:emulator
+      - name: Publish with npm trusted-publisher OIDC
+        working-directory: packages/${{ inputs.package }}
+        run: npm publish --provenance --registry=https://registry.npmjs.org
