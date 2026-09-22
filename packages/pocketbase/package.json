@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2pocketbase",
+  "private": true,
   "version": "0.1.0",
   "description": "PocketBase records HTTP adapter for DALgo TypeScript",
   "type": "module",

@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2neptune",
+  "private": true,
   "version": "0.1.0",
   "description": "Amazon Neptune openCypher HTTPS adapter for DALgo TypeScript",
   "type": "module",

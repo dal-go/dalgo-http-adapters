@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2spanner",
+  "private": true,
   "version": "0.1.0",
   "description": "Cloud Spanner REST API adapter for DALgo TypeScript",
   "type": "module",

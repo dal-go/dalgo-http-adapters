@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2timestream",
+  "private": true,
   "version": "0.1.0",
   "description": "Amazon Timestream HTTP data-plane adapter for DALgo TypeScript",
   "type": "module",

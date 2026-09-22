@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2datastore",
+  "private": true,
   "version": "0.1.0",
   "description": "Google Cloud Datastore v1 REST adapter for DALgo TypeScript",
   "type": "module",

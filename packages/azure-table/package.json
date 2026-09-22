@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2azure-table",
+  "private": true,
   "version": "0.1.0",
   "description": "Azure Table Storage REST adapter for DALgo TypeScript",
   "type": "module",

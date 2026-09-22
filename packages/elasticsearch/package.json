@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2elasticsearch",
+  "private": true,
   "version": "0.1.0",
   "description": "DALgo adapter for Elasticsearch REST APIs",
   "type": "module",

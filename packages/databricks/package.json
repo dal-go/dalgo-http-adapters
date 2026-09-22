@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2databricks",
+  "private": true,
   "version": "0.1.0",
   "description": "Databricks SQL Statement Execution API adapter for DALgo TypeScript",
   "type": "module",

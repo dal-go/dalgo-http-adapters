@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2opensearch",
+  "private": true,
   "version": "0.1.0",
   "description": "DALgo adapter for OpenSearch REST APIs",
   "type": "module",

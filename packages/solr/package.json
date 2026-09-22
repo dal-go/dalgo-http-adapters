@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2solr",
+  "private": true,
   "version": "0.1.0",
   "description": "DALgo adapter for Apache Solr HTTP APIs",
   "type": "module",

@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2appwrite",
+  "private": true,
   "version": "0.1.0",
   "description": "Appwrite TablesDB HTTP adapter for DALgo TypeScript",
   "type": "module",

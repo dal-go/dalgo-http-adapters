@@ -58,12 +58,10 @@ Firestore and IndexedDB are the first packages prepared for publication under
 the `@dalgo` npm scope. The remaining catalog entries are local workspace
 packages and should not be assumed to be published.
 
-After publishing either first package, manually run the
-[tagging workflow](.github/workflows/tag-published-package.yml) on `main` with
-its package name and version. It verifies npm's published `gitHead` and the
-matching source manifest, then tags that exact commit as
-`firestore@v<version>` or `indexeddb@v<version>`. Publishing alone does not
-trigger this workflow yet.
+Package changes are versioned and published independently with Changesets.
+See [the release procedure](docs/RELEASING.md). The existing
+[tagging workflow](.github/workflows/tag-published-package.yml) remains
+available to reconcile a published version if automated tagging fails.
 
 ## Classification
 

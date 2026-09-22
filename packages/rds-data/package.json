@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2rds-data",
+  "private": true,
   "version": "0.1.0",
   "description": "Amazon RDS Data API adapter for DALgo TypeScript",
   "type": "module",

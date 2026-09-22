@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2kusto",
+  "private": true,
   "version": "0.1.0",
   "description": "Azure Data Explorer/Kusto HTTP query adapter for DALgo TypeScript",
   "type": "module",

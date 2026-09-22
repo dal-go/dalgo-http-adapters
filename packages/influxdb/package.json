@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2influxdb",
+  "private": true,
   "version": "0.1.0",
   "description": "InfluxDB 3 HTTP SQL adapter for DALgo TypeScript",
   "type": "module",

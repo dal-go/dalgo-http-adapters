@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2libsql",
+  "private": true,
   "version": "0.1.0",
   "description": "Provider-neutral libSQL Hrana-over-HTTP adapter for DALgo TypeScript",
   "type": "module",

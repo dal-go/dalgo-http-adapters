@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2algolia",
+  "private": true,
   "version": "0.1.0",
   "description": "DALgo adapter for the Algolia Search REST API",
   "type": "module",
