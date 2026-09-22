@@ -38,18 +38,38 @@ jobs:
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile
-      - name: Open or update a version PR
-        id: version
-        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
-        with:
-          github-token: ${{ github.token }}
-          create-github-releases: false
-          push-git-tags: false
-      - name: Run CI on the generated version branch
-        if: steps.version.outputs.pr-number != ''
+      - name: Create or update the version PR and dispatch its CI
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref changeset-release/main
+        run: |
+          set -euo pipefail
+          if ! find .changeset -maxdepth 1 -name '*.md' ! -name README.md -print -quit | grep -q .; then
+            echo 'No pending changesets'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C changeset-release/main
+          pnpm exec changeset version
+          pnpm install --lockfile-only
+          git add .changeset packages pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo 'No version changes'
+            exit 0
+          fi
+          git commit -m 'chore: version DALgo adapters'
+          if git ls-remote --exit-code --heads origin changeset-release/main >/dev/null; then
+            git fetch origin changeset-release/main
+            previous=$(git rev-parse FETCH_HEAD)
+            git push --force-with-lease="refs/heads/changeset-release/main:$previous" origin HEAD:refs/heads/changeset-release/main
+          else
+            git push origin HEAD:refs/heads/changeset-release/main
+          fi
+          pr=$(gh pr list --head changeset-release/main --base main --state open --json number --jq '.[0].number')
+          if [[ -z "$pr" ]]; then
+            gh pr create --head changeset-release/main --base main --title 'chore: version DALgo adapters' --body 'Review the independent package versions, changelogs, and dependency ranges before merging.'
+          fi
+          gh workflow run ci.yml --ref changeset-release/main
 
   publish:
     if: >-

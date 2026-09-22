@@ -11,6 +11,7 @@ import {
   type StructuredQuery,
 } from "@dalgo/core";
 import { collectionPath, deserializeKey, type SerializedKeyPart } from "./path.js";
+import { assertLeafQuery } from "./guard.js";
 
 export interface StoredRecord {
   readonly path: string;
@@ -185,6 +186,7 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 export async function executeQuery<T>(store: QueryStore, query: StructuredQuery<T>): Promise<QueryPage<T>> {
+  assertLeafQuery(query);
   const sourceValue = query.source.kind === "collection" ? collectionPath(query.source) : query.source.name;
   const indexName = query.source.kind === "collection" ? "collectionPath" : "collectionName";
   let records = await requestResult(store.index(indexName).getAll(sourceValue)) as StoredRecord[];
