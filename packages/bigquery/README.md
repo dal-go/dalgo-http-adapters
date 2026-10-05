@@ -1,11 +1,88 @@
 # DALgo BigQuery package
 
 The maintained package is `@dalgo/bigquery`. Its new `/analytical` export is a
-pure, browser-compatible foundation for the accepted dual-runtime A0 contract.
+browser-compatible analytical protocol for the accepted dual-runtime A0 contract.
 The ordinary package export retains the legacy DALgo record adapter described
-below. This foundation tranche does not implement the complete A0 adapter.
+below. The analytical entry does not import a DALgo runtime; consumer integration
+and release acceptance remain separate required gates.
 
-## Analytical foundation
+## Analytical execution
+
+`BigQueryAnalyticalClient` requires reviewed source profiles, a protected `prepare`
+callback, a trusted identity provider and durable session storage. The callback
+must re-run the consumer's ordinary read-policy preparation and return its
+canonical query and policy-context digest on every operation. Caller-edited
+configuration, a raw SQL string or an OAuth token decoded by the caller cannot
+substitute for these trusted integrations.
+
+```ts
+import { BigQueryAnalyticalClient, IndexedDBLedger } from "@dalgo/bigquery/analytical";
+
+const client = await BigQueryAnalyticalClient.create({
+  profiles: reviewedSourceProfiles,
+  prepare: prepareProtectedRead,
+  provider: verifiedExecutionIdentity,
+  ledger: new IndexedDBLedger("explicit-shared-budget-session"),
+});
+const preview = await client.preview({
+  jobProject: selectedJobProject,
+  principal: verifiedPrincipal,
+  maximumBytesBilled: "10000000",
+  sessionBudgetBytes: "30000000",
+});
+// Present the exact estimate, source/job project, principal, cap and bounds.
+const approval = await client.approve(preview, explicitlyApprovedDigest);
+const run = await client.execute(approval);
+const page = await run.nextPage();
+```
+
+The compiler accepts only explicit scalar projections, bounded AND/OR predicates,
+comparisons, null checks, IN arrays, scalar order and an explicit limit. Native
+TABLE metadata and reviewed execution-affecting configuration are checked before
+Preview and again before dispatch. An approved run repeats policy, metadata and
+dry-run checks and makes one capped `jobs.query` submission without POST retries.
+Missing job identity after an ambiguous attempt retains the full cap reservation.
+A known job is persisted before cell validation can fail.
+
+The fixed Google HTTPS transport rejects redirects and bounds decompressed body
+chunks before the lossless parser runs. It charges retries, malformed responses
+and control responses to the same cumulative byte counter. Injected providers,
+policy preparation and transports are bounded even if they ignore abort signals.
+The identity provider must attest a Google subject verified with the exact
+short-lived access token, or an explicitly configured operator workload subject.
+It must report expiry and current read/cancel grants. Tokens stay in memory and
+are excluded from persisted previews, receipts, cursors and ledger state.
+
+`IndexedDBLedger` serializes durable updates and uses Web Locks for per-run
+exclusion across clients/tabs sharing the explicitly chosen session name. The
+session budget is shared by stable subject and job project; changing identity
+generation cannot renew it. `MemoryLedger` is for deterministic tests only;
+there is no automatic memory fallback. Consumers must preserve the durable
+session instead of choosing another database name to continue a stopped run.
+
+A run supports either `nextPage()` or `nextRow()`. Returned immutable pages carry
+schema, exact typed cells, a receipt and an opaque same-job cursor. `close()`
+stops local delivery without claiming remote cancellation. Resume requires the
+trusted persisted cursor, refetches the same partial page, verifies its digest
+and skips the delivered offset; a boundary cursor fetches the next token. The
+original deadline, response/row/page counters and reservation persist.
+
+`rebind(receipt, cursor)` is an explicit reconnect action for a known job. It
+verifies the same stable subject with a new access generation and unchanged
+protected read policy, then atomically replaces the trusted cursor reference.
+It preserves original approval/principal provenance and makes no BigQuery
+request. It never renews a deadline, counter or budget. Expired runs can regain
+bounded `status(receipt)` and `cancel(receipt)` access; Resume still rejects
+before result dispatch. `cancel` requires the broader explicitly granted scope;
+its acknowledgement remains `cancel_requested` until authoritative status.
+Warnings are distinct from terminal `errorResult`, and provider reason `stopped`
+does not establish confirmed cancellation. Billing reconciles a reservation
+only from authoritative terminal billed bytes; absent billing retains the cap.
+
+Metadata rechecks cannot remove the residual race in which the named source is
+replaced between observation and submission. Receipts expose that limitation.
+
+## Lossless values and digest foundation
 
 ```ts
 import {
@@ -50,17 +127,15 @@ The byte-identical 70-case corpus is vendored from immutable Go driver commit
 `testdata/contract/origin.json` records provenance. Production tests execute
 every case, verify all file hashes, and compare exact bytes/digests/results.
 
-Remaining required tranches include raw bounded authenticated HTTP, full
-request/state corpus, pure compiler and native metadata eligibility, approval,
-atomic trusted ledger, single capped submission, same-job page/resume,
-schema precision, complete persistent deadline/counter and billing attacks,
-GIS/browser flow, CLI/local server, canonical source profile and rights
-admission, and both operator-authorized live journeys. The analytical module
-has no runtime core import. The ordinary adapter still uses the legacy
-`@dal-go/dalgo` peer; migration and compatibility against exact `@dalgo/core`
+Remaining required gates include the independently reviewed frozen HTTP/state
+corpus and Go/JS production report parity, protected DALgo consumer integration,
+legacy/core migration, actual GIS/browser and CLI/local-server acceptance,
+canonical source/rights admission, and both operator-authorized live journeys.
+The analytical module has no runtime core import. The ordinary adapter still
+uses the legacy `@dal-go/dalgo` peer; compatibility against exact `@dalgo/core`
 commits `1534acd4d0e4a104c58eba09fb9c25619efc8f24` and
-`04a7f1293ad57a50a282ecc13314ce7b1488211e` remain required. Pure helper parity
-does not establish that compatibility. Package publication still requires
+`04a7f1293ad57a50a282ecc13314ce7b1488211e` remains required. Analytical protocol
+checks do not establish that compatibility. Package publication still requires
 root-controlled shared release wiring and permission/provenance gates.
 
 ## Legacy DALgo record adapter

@@ -1,5 +1,5 @@
 /** Stable sanitized failures never retain provider bodies or query values. */
-export type AnalyticalErrorCode = "invalid_input" | "malformed_wire" | "response_limit" | "unsupported_type" | "unsupported_value" | "local_stopped";
+export type AnalyticalErrorCode = "invalid_input" | "malformed_wire" | "response_limit" | "unsupported_type" | "unsupported_value" | "local_stopped" | "unsupported_query" | "policy_denied" | "no_policies" | "auth_required" | "auth_expired" | "scope_missing" | "source_ineligible" | "source_changed" | "approval_required" | "approval_changed" | "estimate_missing" | "cap_exceeded" | "budget_exhausted" | "schema_changed" | "cursor_invalid" | "result_expired" | "submission_unknown" | "remote_failed" | "cancellation_unknown";
 
 export class AnalyticalError extends Error {
   public constructor(public readonly code: AnalyticalErrorCode) {
