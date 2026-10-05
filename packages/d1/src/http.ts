@@ -167,7 +167,10 @@ function wireValue(value: unknown): D1WireValue {
 function fromWire(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(fromWire);
   if (!plainObject(value)) return value;
-  if (Object.keys(value).length === 2 && value.$type === "blob" && typeof value.base64 === "string") return fromB64(value.base64);
+  if (Object.hasOwn(value, "$type")) {
+    if (Object.keys(value).length === 2 && value.$type === "blob" && typeof value.base64 === "string") return fromB64(value.base64);
+    throw new TypeError("malformed D1 reserved wire tag");
+  }
   const result: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) result[key] = fromWire(item);
   return result;
@@ -365,7 +368,9 @@ function responseBody(value: unknown, collection: string, table: D1Table, maxRow
     !Array.isArray(value.records) || value.records.length > maxRows || !value.records.every(plainObject)) throw new TypeError(`malformed D1 response for ${collection}`);
   const columns = value.columns;
   const allowed = new Set(Object.keys(table.columns));
-  if (new Set(columns).size !== columns.length || columns.some((column) => !allowed.has(column)) || table.primaryKey.some((field) => !columns.includes(field)) ||
+  const expectedColumns = Object.keys(table.columns);
+  if (new Set(columns).size !== columns.length || columns.length !== expectedColumns.length || columns.some((column) => !allowed.has(column)) ||
+    expectedColumns.some((field) => !columns.includes(field)) || table.primaryKey.some((field) => !columns.includes(field)) ||
     value.records.some((row) => Object.keys(row).length !== columns.length || columns.some((field) => !Object.hasOwn(row, field)))) throw new TypeError(`malformed D1 projection for ${collection}`);
   return value.records.map((item) => {
     const row = fromWire(item);

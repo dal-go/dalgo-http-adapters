@@ -350,5 +350,19 @@ describe("D1 adapter", () => {
     const tooMany = Array.from({ length: 101 }, (_, index) => ({ field: "amount", operator: "==" as const, value: index }));
     expect(() => compileD1Query(itemsTable, { source: { kind: "collection", name: "Items" }, filters: tooMany, orders: [] }, 1)).toThrow(/at most 100 bound values/u);
     expect(binding.state.calls).toHaveLength(0);
+
+    const columns = Object.keys(itemsTable.columns);
+    const fullWireRow = { id: 1, groupId: 0, amount: 1, label: { metadata: { source: "sqlite" } }, nullable: null, payload: { $type: "blob", base64: "AAD/" } };
+    const fullResponse = { version: 1, columns, primaryKey: ["id"], records: [fullWireRow] };
+    const objectClient = new D1HttpDatabase({ baseUrl: "https://d1.test", tables: schema, fetch: () => Promise.resolve(Response.json(fullResponse)) });
+    const objectPage = await objectClient.query({ source: { kind: "collection", name: "Items" }, filters: [], orders: [], limit: 1 });
+    expect(objectPage.records[0]?.data).toMatchObject({ label: { metadata: { source: "sqlite" } } });
+
+    const partialClient = new D1HttpDatabase({ baseUrl: "https://d1.test", tables: schema, fetch: () => Promise.resolve(Response.json({ version: 1, columns: ["id"], primaryKey: ["id"], records: [{ id: 1 }] })) });
+    await expect(partialClient.query({ source: { kind: "collection", name: "Items" }, filters: [], orders: [], limit: 1 })).rejects.toThrow(/projection/u);
+
+    const taggedRow = { ...fullWireRow, payload: { $type: "other", base64: "AQ==" } };
+    const taggedClient = new D1HttpDatabase({ baseUrl: "https://d1.test", tables: schema, fetch: () => Promise.resolve(Response.json({ ...fullResponse, records: [taggedRow] })) });
+    await expect(taggedClient.query({ source: { kind: "collection", name: "Items" }, filters: [], orders: [], limit: 1 })).rejects.toThrow(/reserved wire tag/u);
   });
 });
