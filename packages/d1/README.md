@@ -21,14 +21,16 @@ pnpm --dir dalgo-js install --frozen-lockfile --ignore-scripts
 pnpm --dir dalgo-js exec tsc -p tsconfig.build.json
 pnpm --dir dalgo-js pack
 
-# Run from your application directory; the generated tarball is in dalgo-js.
-pnpm add @dalgo/d1 ./dalgo-js/dalgo-core-0.2.0.tgz
+# After the D1 0.2.0 GitHub release is available, run from your application directory.
+pnpm add https://github.com/dal-go/dalgo-http-adapters/releases/download/d1-v0.2.0/dalgo-d1-0.2.0.tgz ./dalgo-js/dalgo-core-0.2.0.tgz
 ```
 
 Do not add the raw GitHub or codeload source as a runtime dependency: the
 archive needs this build step to create the files exposed by `@dalgo/core`.
 Direct Git installs can also fail during npm 10's automatic `prepare` step;
 building and packing the pinned source explicitly avoids that lifecycle path.
+The D1 release URL above becomes usable only after the `d1-v0.2.0` GitHub
+release has been created.
 
 ## Worker binding
 
