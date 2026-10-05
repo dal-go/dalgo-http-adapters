@@ -8,16 +8,27 @@ schema map. Callers cannot submit SQL.
 
 ## Install
 
-The `@dalgo/core` peer is not available from the npm registry yet. Install it
-from the immutable source commit that provides version `0.2.0`:
+The `@dalgo/core` peer is not published to npm. Its immutable source commit is
+`b863f32d2e92a0784e9633aa0eaa14d2d5528336`; the codeload archive contains
+source but no built `dist` files. Prepare the package with the TypeScript
+compiler, then pack and install the built artifact:
 
 ```sh
-pnpm add @dalgo/d1 github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
+curl -fL https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336 -o dalgo-js.tar.gz
+mkdir dalgo-js
+tar -xzf dalgo-js.tar.gz -C dalgo-js --strip-components=1
+pnpm --dir dalgo-js install --frozen-lockfile --ignore-scripts
+pnpm --dir dalgo-js exec tsc -p tsconfig.build.json
+pnpm --dir dalgo-js pack
+
+# Run from your application directory; the generated tarball is in dalgo-js.
+pnpm add @dalgo/d1 ./dalgo-js/dalgo-core-0.2.0.tgz
 ```
 
-The Git dependency resolves to the repository's root `@dalgo/core` package.
-Keep the commit SHA pinned so installs remain reproducible; do not substitute
-`@dalgo/core@0.2.0` from npm until that version is actually published.
+Do not add the raw GitHub or codeload source as a runtime dependency: the
+archive needs this build step to create the files exposed by `@dalgo/core`.
+Direct Git installs can also fail during npm 10's automatic `prepare` step;
+building and packing the pinned source explicitly avoids that lifecycle path.
 
 ## Worker binding
 
