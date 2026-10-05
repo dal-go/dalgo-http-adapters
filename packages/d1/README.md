@@ -81,7 +81,9 @@ If the deployment's version markers differ from the client pins, requests fail
 with HTTP 409. Clients may fetch metadata without pins first; when a version
 header is supplied, the Worker validates it. The successful leaf protocol is versioned and includes the
 selected columns and primary-key fields. BLOB values use a tagged base64 object;
-dates remain the strings stored by SQLite.
+the Worker binding's numeric byte arrays are normalized to `Uint8Array` by the
+native adapter and encoded as bytes in HTTP responses. Dates remain the strings
+stored by SQLite.
 
 ## Query and consistency limits
 

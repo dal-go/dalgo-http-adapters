@@ -59,6 +59,25 @@ function dbRows<T>(result: { readonly results?: readonly T[]; readonly success?:
   return result.results as readonly T[];
 }
 
+/** Converts the D1 binding API's Array.from()-encoded BLOB reads to byte views. */
+export function normalizeD1Row(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const normalized: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(row)) {
+    if (!Array.isArray(value)) {
+      normalized[field] = value;
+      continue;
+    }
+    const bytes = new Uint8Array(value.length);
+    for (let index = 0; index < value.length; index += 1) {
+      const byte: unknown = value[index];
+      if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255) throw new Error("D1 returned an invalid BLOB byte array");
+      bytes[index] = byte;
+    }
+    normalized[field] = bytes;
+  }
+  return normalized;
+}
+
 function bind(statement: D1PreparedStatement, values: readonly (string | number | null | ArrayBuffer | ArrayBufferView)[]): D1PreparedStatement {
   return values.length === 0 ? statement : statement.bind(...values);
 }
@@ -146,7 +165,7 @@ export class D1QueryDatabase implements QueryExecutor, ReadSession {
     if (rows.length > 1) throw new Error("D1 primary key query returned duplicate rows");
     const row = rows[0];
     if (row === undefined) return { key, exists: false };
-    return { key, exists: true, data: rowData(table, row, codec) };
+    return { key, exists: true, data: rowData(table, normalizeD1Row(row), codec) };
   }
 
   public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
@@ -199,9 +218,10 @@ export class D1QueryDatabase implements QueryExecutor, ReadSession {
     const compiled = compileD1Query(table, query, limit);
     const raw = await bind(this.#db.prepare(compiled.sql), compiled.args).all();
     const records: ExistingRecord<T>[] = dbRows(raw).map((row, index) => {
-      const id = table.primaryKey.length === 0 ? JSON.stringify([offset + index, row]) : keyId(pkValues(table, row), query.source.name);
+      const normalized = normalizeD1Row(row);
+      const id = table.primaryKey.length === 0 ? JSON.stringify([offset + index, normalized]) : keyId(pkValues(table, normalized), query.source.name);
       const key = new Key(query.source.name, id);
-      return { key, exists: true, data: rowData(table, row, query.source.codec, true) };
+      return { key, exists: true, data: rowData(table, normalized, query.source.codec, true) };
     });
     return { records };
   }

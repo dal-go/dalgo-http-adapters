@@ -6,6 +6,12 @@ import { D1HttpDatabase, D1QueryDatabase, compileD1Query, createD1ReadHandler, t
 type Row = Readonly<Record<string, unknown>>;
 interface FixtureState { readonly tables: Readonly<Record<string, readonly Row[]>>; readonly calls: { sql: string; args: readonly unknown[] }[]; }
 
+function d1ReadValue(value: unknown): unknown {
+  if (value instanceof ArrayBuffer) return Array.from(new Uint8Array(value));
+  if (ArrayBuffer.isView(value)) return Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+  return value;
+}
+
 class FixtureStatement implements D1PreparedStatement {
   readonly #state: FixtureState;
   readonly #sql: string;
@@ -70,7 +76,7 @@ class FixtureStatement implements D1PreparedStatement {
     const paging = /LIMIT (\d+) OFFSET (\d+)$/u.exec(this.#sql);
     const limit = Number(paging?.[1] ?? rows.length);
     const offset = Number(paging?.[2] ?? 0);
-    return Promise.resolve({ success: true, results: rows.slice(offset, offset + limit).map((row) => Object.fromEntries(selected.map((field) => [field, row[field]]))) });
+    return Promise.resolve({ success: true, results: rows.slice(offset, offset + limit).map((row) => Object.fromEntries(selected.map((field) => [field, d1ReadValue(row[field])])) ) });
   }
 }
 
@@ -113,7 +119,7 @@ class SQLiteStatement implements D1PreparedStatement {
       }
       return value;
     });
-    const results = this.#database.prepare(this.#sql).all(...values).map((row) => ({ ...row }));
+    const results = this.#database.prepare(this.#sql).all(...values).map((row) => Object.fromEntries(Object.entries(row).map(([field, value]) => [field, d1ReadValue(value)])));
     return Promise.resolve({ results, success: true });
   }
 }
@@ -136,7 +142,7 @@ describe("D1 adapter", () => {
       for (let index = 0; index < items.length; index += 1) {
         const item = items[index];
         if (item === undefined) throw new Error("SQLite test item missing");
-        insertItem.run(index + 1, index % 3, item.groupId, item.amount, item.nullable, item.payload);
+        insertItem.run(index + 1, index % 3, item.groupId, item.amount, item.nullable, index === 1 ? new Uint8Array() : item.payload);
       }
       const tables = {
         OrderDetails: { table: "Order Details", primaryKey: ["orderId", "productId"], columns: {
@@ -149,9 +155,12 @@ describe("D1 adapter", () => {
       const db = new D1QueryDatabase(new SQLiteD1(sqlite), { tables, maxQueryLimit: 100, scanPageSize: 80 });
       const composite = await db.get(new Key("OrderDetails", "[1,0]"));
       expect(composite).toMatchObject({ exists: true, data: { groupId: 0, quantity: 1, nullable: null, payload: new Uint8Array([0, 0, 255]) } });
+      const emptyBlob = await db.get(new Key("OrderDetails", "[2,1]"));
+      expect(emptyBlob).toMatchObject({ exists: true, data: { quantity: 2, payload: new Uint8Array() } });
       const blobFilter = await db.query({ source: { kind: "collection", name: "OrderDetails" }, filters: [{ field: "payload", operator: "==", value: new Uint8Array([0, 0, 255]) }], orders: [], limit: 1 });
       expect(blobFilter.records).toHaveLength(1);
       expect(blobFilter.records[0]?.key.id).toBe("[1,0]");
+      expect(blobFilter.records[0]?.data).toMatchObject({ payload: new Uint8Array([0, 0, 255]) });
       const keyless = await db.query({ source: { kind: "collection", name: "OrdersQry" }, filters: [{ field: "orderId", operator: "==", value: 1 }], orders: [], limit: 1 });
       expect(keyless.records[0]?.data).toMatchObject({ orderId: 1, productId: 0, quantity: 1 });
 
@@ -186,6 +195,20 @@ describe("D1 adapter", () => {
       });
       const httpBlob = await http.query({ source: { kind: "collection", name: "OrderDetails" }, filters: [{ field: "payload", operator: "==", value: new Uint8Array([0, 0, 255]) }], orders: [], limit: 1 });
       expect(httpBlob.records[0]?.key.id).toBe("[1,0]");
+      expect(httpBlob.records[0]?.data).toMatchObject({ payload: new Uint8Array([0, 0, 255]) });
+      const httpEmptyBlob = await http.query({ source: { kind: "collection", name: "OrderDetails" }, filters: [
+        { field: "orderId", operator: "==", value: 2 }, { field: "productId", operator: "==", value: 1 },
+      ], orders: [], limit: 1 });
+      expect(httpEmptyBlob.records[0]?.data).toMatchObject({ payload: new Uint8Array() });
+      const emptyBlobWire = await handle(new Request("https://d1.test/northwind/d1/v1/query", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: 1, collection: "OrderDetails", filters: [
+          { field: "orderId", operator: "==", value: 2 }, { field: "productId", operator: "==", value: 1 },
+        ], limit: 1 }),
+      }));
+      expect(await emptyBlobWire.json()).toMatchObject({ records: [{ payload: { $type: "blob", base64: "" } }] });
+      const numericInFilter = await http.query({ source: { kind: "collection", name: "OrderDetails" }, filters: [{ field: "orderId", operator: "in", value: [1, 2] }], orders: [], limit: 2 });
+      expect(numericInFilter.records).toHaveLength(2);
       const httpJoin = await executeJoinedDTQLQuery(http, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
       expect(httpJoin.records.map((record) => record.data)).toEqual(result.records.map((record) => record.data));
     } finally {
@@ -350,6 +373,9 @@ describe("D1 adapter", () => {
     const tooMany = Array.from({ length: 101 }, (_, index) => ({ field: "amount", operator: "==" as const, value: index }));
     expect(() => compileD1Query(itemsTable, { source: { kind: "collection", name: "Items" }, filters: tooMany, orders: [] }, 1)).toThrow(/at most 100 bound values/u);
     expect(binding.state.calls).toHaveLength(0);
+    const malformedBlob = new FixtureD1({ items: [{ id: 1, groupId: 0, amount: 1, label: "bad blob", nullable: null, payload: [0, 256] }], groups: [], pairs: [], items_view: [] });
+    const malformedBlobDb = new D1QueryDatabase(malformedBlob, { tables: schema });
+    await expect(malformedBlobDb.get(new Key("Items", 1))).rejects.toThrow(/invalid BLOB byte array/u);
 
     const columns = Object.keys(itemsTable.columns);
     const fullWireRow = { id: 1, groupId: 0, amount: 1, label: { metadata: { source: "sqlite" } }, nullable: null, payload: { $type: "blob", base64: "AAD/" } };

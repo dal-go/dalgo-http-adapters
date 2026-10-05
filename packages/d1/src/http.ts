@@ -1,6 +1,6 @@
 import { Key, UnsupportedError, identityCodec, type Codec, type ExistingRecord, type QueryExecutor, type QueryPage, type ReadSession, type RecordSnapshot, type StructuredQuery } from "@dalgo/core";
 import { compileD1Request, type D1Filter, type D1Json, type D1Order, type D1QueryRequest, type D1QueryResponse, type D1WireValue } from "./sql.js";
-import { validateD1Schema, isD1Record } from "./database.js";
+import { validateD1Schema, isD1Record, normalizeD1Row } from "./database.js";
 import type { D1Binding, D1DatabaseOptions, D1Table } from "./types.js";
 
 const defaultRequestBytes = 1_048_576;
@@ -301,7 +301,7 @@ export function createD1ReadHandler(db: D1Binding, options: D1ReadHandlerOptions
       const records = result.results.map((row) => {
         if (!isD1Record(row)) throw new TypeError("D1 returned an invalid row");
         const output: Record<string, D1WireValue> = {};
-        for (const [key, value] of Object.entries(row)) output[key] = wireValue(value);
+        for (const [key, value] of Object.entries(normalizeD1Row(row))) output[key] = wireValue(value);
         return output;
       });
       const payload: D1QueryResponse = { version: 1, columns: compiled.fields, primaryKey: table.primaryKey, records };
