@@ -6,6 +6,19 @@ for browser or server use. The adapter compiles structured leaf queries to
 SQLite SQL with bound values. Table names and fields must come from an explicit
 schema map. Callers cannot submit SQL.
 
+## Install
+
+The `@dalgo/core` peer is not available from the npm registry yet. Install it
+from the immutable source commit that provides version `0.2.0`:
+
+```sh
+pnpm add @dalgo/d1 github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
+```
+
+The Git dependency resolves to the repository's root `@dalgo/core` package.
+Keep the commit SHA pinned so installs remain reproducible; do not substitute
+`@dalgo/core@0.2.0` from npm until that version is actually published.
+
 ## Worker binding
 
 ```ts
