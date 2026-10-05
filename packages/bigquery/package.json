@@ -1,6 +1,5 @@
 {
-  "name": "@dal-go/dalgo2bigquery",
-  "private": true,
+  "name": "@dalgo/bigquery",
   "version": "0.1.0",
   "description": "BigQuery REST API adapter for DALgo TypeScript",
   "type": "module",
@@ -10,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./analytical": {
+      "types": "./dist/analytical.d.ts",
+      "import": "./dist/analytical.js"
     }
   },
   "files": [
@@ -48,5 +51,8 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
     "vitest": "5.0.1"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

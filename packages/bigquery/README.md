@@ -1,6 +1,71 @@
-# DALgo adapter for BigQuery REST
+# DALgo BigQuery package
 
-`@dal-go/dalgo2bigquery` implements the read and structured-query portions of
+The maintained package is `@dalgo/bigquery`. Its new `/analytical` export is a
+pure, browser-compatible foundation for the accepted dual-runtime A0 contract.
+The ordinary package export retains the legacy DALgo record adapter described
+below. This foundation tranche does not implement the complete A0 adapter.
+
+## Analytical foundation
+
+```ts
+import {
+  decodeRows, hashPayload, normalizeScalar, operationDeadline,
+} from "@dalgo/bigquery/analytical";
+
+const cell = normalizeScalar({ type: "INT64" }, "9223372036854775807");
+// { type: "INT64", value: "9223372036854775807" }
+
+const rows = decodeRows(
+  new TextEncoder().encode('[{"f":[{"v":null}]}]'),
+  [{ type: "STRING", mode: "NULLABLE" }],
+);
+```
+
+`parseJSON` accepts bounded UTF-8 bytes, preserves JSON number lexemes in
+`JsonNumber`, rejects duplicate properties, trailing content, invalid UTF-8,
+unpaired surrogates and depth above 32. The maximum input is 10 MiB; callers
+must separately bound decompressed reads before constructing that buffer.
+Direct scalar strings also reject unpaired UTF-16 surrogates. Warehouse
+integer/decimal values remain strings, BOOL becomes boolean, finite FLOAT64
+uses ECMAScript NumberToString, and SQL NULL remains distinct from JSON text
+`"null"`. TIMESTAMP uses signed epoch microseconds in this foundation contract.
+Cells are limited to 1 MiB and decoded pages to 1,000 rows and 128 fields.
+
+`canonicalJSON` emits RFC8785 bytes for adapter-owned payloads whose JSON
+number tokens are exact safe integers. `hashPayload` uses browser Web Crypto
+and the explicit `ReadPlan`, `SourceProfile`, `Observation` and `Approval`
+projections in the frozen manifest. Only declared top-level exclusions are
+omitted; nested properties called `digest` remain bound. Unicode is never
+normalized and keys sort by UTF-16 code units, including integer-like names.
+
+`operationDeadline` computes the earlier of the original execution deadline,
+caller deadline and per-HTTP limit. Explicit status/cancel control operations
+may use a fresh limit of at most 15 seconds, while exhausted cumulative bytes
+still reject. This pure helper never creates or persists a run, dispatches an
+HTTP request, resets counters, reconciles billing or releases reservations.
+
+The byte-identical 70-case corpus is vendored from immutable Go driver commit
+`d0784c45e698069a3b69198b172d91b754cf7671`; revision 2 manifest SHA-256 is
+`90c6ee03076ccf2d90148def6cafea5488046fff7f55e49880f67070cf4f7ffe`.
+`testdata/contract/origin.json` records provenance. Production tests execute
+every case, verify all file hashes, and compare exact bytes/digests/results.
+
+Remaining required tranches include raw bounded authenticated HTTP, full
+request/state corpus, pure compiler and native metadata eligibility, approval,
+atomic trusted ledger, single capped submission, same-job page/resume,
+schema precision, complete persistent deadline/counter and billing attacks,
+GIS/browser flow, CLI/local server, canonical source profile and rights
+admission, and both operator-authorized live journeys. The analytical module
+has no runtime core import. The ordinary adapter still uses the legacy
+`@dal-go/dalgo` peer; migration and compatibility against exact `@dalgo/core`
+commits `1534acd4d0e4a104c58eba09fb9c25619efc8f24` and
+`04a7f1293ad57a50a282ecc13314ce7b1488211e` remain required. Pure helper parity
+does not establish that compatibility. Package publication still requires
+root-controlled shared release wiring and permission/provenance gates.
+
+## Legacy DALgo record adapter
+
+The ordinary `@dalgo/bigquery` export implements the read and structured-query portions of
 [`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) through BigQuery's
 official REST `jobs.query` and `jobs.getQueryResults` endpoints. It uses plain
 `fetch`, not a server SDK.
@@ -15,10 +80,11 @@ tokens, or broad project credentials to the browser.
 ## Install
 
 ```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2bigquery-js
+# Build packages/bigquery from the maintained dalgo-http-adapters repository.
 ```
 
-The package has not been published to npm yet.
+This revision does not claim an npm release. The legacy core dependency remains
+the explicit `@dal-go/dalgo` version in this package's manifest.
 
 ## Configure an explicit record projection
 
@@ -29,7 +95,7 @@ types explicit.
 
 ```ts
 import { collection } from "@dal-go/dalgo";
-import { BigQueryDatabase } from "@dal-go/dalgo2bigquery";
+import { BigQueryDatabase } from "@dalgo/bigquery";
 
 interface Item {
   title: string;
@@ -101,6 +167,9 @@ the explicit order values **plus** that key value; pass all of them to
 `startAfter`. Every field in a paginated order, including the key tie-breaker,
 must be configured with `nullable: false`; this prevents SQL NULL sort rules
 from skipping or duplicating records.
+
+These legacy value cursors compile and submit another query. They are not A0
+same-job cursors and cannot substitute for approved job paging or Resume.
 
 ## BigQuery security and cost caveats
 
