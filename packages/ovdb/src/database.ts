@@ -1,25 +1,29 @@
 import {
   AlreadyExistsError,
   NotFoundError,
+  UnsupportedError,
   identityCodec,
+  snapshotQueryMetadata,
   type Codec,
   type Database,
   type Key,
   type QueryPage,
+  type QueryMetadata,
   type ReadwriteTransaction,
   type RecordSnapshot,
   type StructuredQuery,
   type UpdateData,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import {
   OpenVaultDbClient,
   OpenVaultDbHttpError,
+  readOpenVaultDbJson,
   translateOpenVaultDbError,
   type OpenVaultDbClientOptions,
 } from "./client.js";
-import { executeOpenVaultDbQuery } from "./query.js";
+import { executeOpenVaultDbQuery, type OpenVaultDbQueryOptions } from "./query.js";
 
-interface RecordResponse {
+interface RecordResponse extends QueryMetadata {
   readonly key: string;
   readonly data: unknown;
 }
@@ -90,12 +94,16 @@ function applyUpdate(data: Readonly<Record<string, unknown>>, update: UpdateData
 async function getRecord<T>(client: OpenVaultDbClient, key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
   try {
     const response = await client.request(client.recordPath(key));
-    const body = await response.json() as RecordResponse;
+    const body = await readOpenVaultDbJson(response) as RecordResponse;
+    // The generic point-read API has no independent provider plan. Never drop
+    // live evidence or mislabel an unverified point read as an admitted result.
+    if (body.providerReads !== undefined) throw new UnsupportedError("OpenVaultDB provider point reads require a query plan");
+    const evidence = snapshotQueryMetadata(body);
     return {
       key,
       exists: true,
       data: codecOrIdentity(codec).decode(body.data),
-      metadata: { source: "openvaultdb" },
+      metadata: { source: "openvaultdb", ...evidence },
     };
   } catch (error) {
     if (error instanceof OpenVaultDbHttpError && error.status === 404) {
@@ -211,8 +219,8 @@ export class OpenVaultDbDatabase implements Database {
     return Promise.all(keys.map(async (key) => this.get(key, codec)));
   }
 
-  public query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
-    return executeOpenVaultDbQuery(this.#client, query);
+  public query<T>(query: StructuredQuery<T>, options?: OpenVaultDbQueryOptions): Promise<QueryPage<T>> {
+    return executeOpenVaultDbQuery(this.#client, query, options);
   }
 
   public async runReadwriteTransaction<Result>(

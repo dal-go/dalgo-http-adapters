@@ -39,10 +39,10 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dal-go/dalgo": "^0.1.0"
+    "@dalgo/core": ">=0.4.0 <0.5.0"
   },
   "devDependencies": {
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d",
+    "@dalgo/core": ">=0.4.0 <0.5.0",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",

@@ -1,4 +1,4 @@
-import { AlreadyExistsError, UnsupportedError, collection, collectionGroup, key } from "@dal-go/dalgo";
+import { AlreadyExistsError, UnsupportedError, collection, collectionGroup, key } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 import { OpenVaultDbDatabase } from "../src/index.js";
 
