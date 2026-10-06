@@ -1,9 +1,9 @@
 {
   "repository": "https://github.com/dal-go/dalgo2bigquery",
-  "commit": "d0784c45e698069a3b69198b172d91b754cf7671",
-  "tree": "b5fb1e2bef68d3ef24d0a990167a60c4a778094d",
+  "commit": "b051a8cd34e9e1e51540d3598bc6d54714da52fc",
+  "tree": "6a7f20a6fe827ba1cc362e38f876cf6b8e060c7b",
   "path": "testdata/contract",
-  "manifest_sha256": "90c6ee03076ccf2d90148def6cafea5488046fff7f55e49880f67070cf4f7ffe",
-  "revision": 2,
-  "scenario_count": 70
+  "manifest_sha256": "094b5caa11df6eb0ddef6498394b0c529464ee6ad01c75611a7a3cdb22ad64c1",
+  "revision": 3,
+  "scenario_count": 168
 }
