@@ -1,6 +1,190 @@
-# DALgo adapter for BigQuery REST
+# DALgo BigQuery package
 
-`@dal-go/dalgo2bigquery` implements the read and structured-query portions of
+The maintained package is `@dalgo/bigquery`. Its new `/analytical` export is a
+browser-compatible analytical protocol for the accepted dual-runtime A0 contract.
+The ordinary package export retains the legacy DALgo record adapter described
+below. The analytical entry does not import a DALgo runtime; consumer integration
+and release acceptance remain separate required gates.
+
+## Analytical execution
+
+`BigQueryAnalyticalClient` requires reviewed source profiles, a protected `prepare`
+callback, a trusted identity provider and durable session storage. The callback
+must re-run the consumer's ordinary read-policy preparation and return its
+canonical query and policy-context digest on every operation. Caller-edited
+configuration, a raw SQL string or an OAuth token decoded by the caller cannot
+substitute for these trusted integrations.
+
+```ts
+import { BigQueryAnalyticalClient, IndexedDBLedger } from "@dalgo/bigquery/analytical";
+
+const client = await BigQueryAnalyticalClient.create({
+  profiles: reviewedSourceProfiles,
+  prepare: prepareProtectedRead,
+  provider: verifiedExecutionIdentity,
+  ledger: new IndexedDBLedger("explicit-shared-budget-session"),
+});
+const preview = await client.preview({
+  jobProject: selectedJobProject,
+  principal: verifiedPrincipal,
+  maximumBytesBilled: "10000000",
+  sessionBudgetBytes: "30000000",
+});
+// Present the exact estimate, source/job project, principal, cap and bounds.
+const approval = await client.approve(preview, explicitlyApprovedDigest);
+const run = await client.execute(approval);
+const page = await run.nextPage();
+```
+
+The compiler accepts only explicit scalar projections, bounded AND/OR predicates,
+comparisons, null checks, IN arrays, scalar order and an explicit limit. Native
+TABLE metadata and reviewed execution-affecting configuration are checked before
+Preview and again before dispatch. An approved run repeats policy, metadata and
+dry-run checks and makes one capped `jobs.query` submission without POST retries.
+Missing job identity after an ambiguous attempt retains the full cap reservation.
+A known job is persisted before cell validation can fail.
+
+The fixed Google HTTPS transport rejects redirects and bounds decompressed body
+chunks before the lossless parser runs. It charges retries, malformed responses
+and control responses to the same cumulative byte counter. Injected providers,
+policy preparation and transports are bounded even if they ignore abort signals.
+The identity provider must attest a Google subject verified with the exact
+short-lived access token, or an explicitly configured operator workload subject.
+It must report expiry and current read/cancel grants. Tokens stay in memory and
+are excluded from persisted previews, receipts, cursors and ledger state.
+
+`IndexedDBLedger` serializes durable updates and uses Web Locks for per-run
+exclusion across clients/tabs sharing the explicitly chosen session name. The
+session budget is shared by stable subject and job project; changing identity
+generation cannot renew it. `MemoryLedger` is for deterministic tests only;
+there is no automatic memory fallback. Consumers must preserve the durable
+session instead of choosing another database name to continue a stopped run.
+
+The ledger retains source/schema, approved user query parameters, job receipts,
+page tokens, counters and page-content hashes for protected same-job Resume.
+It never stores returned result cells, rows, raw response bodies or OAuth tokens.
+Closing a run also clears its internal in-memory row buffer; the consumer owns
+any cells it has already received. No source snapshots or retained result cache
+are created by this module.
+
+`GoogleTokenIdentityProvider` verifies a real GIS callback's grants and token
+expiry, fetches fixed Google discovery metadata, then calls its pinned UserInfo
+endpoint with the same access token used by the BigQuery transport. It requires
+`openid` and BigQuery read-only (or explicitly consented cancellation) scope,
+binds the returned stable `sub`, and permits missing email. Every connect attempt
+clears the old authorization and every successful token change gets a new
+principal generation. `authorize` never prompts or silently refreshes.
+
+Use `googleAuthorizationScopes()` in a separate GIS `initTokenClient`, then call
+`provider.connect(response)` from its callback. Trigger `requestAccessToken()`
+from a user gesture. The returned connection summary contains no token and can
+be shown separately from the Firebase/DataTug identity. Call `disconnect()` on
+app sign-out, execution-account change and local disconnect; it clears the token
+and aborts a pending identity lookup without revoking other Google grants.
+Cancellation consent uses `googleAuthorizationScopes({ cancellation: true })`;
+it grants the broader BigQuery scope and requires an explicit product action.
+OAuth client setup and deployed-origin/CORS acceptance remain required.
+
+Google's [token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model)
+defines user-triggered consent and expiry recovery; its [discovery document](https://accounts.google.com/.well-known/openid-configuration)
+pins the UserInfo endpoint used here.
+
+A run supports either `nextPage()` or `nextRow()`. Returned immutable pages carry
+schema, exact typed cells, a receipt and an opaque same-job cursor. `close()`
+stops local delivery without claiming remote cancellation. Resume requires the
+trusted persisted cursor, refetches the same partial page, verifies its digest
+and skips the delivered offset; a boundary cursor fetches the next token. The
+original deadline, response/row/page counters and reservation persist.
+
+`rebind(receipt, cursor)` is an explicit reconnect action for a known job. It
+verifies the same stable subject with a new access generation and unchanged
+protected read policy, then atomically replaces the trusted cursor reference.
+It preserves original approval/principal provenance and makes no BigQuery
+request. It never renews a deadline, counter or budget. Expired runs can regain
+bounded `status(receipt)` and `cancel(receipt)` access; Resume still rejects
+before result dispatch. `cancel` requires the broader explicitly granted scope;
+its acknowledgement remains `cancel_requested` until authoritative status.
+Warnings are distinct from terminal `errorResult`, and provider reason `stopped`
+does not establish confirmed cancellation. Billing reconciles a reservation
+only from authoritative terminal billed bytes; absent billing retains the cap.
+
+Metadata rechecks cannot remove the residual race in which the named source is
+replaced between observation and submission. Receipts expose that limitation.
+
+## Lossless values and digest foundation
+
+```ts
+import {
+  decodeRows, hashPayload, normalizeScalar, operationDeadline,
+} from "@dalgo/bigquery/analytical";
+
+const cell = normalizeScalar({ type: "INT64" }, "9223372036854775807");
+// { type: "INT64", value: "9223372036854775807" }
+
+const rows = decodeRows(
+  new TextEncoder().encode('[{"f":[{"v":null}]}]'),
+  [{ type: "STRING", mode: "NULLABLE" }],
+);
+```
+
+`parseJSON` accepts bounded UTF-8 bytes, preserves JSON number lexemes in
+`JsonNumber`, rejects duplicate properties, trailing content, invalid UTF-8,
+unpaired surrogates and depth above 32. The maximum input is 10 MiB; callers
+must separately bound decompressed reads before constructing that buffer.
+Direct scalar strings also reject unpaired UTF-16 surrogates. Warehouse
+integer/decimal values remain strings, BOOL becomes boolean, finite FLOAT64
+uses ECMAScript NumberToString, and SQL NULL remains distinct from JSON text
+`"null"`. TIMESTAMP uses signed epoch microseconds in this foundation contract.
+Cells are limited to 1 MiB and decoded pages to 1,000 rows and 128 fields.
+
+Canonical TIMESTAMP values remain signed epoch microseconds. REST scalar and
+IN-array parameters convert at serialization to exact UTC calendar text with all
+six fractional digits using integer arithmetic. Negative instants and the full
+year 0001–9999 range preserve precision. Synthetic request vectors live at
+`packages/bigquery/testdata/requests/timestamp-parameters-r1.json`; the Go serializer
+must consume and verify these vectors before cross-runtime request parity is
+claimed. This additive request fixture is separate from the frozen Go scalar
+corpus below and does not close the shared raw HTTP/state acceptance gate.
+
+Metadata refuses conflicting current/deprecated partition-filter flags. Result
+delivery uses the stricter approved query LIMIT and row bound, and rejects
+contradictory row counts, `totalRows` and continuation metadata. Partial-page
+Resume counts only undelivered rows and preserves reservations on validation
+failure; no response contradiction can authorize additional delivery or a rerun.
+
+`canonicalJSON` emits RFC8785 bytes for adapter-owned payloads whose JSON
+number tokens are exact safe integers. `hashPayload` uses browser Web Crypto
+and the explicit `ReadPlan`, `SourceProfile`, `Observation` and `Approval`
+projections in the frozen manifest. Only declared top-level exclusions are
+omitted; nested properties called `digest` remain bound. Unicode is never
+normalized and keys sort by UTF-16 code units, including integer-like names.
+
+`operationDeadline` computes the earlier of the original execution deadline,
+caller deadline and per-HTTP limit. Explicit status/cancel control operations
+may use a fresh limit of at most 15 seconds, while exhausted cumulative bytes
+still reject. This pure helper never creates or persists a run, dispatches an
+HTTP request, resets counters, reconciles billing or releases reservations.
+
+The byte-identical 70-case corpus is vendored from immutable Go driver commit
+`d0784c45e698069a3b69198b172d91b754cf7671`; revision 2 manifest SHA-256 is
+`90c6ee03076ccf2d90148def6cafea5488046fff7f55e49880f67070cf4f7ffe`.
+`testdata/contract/origin.json` records provenance. Production tests execute
+every case, verify all file hashes, and compare exact bytes/digests/results.
+
+Remaining required gates include the independently reviewed frozen HTTP/state
+corpus and Go/JS production report parity, protected DALgo consumer integration,
+legacy/core migration, actual GIS/browser and CLI/local-server acceptance,
+canonical source/rights admission, and both operator-authorized live journeys.
+The analytical module has no runtime core import. The ordinary adapter still
+uses the legacy `@dal-go/dalgo` peer; compatibility against exact `@dalgo/core`
+commits `1534acd4d0e4a104c58eba09fb9c25619efc8f24` and
+`04a7f1293ad57a50a282ecc13314ce7b1488211e` remains required. Analytical protocol
+checks do not establish that compatibility. Package publication still requires
+root-controlled shared release wiring and permission/provenance gates.
+
+## Legacy DALgo record adapter
+
+The ordinary `@dalgo/bigquery` export implements the read and structured-query portions of
 [`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) through BigQuery's
 official REST `jobs.query` and `jobs.getQueryResults` endpoints. It uses plain
 `fetch`, not a server SDK.
@@ -15,10 +199,11 @@ tokens, or broad project credentials to the browser.
 ## Install
 
 ```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2bigquery-js
+# Build packages/bigquery from the maintained dalgo-http-adapters repository.
 ```
 
-The package has not been published to npm yet.
+This revision does not claim an npm release. The legacy core dependency remains
+the explicit `@dal-go/dalgo` version in this package's manifest.
 
 ## Configure an explicit record projection
 
@@ -29,7 +214,7 @@ types explicit.
 
 ```ts
 import { collection } from "@dal-go/dalgo";
-import { BigQueryDatabase } from "@dal-go/dalgo2bigquery";
+import { BigQueryDatabase } from "@dalgo/bigquery";
 
 interface Item {
   title: string;
@@ -101,6 +286,9 @@ the explicit order values **plus** that key value; pass all of them to
 `startAfter`. Every field in a paginated order, including the key tie-breaker,
 must be configured with `nullable: false`; this prevents SQL NULL sort rules
 from skipping or duplicating records.
+
+These legacy value cursors compile and submit another query. They are not A0
+same-job cursors and cannot substitute for approved job paging or Resume.
 
 ## BigQuery security and cost caveats
 
