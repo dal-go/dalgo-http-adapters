@@ -1,7 +1,7 @@
 import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, UnsupportedError, collection, collectionGroup, executeRecursiveDTQLQuery, key, parseRecursiveDTQL, type DTQLSchema, type StructuredQuery } from "@dalgo/core";
-import { IDBFactory } from "fake-indexeddb";
+import { IDBFactory, IDBIndex } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
-import { IndexedDbDatabase } from "../src/index.js";
+import { IndexedDbDatabase, withIndexedDbQueryHints } from "../src/index.js";
 
 interface Item {
   readonly title: string;
@@ -161,6 +161,84 @@ describe("IndexedDbDatabase", () => {
       .where(DOCUMENT_ID, "in", [items.key("bread")])
       .build());
     expect(byKey.records.map(({ data }) => data.title)).toEqual(["Bread"]);
+  });
+
+  it("compares hinted decimal and wide integer tokens exactly while preserving text ordering", async () => {
+    interface Money { readonly amount: string; readonly zip: string }
+    const money = collection<Money>("money");
+    const db = database();
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(money.key("a"), { amount: "2", zip: "010" });
+      await transaction.set(money.key("b"), { amount: "10.00", zip: "001" });
+      await transaction.set(money.key("c"), { amount: "9007199254740993", zip: "1" });
+      await transaction.set(money.key("d"), { amount: "9007199254740992", zip: "02" });
+    });
+    const hint = { numericFields: ["amount"] };
+    const first = await db.query(withIndexedDbQueryHints(money.query().orderBy("amount").limit(2).build(), hint));
+    expect(first.records.map((record) => record.key.id)).toEqual(["a", "b"]);
+    expect(first.nextCursor).toBeDefined();
+    const second = await db.query(withIndexedDbQueryHints(money.query().orderBy("amount")
+      .startAfter(...(first.nextCursor?.values ?? [])).limit(2).build(), hint));
+    expect(second.records.map((record) => record.key.id)).toEqual(["d", "c"]);
+    const filtered = await db.query(withIndexedDbQueryHints(money.query()
+      .where("amount", ">", "9007199254740992").build(), hint));
+    expect(filtered.records.map((record) => record.key.id)).toEqual(["c"]);
+    const text = await db.query(money.query().orderBy("zip").build());
+    expect(text.records.map((record) => record.data.zip)).toEqual(["001", "010", "02", "1"]);
+    await db.close();
+  });
+
+  it("scans with a cursor and retains only the bounded page", async () => {
+    const db = database();
+    await db.runReadwriteTransaction(async (transaction) => {
+      for (let index = 0; index < 1000; index += 1) {
+        await transaction.set(items.key(index), { title: String(index), done: false, rank: 1000 - index, tags: [] });
+      }
+    });
+    const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
+    const result = await db.query(items.query().orderBy("rank").limit(5).build());
+    expect(result.records.map((record) => record.data.rank)).toEqual([1, 2, 3, 4, 5]);
+    expect(getAll).not.toHaveBeenCalled();
+    getAll.mockRestore();
+    await db.close();
+  });
+
+  it("aborts an IndexedDB cursor query without returning a partial page", async () => {
+    const db = database();
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(items.key("one"), { title: "one", done: false, rank: 1, tags: [] });
+    });
+    const abort = new AbortController();
+    abort.abort(new Error("stop"));
+    await expect(db.query(withIndexedDbQueryHints(items.query().build(), { signal: abort.signal })))
+      .rejects.toThrow("stop");
+    await db.close();
+  });
+
+  it("rejects a negative limit even when a positive offset would mask it", async () => {
+    const db = database();
+    const query = { ...items.query().build(), offset: 3, limit: -1 };
+    await expect(db.query(query)).rejects.toThrow("nonnegative safe integers");
+    await db.close();
+  });
+
+  it("supports decimal edge spellings and excludes null from hinted ordered filters", async () => {
+    const numbers = collection<{ amount: string | null }>("numbers");
+    const db = database();
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(numbers.key("null"), { amount: null });
+      await transaction.set(numbers.key("half"), { amount: ".5" });
+      await transaction.set(numbers.key("one"), { amount: "1." });
+      await transaction.set(numbers.key("two"), { amount: "2e0" });
+    });
+    const hint = { numericFields: ["amount"] };
+    const less = await db.query(withIndexedDbQueryHints(numbers.query().where("amount", "<", "1.").build(), hint));
+    expect(less.records.map((record) => record.key.id)).toEqual(["half"]);
+    const equalNull = await db.query(withIndexedDbQueryHints(numbers.query().where("amount", "==", null).build(), hint));
+    expect(equalNull.records.map((record) => record.key.id)).toEqual(["null"]);
+    const sorted = await db.query(withIndexedDbQueryHints(numbers.query().orderBy("amount").build(), hint));
+    expect(sorted.records.map((record) => record.key.id)).toEqual(["null", "half", "one", "two"]);
+    await db.close();
   });
 
   it("queries collection groups and uses full paths for document ids", async () => {
