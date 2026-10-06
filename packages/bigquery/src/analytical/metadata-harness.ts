@@ -89,17 +89,27 @@ export class MetadataFixtureHarness {
     this.#binding = cloneFrozen({ consent, read: i.read, expiresAt: i.expiresAt });
   }
   public async discover(options: MetadataOptions = {}): Promise<PublicMetadataObservation> {
+    exactKeys(options, [], ["signal", "deadline"]);
+    // Read caller accessors once, before asynchronous work. The client receives
+    // a plain snapshot; delivery never rereads mutable caller options.
+    const signal = options.signal;
+    const requestedDeadline = options.deadline;
+    const operationOptions: MetadataOptions = { ...(signal === undefined ? {} : { signal }), ...(requestedDeadline === undefined ? {} : { deadline: requestedDeadline }) };
     const source = this.#source;
     if (!source || !this.#current(source)) fail("approval_required");
     const revision = this.#revision;
-    const deadline = Math.min(this.#clock.now() + this.#wallMs, options.deadline ?? Number.MAX_SAFE_INTEGER);
-    const discovery = await this.#client.discover(source.sourceId, options);
+    const deadline = Math.min(this.#clock.now() + this.#wallMs, requestedDeadline ?? Number.MAX_SAFE_INTEGER);
+    const discovery = await this.#client.discover(source.sourceId, operationOptions);
     const result = await projectFixtureMetadata(discovery);
-    // Hashing is asynchronous; repeat joint-current and deadline guards after it.
+    // Hashing is asynchronous. Read every externally supplied callback/accessor
+    // before the final protected guard, including an AbortSignal subclass getter.
+    const now = this.#clock.now();
+    const aborted = signal?.aborted;
     const binding = this.#current(source);
+    if (binding && binding.expiresAt <= now) fail("auth_expired");
+    if (aborted || now >= deadline) fail("local_stopped");
+    // No consumer callback or caller property access may follow this guard.
     if (revision !== this.#revision || !binding || !same(binding.consent, discovery.consent)) fail("approval_changed");
-    if (binding.expiresAt <= this.#clock.now()) fail("auth_expired");
-    if (options.signal?.aborted || this.#clock.now() >= deadline) fail("local_stopped");
     return result;
   }
 }

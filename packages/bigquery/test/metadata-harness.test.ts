@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MetadataFixtureHarness, googleAuthorizationScopes, type PublicMetadataObservation, type SafeFetch } from "../src/analytical.js";
 const goldenBytes = readFileSync(new URL("../testdata/bigquery-public-observation.json", import.meta.url));
 const golden = JSON.parse(goldenBytes.toString()) as PublicMetadataObservation;
 const source = { sourceId: golden.source_id, sourceProject: golden.source_project, datasetId: golden.dataset_id, tableId: golden.table_id };
 const token = { access_token: "fixture-token", token_type: "Bearer", expires_in: 3600, scope: googleAuthorizationScopes() };
-function fixture(options: { identity?: () => void; cleanup?: () => void; metadata?: (call: number, init: RequestInit) => void; status?: number; table?: unknown; limits?: { responseBytes?: number; wallMs?: number } } = {}) {
+function fixture(options: { identity?: () => void; now?: () => void; cleanup?: () => void; metadata?: (call: number, init: RequestInit) => void; status?: number; table?: unknown; limits?: { responseBytes?: number; wallMs?: number } } = {}) {
   let now = Date.parse(golden.observed_at); let calls = 0;
   const requests: string[] = [];
   const identityFetch: SafeFetch = async url => {
@@ -27,7 +27,7 @@ function fixture(options: { identity?: () => void; cleanup?: () => void; metadat
         clustering: { fields: ["secret"] }, numRows: "100", description: "private table",
       };
       return new Response(JSON.stringify(body), { status: options.status ?? 200 });
-    }, clock: { now: () => now, sleep: async (ms, signal) => { now += ms; signal?.addEventListener("abort", () => options.cleanup?.(), { once: true }); } }, ...(options.limits ? { limits: options.limits } : {}),
+    }, clock: { now: () => { options.now?.(); return now; }, sleep: async (ms, signal) => { now += ms; signal?.addEventListener("abort", () => options.cleanup?.(), { once: true }); } }, ...(options.limits ? { limits: options.limits } : {}),
   });
   const ready = async () => { harness.setOwner("private-owner"); harness.select(source.sourceId, "private-job-project"); await harness.connect(token); harness.consentToMetadata(); };
   return { harness, ready, requests, advance: (ms: number) => { now += ms; } };
@@ -71,6 +71,36 @@ describe("protected fixture metadata consumer", () => {
     const expired = fixture(); await expired.ready(); expired.advance(3600001); await expect(expired.harness.discover()).rejects.toThrow("auth_expired"); expect(expired.requests).toHaveLength(0);
     const cleanup = fixture({ cleanup: () => cleanup.harness.denyMetadataConsent() });
     await cleanup.ready(); await expect(cleanup.harness.discover()).rejects.toThrow("approval_changed"); expect(cleanup.requests).toHaveLength(3);
+  });
+  it.each(["clock", "signal accessor"])("[fix r1] rejects post-hash %s revocation at final delivery", async boundary => {
+    let armed = false;
+    const f = fixture({ now: () => { if (armed && boundary === "clock") f.harness.denyMetadataConsent(); } });
+    await f.ready();
+    const controller = new AbortController();
+    Object.defineProperty(controller.signal, "aborted", { get: () => { if (armed && boundary === "signal accessor") f.harness.denyMetadataConsent(); return false; } });
+    const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+    const spy = vi.spyOn(globalThis.crypto.subtle, "digest").mockImplementation(async (...args) => {
+      const result = await digest(...args); armed = true; return result;
+    });
+    try {
+      await expect(f.harness.discover({ signal: controller.signal })).rejects.toThrow("approval_changed");
+      await expect(f.harness.discover()).rejects.toThrow("approval_required");
+      expect(f.requests).toHaveLength(2);
+    } finally { spy.mockRestore(); }
+  });
+  it("[fix r1] snapshots caller options before await and never executes post-hash options accessors", async () => {
+    let armed = false; let reads = 0;
+    const f = fixture(); await f.ready();
+    const controller = new AbortController();
+    const options = { get signal() { reads += 1; if (armed) f.harness.denyMetadataConsent(); return controller.signal; } };
+    const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+    const spy = vi.spyOn(globalThis.crypto.subtle, "digest").mockImplementation(async (...args) => {
+      const result = await digest(...args); armed = true; return result;
+    });
+    try {
+      expect(await f.harness.discover(options)).toEqual(golden);
+      expect(reads).toBe(1); // The revoking accessor never executes after hashing.
+    } finally { spy.mockRestore(); }
   });
   it.each([401,403,404,302])("fails closed on HTTP %i", async status => { const f = fixture({ status }); await f.ready(); await expect(f.harness.discover()).rejects.toThrow(); expect(f.requests).toHaveLength(1); });
   it("enforces response and original deadline bounds", async () => {
