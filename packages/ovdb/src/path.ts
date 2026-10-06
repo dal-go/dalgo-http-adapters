@@ -1,4 +1,4 @@
-import { Key } from "@dal-go/dalgo";
+import { Key } from "@dalgo/core";
 
 const escapedIdCharacters: Readonly<Record<string, string>> = {
   "%2E": ".",

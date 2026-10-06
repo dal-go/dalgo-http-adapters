@@ -1,10 +1,14 @@
 import {
   DOCUMENT_ID,
   UnsupportedError,
+  snapshotQueryMetadata,
+  validateProviderReads,
+  type ProviderReadPlan,
+  type QueryMetadata,
   type QueryPage,
   type StructuredQuery,
-} from "@dal-go/dalgo";
-import { OpenVaultDbClient, translateOpenVaultDbError } from "./client.js";
+} from "@dalgo/core";
+import { OpenVaultDbClient, readOpenVaultDbJson, translateOpenVaultDbError } from "./client.js";
 import { keyFromOpenVaultDbPath } from "./path.js";
 
 interface WireFilter {
@@ -26,11 +30,54 @@ interface WireQuery {
   readonly limit?: number;
 }
 
-interface WireQueryResponse {
+interface WireQueryResponse extends QueryMetadata {
   readonly records: readonly {
     readonly key: string;
     readonly data: unknown;
   }[];
+}
+
+export interface OpenVaultDbQueryOptions {
+  /** Independently admitted execution/definition/rights; never derived from the response. */
+  readonly providerReadPlan: ProviderReadPlan;
+}
+
+function queryResponse(value: unknown): WireQueryResponse {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("invalid OpenVaultDB query response");
+  }
+  const body = value as Record<string, unknown>;
+  if (!Array.isArray(body.records)) throw new TypeError("OpenVaultDB records must be an array");
+  for (const record of body.records as unknown[]) {
+    if (typeof record !== "object" || record === null || Array.isArray(record)
+      || typeof (record as Record<string, unknown>).key !== "string"
+      || !Object.hasOwn(record, "data")) {
+      throw new TypeError("invalid OpenVaultDB query record");
+    }
+  }
+  return body as unknown as WireQueryResponse;
+}
+
+function admittedPlan<T>(
+  client: OpenVaultDbClient, query: StructuredQuery<T>, options?: OpenVaultDbQueryOptions,
+): ProviderReadPlan | undefined {
+  const plan = options === undefined ? undefined : structuredClone(options.providerReadPlan);
+  if (options !== undefined && plan === undefined) throw new TypeError("provider read plan is required");
+  if (plan === undefined) return undefined;
+  if (client.expectedServerId === undefined || client.expectedServerId.trim() === "") {
+    throw new TypeError("provider reads require expectedServerId");
+  }
+  if (plan.execution.mode !== "proxy" || plan.sourceRights.length === 0) {
+    throw new TypeError("OpenVaultDB provider reads require a proxy source plan");
+  }
+  for (const right of plan.sourceRights) {
+    if (right.source.serverId !== client.expectedServerId
+      || right.source.databaseId !== client.databaseId
+      || right.source.recordset !== query.source.name) {
+      throw new TypeError("provider read plan does not match the queried source");
+    }
+  }
+  return plan;
 }
 
 export function toOpenVaultDbQuery<T>(query: StructuredQuery<T>): WireQuery {
@@ -63,16 +110,32 @@ export function toOpenVaultDbQuery<T>(query: StructuredQuery<T>): WireQuery {
 export async function executeOpenVaultDbQuery<T>(
   client: OpenVaultDbClient,
   query: StructuredQuery<T>,
+  options?: OpenVaultDbQueryOptions,
 ): Promise<QueryPage<T>> {
   try {
+    // Freeze both request and independently admitted metadata before the first await.
+    const bodyText = JSON.stringify(toOpenVaultDbQuery(query));
+    const plan = admittedPlan(client, query, options);
+    const codec = query.source.codec;
     const response = await client.request(client.queryPath(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(toOpenVaultDbQuery(query)),
+      body: bodyText,
     });
-    const body = await response.json() as WireQueryResponse;
-    const codec = query.source.codec;
+    if (plan !== undefined && !response.headers.get("Cache-Control")?.split(",")
+      .some((directive) => directive.trim().toLowerCase() === "no-store")) {
+      await response.body?.cancel();
+      throw new TypeError("provider read response requires Cache-Control no-store");
+    }
+    const body = queryResponse(await readOpenVaultDbJson(response));
+    if (body.providerReads !== undefined && plan === undefined) {
+      throw new TypeError("provider reads require an independently admitted plan");
+    }
+    const metadata = plan === undefined
+      ? snapshotQueryMetadata(body)
+      : await validateProviderReads(body, plan);
     return {
+      ...metadata,
       records: body.records.map((record) => ({
         key: keyFromOpenVaultDbPath(record.key),
         exists: true as const,

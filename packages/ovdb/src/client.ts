@@ -1,10 +1,36 @@
-import { AlreadyExistsError, NotFoundError, UnsupportedError, type Key } from "@dal-go/dalgo";
+import { AlreadyExistsError, NotFoundError, UnsupportedError, type Key } from "@dalgo/core";
 
 export type AccessTokenProvider = () => string | undefined | Promise<string | undefined>;
+
+/** Ordinary bounded response processing; no response or row replay store. */
+export async function readOpenVaultDbJson(response: Response): Promise<unknown> {
+  const maxBytes = 2 * 1024 * 1024;
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new TypeError("OpenVaultDB response body is required");
+  const body = new Uint8Array(maxBytes);
+  let bytes = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel();
+        throw new TypeError("OpenVaultDB response exceeds 2 MiB");
+      }
+      body.set(chunk.value, bytes - chunk.value.byteLength);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.subarray(0, bytes))) as unknown;
+}
 
 export interface OpenVaultDbClientOptions {
   readonly baseUrl: string;
   readonly databaseId: string;
+  /** Independently configured gateway identity, required for live evidence. */
+  readonly expectedServerId?: string;
   readonly accessToken?: string;
   readonly getAccessToken?: AccessTokenProvider;
   readonly fetch?: typeof globalThis.fetch;
@@ -66,6 +92,8 @@ export function translateOpenVaultDbError(error: unknown, key?: Key): unknown {
 }
 
 export class OpenVaultDbClient {
+  public readonly databaseId: string;
+  public readonly expectedServerId: string | undefined;
   readonly #baseUrl: string;
   readonly #databaseId: string;
   readonly #fetch: typeof globalThis.fetch;
@@ -77,6 +105,8 @@ export class OpenVaultDbClient {
     if (options.accessToken !== undefined && options.getAccessToken !== undefined) {
       throw new TypeError("provide either accessToken or getAccessToken, not both");
     }
+    this.databaseId = options.databaseId;
+    this.expectedServerId = options.expectedServerId;
     this.#baseUrl = normalizeBaseUrl(options.baseUrl);
     this.#databaseId = encodeURIComponent(options.databaseId);
     this.#fetch = options.fetch ?? globalThis.fetch;
@@ -106,6 +136,8 @@ export class OpenVaultDbClient {
       ...init,
       headers,
       redirect: "error",
+      cache: "no-store",
+      credentials: "omit",
     });
     if (!response.ok) throw await responseError(response);
     return response;
