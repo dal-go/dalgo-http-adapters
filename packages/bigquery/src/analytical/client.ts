@@ -355,6 +355,14 @@ export class BigQueryAnalyticalClient {
     const rawRows = Object.hasOwn(response, "rows") ? response.rows : [];
     if (!Array.isArray(rawRows))
       fail("malformed_wire");
+    const totalRows = Object.hasOwn(response, "totalRows") ? integerText(response.totalRows) : record.totalRows;
+    const pageStart = record.receipt.counters.rows - (refetch ? record.offset : 0);
+    if (pageStart < 0)
+      fail("cursor_invalid");
+    if (pageStart + rawRows.length > record.preview.plan.limit ||
+        totalRows !== undefined && (BigInt(totalRows) > BigInt(record.preview.plan.limit) || BigInt(pageStart + rawRows.length) > BigInt(totalRows) ||
+          record.totalRows !== undefined && totalRows !== record.totalRows))
+      fail("malformed_wire");
     if (schema.length === 0) {
       if (rawRows.length > 0 || response.jobComplete)
         fail("malformed_wire");
@@ -374,6 +382,10 @@ export class BigQueryAnalyticalClient {
         fail("malformed_wire");
       next = response.pageToken;
     }
+    if (next !== null && (pageStart + rows.length >= record.preview.plan.limit || totalRows !== undefined && BigInt(pageStart + rows.length) >= BigInt(totalRows)))
+      fail("malformed_wire");
+    if (response.jobComplete && next === null && totalRows !== undefined && BigInt(pageStart + rows.length) !== BigInt(totalRows))
+      fail("malformed_wire");
     if (refetch && (pageDigest !== record.pageDigest || next !== record.nextToken || response.jobComplete !== record.pageDone))
       fail("cursor_invalid");
     const schemaDigest = await sha(canonicalJSON(encoded(schema)));
@@ -395,6 +407,8 @@ export class BigQueryAnalyticalClient {
         r.pageDone = response.jobComplete as boolean;
       }
       r.schema = schema;
+      if (totalRows !== undefined)
+        r.totalRows = totalRows;
       r.receipt = {
         ...r.receipt, schemaDigest, warnings: [...r.receipt.warnings, ...warnings(response.errors)], ...(processed === undefined ? {} : {
           processedBytes: processed
@@ -416,7 +430,7 @@ export class BigQueryAnalyticalClient {
   }
   async #fetchPage(session: Session, token: string | null, refetch: boolean, options: OperationOptions): Promise<void> {
     const record = await this.#load(session.id);
-    if (record.receipt.counters.rows >= record.receipt.bounds.maxRows || record.receipt.counters.pages >= record.receipt.bounds.maxPages)
+    if (record.receipt.counters.rows >= Math.min(record.preview.plan.limit, record.receipt.bounds.maxRows) || record.receipt.counters.pages >= record.receipt.bounds.maxPages)
       fail("response_limit");
     await this.#reauthorize(record.preview, options.signal, Math.min(Date.parse(record.receipt.executionDeadline), this.#clock.now() + record.receipt.bounds.httpMs, options.callerDeadline ?? Number.MAX_SAFE_INTEGER));
     const job = record.receipt.job;
@@ -469,7 +483,7 @@ export class BigQueryAnalyticalClient {
               }
               return null;
             }
-            if (record.receipt.counters.rows >= record.receipt.bounds.maxRows || record.receipt.counters.pages >= record.receipt.bounds.maxPages)
+            if (record.receipt.counters.rows >= Math.min(record.preview.plan.limit, record.receipt.bounds.maxRows) || record.receipt.counters.pages >= record.receipt.bounds.maxPages)
               fail("response_limit");
             await this.#fetchPage(session, session.loaded ? record.nextToken : record.pageToken, false, safeOptions);
             if (!session.loaded) {
@@ -478,7 +492,7 @@ export class BigQueryAnalyticalClient {
           }
           const record = await this.#load(session.id);
           let amount = mode === "row" ? 1 : session.rows.length - session.index;
-          amount = Math.min(amount, record.receipt.bounds.maxRows - record.receipt.counters.rows);
+          amount = Math.min(amount, Math.min(record.preview.plan.limit, record.receipt.bounds.maxRows) - record.receipt.counters.rows);
           if (amount < 1)
             fail("response_limit");
           const rows = cloneFrozen(session.rows.slice(session.index, session.index + amount));
@@ -505,6 +519,8 @@ export class BigQueryAnalyticalClient {
   async #delivery(session: Session, amount: number): Promise<string> {
     const offset = session.index + amount;
     const cursor = await this.#mutate(session.id, r => {
+      if (r.receipt.counters.rows + amount > Math.min(r.preview.plan.limit, r.receipt.bounds.maxRows))
+        fail("response_limit");
       r.offset = offset;
       r.receipt = {
         ...r.receipt, localStopped: false, counters: {

@@ -254,6 +254,109 @@ describe("bounded analytical production execution", () => {
     await expect(client.execute(approval)).rejects.toThrow("source_ineligible");
     expect(f.calls.filter(call => call.init.method === "POST" && JSON.parse(call.init.body as string).dryRun === false)).toHaveLength(0);
   });
+  it.each([true, false])("rejects conflicting partition filters before preview and submit: deprecated=%s", async deprecated => {
+    const conflicting = { ...table, timePartitioning: { type: "DAY", requirePartitionFilter: deprecated }, requirePartitionFilter: !deprecated };
+    const first = fixture([{ body: dataset }, { body: conflicting }]);
+    await expect((await first.create()).preview(execution)).rejects.toThrow("source_ineligible");
+    expect(first.calls.every(call => call.init.method === "GET")).toBe(true);
+
+    const beforeSubmit = fixture([]);
+    beforeSubmit.steps.push(...beforeSubmit.previewSteps, ...beforeSubmit.previewSteps, { body: dataset }, { body: conflicting });
+    const client = await beforeSubmit.create();
+    const preview = await client.preview(execution);
+    await expect(client.execute(await client.approve(preview, preview.approvalDigest))).rejects.toThrow("source_ineligible");
+    expect(beforeSubmit.calls.filter(call => call.init.method === "POST" && JSON.parse(call.init.body as string).dryRun === false)).toHaveLength(0);
+  });
+  it.each([true, false])("binds matching current and deprecated partition filters: %s", async required => {
+    const configured = { ...table, timePartitioning: { type: "DAY", requirePartitionFilter: required }, requirePartitionFilter: required };
+    const f = fixture([{ body: dataset }, { body: configured }, { body: { totalBytesProcessed: "100" } }]);
+    const preview = await (await f.create()).preview(execution);
+    expect(preview.observation.config).toEqual({ timePartitioning: { type: "DAY", requirePartitionFilter: required }, requirePartitionFilter: required });
+  });
+  it("refuses an initial result page exceeding approved LIMIT while retaining the known job and reservation", async () => {
+    const f = fixture([]);
+    f.query({ ...query, limit: 1 });
+    f.steps.push(...f.previewSteps, ...f.executionSteps, { body: complete(["1", "2"]) });
+    const client = await f.create();
+    const preview = await client.preview(execution, f.limits);
+    await expect(client.execute(await client.approve(preview, preview.approvalDigest))).rejects.toThrow("malformed_wire");
+    const record = await f.ledger.update(state => Object.values(state.runs)[0]);
+    expect(record?.receipt.job).toEqual(job);
+    expect(record?.receipt.counters.rows).toBe(0);
+    expect(record?.reservation).toBe("1000");
+  });
+  it("refuses split-page LIMIT contradictions without delivering extra rows or releasing the reservation", async () => {
+    const f = fixture([]);
+    f.query({ ...query, limit: 2 });
+    const { run } = await start(f, { body: complete(["1"], "p2") });
+    expect((await run.nextPage())?.rows).toHaveLength(1);
+    f.steps.push({ body: { jobComplete: true, rows: rows("2", "3") } });
+    await expect(run.nextPage()).rejects.toThrow("malformed_wire");
+    expect((await run.receipt()).counters.rows).toBe(1);
+    expect((await f.ledger.update(state => Object.values(state.runs)[0]))?.reservation).toBe("1000");
+  });
+  it("retains the LIMIT and consumed offset across partial-page Resume", async () => {
+    const f = fixture([], { pageSize: 3 });
+    f.query({ ...query, limit: 2 });
+    const { client, run } = await start(f, { body: { ...(complete(["1", "2"]) as object), totalRows: "2" } });
+    const first = await run.nextRow() as Page;
+    await run.close();
+    f.steps.push({ body: { ...(complete(["1", "2"]) as object), totalRows: "2" } });
+    const resumed = await client.resume(first.receipt, first.cursor as string);
+    const last = await resumed.nextRow();
+    expect(last?.rows[0]?.[0]?.value).toBe("2");
+    expect(last?.receipt.counters.rows).toBe(2);
+    const count = f.calls.length;
+    expect(await resumed.nextRow()).toBeNull();
+    expect(f.calls).toHaveLength(count);
+    expect((await f.ledger.update(state => Object.values(state.runs)[0]))?.reservation).toBe("1000");
+  });
+  it("rejects an oversized partial-page refetch before it can deliver beyond LIMIT", async () => {
+    const f = fixture([], { pageSize: 3 });
+    f.query({ ...query, limit: 2 });
+    const { client, run } = await start(f, { body: complete(["1", "2"]) });
+    const first = await run.nextRow() as Page;
+    await run.close();
+    f.steps.push({ body: complete(["1", "2", "3"]) });
+    await expect(client.resume(first.receipt, first.cursor as string)).rejects.toThrow("malformed_wire");
+    expect((await run.receipt()).counters.rows).toBe(1);
+    expect((await f.ledger.update(state => Object.values(state.runs)[0]))?.reservation).toBe("1000");
+  });
+  it.each(["3", "0", 2, "2.0"])("rejects malformed or contradictory totalRows: %s", async totalRows => {
+    const f = fixture([]);
+    f.query({ ...query, limit: 2 });
+    f.steps.push(...f.previewSteps, ...f.executionSteps, { body: { ...(complete(["1"]) as object), totalRows } });
+    const client = await f.create();
+    const preview = await client.preview(execution, f.limits);
+    await expect(client.execute(await client.approve(preview, preview.approvalDigest))).rejects.toThrow("malformed_wire");
+    expect((await f.ledger.update(state => Object.values(state.runs)[0]))?.receipt.counters.rows).toBe(0);
+  });
+  it("rejects changed totalRows on later pages of the same job", async () => {
+    const f = fixture([]);
+    const { run } = await start(f, { body: { ...(complete(["1"], "p2") as object), totalRows: "3" } });
+    await run.nextPage();
+    f.steps.push({ body: { jobComplete: true, rows: rows("2"), totalRows: "2" } });
+    await expect(run.nextPage()).rejects.toThrow("malformed_wire");
+    expect((await run.receipt()).counters.rows).toBe(1);
+  });
+  it("rejects terminal totalRows contradicting missing continuation", async () => {
+    const f = fixture([]);
+    f.steps.push(...f.previewSteps, ...f.executionSteps, { body: { ...(complete(["1"]) as object), totalRows: "2" } });
+    const client = await f.create();
+    const preview = await client.preview(execution, f.limits);
+    await expect(client.execute(await client.approve(preview, preview.approvalDigest))).rejects.toThrow("malformed_wire");
+    expect((await f.ledger.update(state => Object.values(state.runs)[0]))?.receipt.counters.rows).toBe(0);
+  });
+  it("caps delivery to the stricter maxRows even when the approved LIMIT is higher", async () => {
+    const f = fixture([], { maxRows: 1 });
+    f.query({ ...query, limit: 2 });
+    const { run } = await start(f, { body: complete(["1", "2"]) });
+    expect((await run.nextPage())?.rows).toHaveLength(1);
+    const count = f.calls.length;
+    await expect(run.nextPage()).rejects.toThrow("response_limit");
+    expect((await run.receipt()).counters.rows).toBe(1);
+    expect(f.calls).toHaveLength(count);
+  });
   it.each([{
       transportError: true
     }, {

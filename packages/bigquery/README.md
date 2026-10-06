@@ -137,6 +137,21 @@ uses ECMAScript NumberToString, and SQL NULL remains distinct from JSON text
 `"null"`. TIMESTAMP uses signed epoch microseconds in this foundation contract.
 Cells are limited to 1 MiB and decoded pages to 1,000 rows and 128 fields.
 
+Canonical TIMESTAMP values remain signed epoch microseconds. REST scalar and
+IN-array parameters convert at serialization to exact UTC calendar text with all
+six fractional digits using integer arithmetic. Negative instants and the full
+year 0001–9999 range preserve precision. Synthetic request vectors live at
+`packages/bigquery/testdata/requests/timestamp-parameters-r1.json`; the Go serializer
+must consume and verify these vectors before cross-runtime request parity is
+claimed. This additive request fixture is separate from the frozen Go scalar
+corpus below and does not close the shared raw HTTP/state acceptance gate.
+
+Metadata refuses conflicting current/deprecated partition-filter flags. Result
+delivery uses the stricter approved query LIMIT and row bound, and rejects
+contradictory row counts, `totalRows` and continuation metadata. Partial-page
+Resume counts only undelivered rows and preserves reservations on validation
+failure; no response contradiction can authorize additional delivery or a rerun.
+
 `canonicalJSON` emits RFC8785 bytes for adapter-owned payloads whose JSON
 number tokens are exact safe integers. `hashPayload` uses browser Web Crypto
 and the explicit `ReadPlan`, `SourceProfile`, `Observation` and `Approval`

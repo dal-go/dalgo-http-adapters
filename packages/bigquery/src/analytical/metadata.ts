@@ -117,6 +117,8 @@ export async function validateTable(raw: JsonValue, source: SourceProfile, now: 
           integerText(settings.expirationMs);
         if (Object.hasOwn(settings, "requirePartitionFilter") && typeof settings.requirePartitionFilter !== "boolean")
           fail("source_ineligible");
+        if (Object.hasOwn(settings, "requirePartitionFilter") && Object.hasOwn(value, "requirePartitionFilter") && settings.requirePartitionFilter !== value.requirePartitionFilter)
+          fail("source_ineligible");
       }
       else {
         exactKeys(settings, ["field", "range"], [], "source_ineligible");

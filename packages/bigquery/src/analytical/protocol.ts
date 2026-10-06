@@ -375,10 +375,38 @@ export function wireParameters(parameters: readonly Parameter[]): readonly unkno
       type: parameter.type
     }, parameterValue: Array.isArray(parameter.value) ? {
       arrayValues: parameter.value.map(value => ({
-        value: typeof value === "boolean" ? String(value) : value
+        value: wireParameterValue(parameter.type.slice(6, -1), value)
       }))
     } : {
-      value: typeof parameter.value === "boolean" ? String(parameter.value) : parameter.value
+      value: wireParameterValue(parameter.type, parameter.value)
     }
   }));
+}
+
+/** Keep canonical epoch microseconds in plans/cells; REST TIMESTAMP parameters
+ * require UTC calendar text. All calendar arithmetic is exact BigInt, including
+ * negative fractional instants. No JS Date or floating-point timestamp conversion.
+ */
+function wireParameterValue(type: string, value: Parameter["value"]): string | null {
+  if (value === null) return null;
+  if (type !== "TIMESTAMP") return typeof value === "boolean" ? String(value) : value as string;
+  const micros = BigInt(normalizeScalar({ type: "TIMESTAMP" }, value).value as string);
+  const floorDivide = (a: bigint, b: bigint): bigint => a / b - (a % b < 0n ? 1n : 0n);
+  const seconds = floorDivide(micros, 1000000n);
+  const fraction = micros - seconds * 1000000n;
+  const days = floorDivide(seconds, 86400n);
+  const clockSeconds = seconds - days * 86400n;
+  // Gregorian civil date from days since 1970-01-01; March-based 400-year eras.
+  const shifted = days + 719468n;
+  const era = floorDivide(shifted, 146097n);
+  const dayOfEra = shifted - era * 146097n;
+  const yearOfEra = (dayOfEra - dayOfEra / 1460n + dayOfEra / 36524n - dayOfEra / 146096n) / 365n;
+  let year = yearOfEra + era * 400n;
+  const dayOfYear = dayOfEra - (365n * yearOfEra + yearOfEra / 4n - yearOfEra / 100n);
+  const monthOfYear = (5n * dayOfYear + 2n) / 153n;
+  const day = dayOfYear - (153n * monthOfYear + 2n) / 5n + 1n;
+  const month = monthOfYear + (monthOfYear < 10n ? 3n : -9n);
+  if (month <= 2n) year += 1n;
+  const pad = (part: bigint, width = 2): string => part.toString().padStart(width, "0");
+  return `${pad(year, 4)}-${pad(month)}-${pad(day)} ${pad(clockSeconds / 3600n)}:${pad(clockSeconds % 3600n / 60n)}:${pad(clockSeconds % 60n)}.${pad(fraction, 6)} UTC`;
 }

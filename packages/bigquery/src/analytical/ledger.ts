@@ -39,6 +39,7 @@ export interface RunRecord {
   pageOrdinal: number;
   pageDone: boolean;
   schema: readonly SchemaField[];
+  totalRows?: string;
   seenTokens: string[];
   cursor: CursorState | null;
 }
