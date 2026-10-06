@@ -20,11 +20,20 @@ export interface MetadataConsent {
   readonly principal: Principal;
   readonly selectedJobProject: string;
 }
+/** One synchronous snapshot of current protected owner consent and verified
+ * Google identity. Invalidate it before sign-out/account/token changes begin.
+ * Never construct this from caller JSON, cached consent or an unverified token. */
+export interface MetadataCurrentBinding {
+  readonly consent: MetadataConsent;
+  readonly read: boolean;
+  readonly expiresAt: number;
+}
 export type MetadataLimits = Pick<Bounds, "responseBytes" | "totalResponseBytes" | "wallMs" | "httpMs">;
 export interface MetadataClientConfig {
   readonly sources: readonly MetadataSource[];
   readonly provider: IdentityProvider;
   readonly authorizeMetadata: (source: MetadataSource, signal: AbortSignal) => Promise<MetadataConsent>;
+  readonly currentMetadataBinding: (source: MetadataSource) => MetadataCurrentBinding | undefined;
   readonly limits?: Partial<MetadataLimits>;
   readonly fetch?: SafeFetch;
   readonly clock?: Clock;
@@ -85,7 +94,7 @@ function nativeSchema(value: JsonValue | undefined): void {
       wireText(field.type, 64);
       if (!/^[A-Z][A-Z0-9_]*$/u.test(field.type) || names.has(field.name)) fail("malformed_wire");
       names.add(field.name);
-      if (field.mode !== undefined && !["NULLABLE", "REQUIRED", "REPEATED"].includes(String(field.mode))) fail("malformed_wire");
+      if (field.mode !== undefined && (typeof field.mode !== "string" || !["NULLABLE", "REQUIRED", "REPEATED"].includes(field.mode))) fail("malformed_wire");
       if ((field.type === "RECORD" || field.type === "STRUCT") !== Object.hasOwn(field, "fields")) fail("malformed_wire");
       if (field.fields !== undefined) fields(field.fields, depth + 1);
     }
@@ -121,18 +130,20 @@ function projection(raw: JsonValue, expected: MetadataSource, table: boolean): R
 export class BigQueryMetadataClient {
   readonly #sources: ReadonlyMap<string, MetadataSource>;
   readonly #authorize: MetadataClientConfig["authorizeMetadata"];
+  readonly #current: MetadataClientConfig["currentMetadataBinding"];
   readonly #transport: Transport;
   readonly #clock: Clock;
   readonly #bounds: Bounds;
   #active = false;
   public constructor(config: MetadataClientConfig) {
-    exactKeys(config, ["sources", "provider", "authorizeMetadata"], ["limits", "fetch", "clock"]);
-    if (!Array.isArray(config.sources) || config.sources.length < 1 || config.sources.length > 128 || typeof config.authorizeMetadata !== "function") fail("invalid_input");
+    exactKeys(config, ["sources", "provider", "authorizeMetadata", "currentMetadataBinding"], ["limits", "fetch", "clock"]);
+    if (!Array.isArray(config.sources) || config.sources.length < 1 || config.sources.length > 128 || typeof config.authorizeMetadata !== "function" || typeof config.currentMetadataBinding !== "function") fail("invalid_input");
     const sources = cloneFrozen(config.sources);
     sources.forEach(source);
     if (new Set(sources.map(value => value.sourceId)).size !== sources.length) fail("invalid_input");
     this.#sources = new Map(sources.map(value => [value.sourceId, value]));
     this.#authorize = config.authorizeMetadata;
+    this.#current = config.currentMetadataBinding;
     exactKeys(config.limits ?? {}, [], ["responseBytes", "totalResponseBytes", "wallMs", "httpMs"]);
     this.#bounds = bounds({ responseBytes: 256 * 1024, totalResponseBytes: 1024 * 1024, wallMs: 30000, ...(config.limits ?? {}) });
     this.#clock = config.clock ?? realClock;
@@ -155,16 +166,39 @@ export class BigQueryMetadataClient {
     this.#active = true;
     signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(abort, deadline - now);
+    let result: MetadataDiscovery;
     try {
       // The overall abort race bounds preparation, retries and injected sleeps,
       // even if a trusted integration ignores its signal.
-      return await abortable(this.#discover(requested, deadline, controller.signal), controller.signal);
+      result = await abortable(this.#discover(requested, deadline, controller.signal), controller.signal);
     } finally {
       controller.abort();
       this.#active = false;
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
     }
+    // Public delivery follows all async work and cleanup (including abort
+    // listeners). No await or other consumer callback follows the joint guard.
+    if (signal?.aborted || this.#clock.now() >= deadline) fail("local_stopped");
+    this.#assertCurrent(result.consent);
+    return result;
+  }
+  #assertCurrent(prepared: MetadataConsent): void {
+    let current: MetadataCurrentBinding;
+    try {
+      const snapshot = this.#current(prepared.source);
+      if (snapshot === undefined) fail("approval_changed");
+      current = cloneFrozen(snapshot);
+      exactKeys(current, ["consent", "read", "expiresAt"]);
+      consent(current.consent, prepared.source);
+      if (!same(current.consent, prepared)) fail("approval_changed");
+    } catch {
+      // No consumer error text, credentials or malformed/asynchronous snapshot
+      // may escape the trusted joint-binding boundary.
+      fail("approval_changed");
+    }
+    if (current.read !== true) fail("scope_missing");
+    if (!Number.isSafeInteger(current.expiresAt) || current.expiresAt <= this.#clock.now()) fail("auth_expired");
   }
   async #attest(requested: MetadataSource, signal: AbortSignal): Promise<MetadataConsent> {
     if (signal.aborted) fail("local_stopped");
@@ -188,7 +222,7 @@ export class BigQueryMetadataClient {
   }
   async #discover(requested: MetadataSource, deadline: number, signal: AbortSignal): Promise<MetadataDiscovery> {
     const prepared = await this.#attest(requested, signal);
-    await this.#transport.verify(prepared.principal, deadline, signal);
+    await this.#transport.verify(prepared.principal, Math.min(deadline, this.#clock.now() + this.#bounds.httpMs), signal);
     let bytes = 0;
     const scope: OperationScope = {
       bounds: this.#bounds, principal: prepared.principal, executionDeadline: deadline, signal,
@@ -204,8 +238,11 @@ export class BigQueryMetadataClient {
     };
     try {
       const path = `projects/${requested.sourceProject}/datasets/${requested.datasetId}`;
-      const dataset = projection(await this.#transport.call(scope, "GET", path, { datasetView: "METADATA" }), requested, false);
-      const table = projection(await this.#transport.call(scope, "GET", `${path}/tables/${requested.tableId}`, { view: "STORAGE_STATS" }), requested, true);
+      // The existing synchronous dispatch hook runs after every async consent,
+      // identity and retry await, immediately before the physical fetch call.
+      const guard = (): void => this.#assertCurrent(prepared);
+      const dataset = projection(await this.#transport.call(scope, "GET", path, { datasetView: "METADATA" }, undefined, false, false, guard), requested, false);
+      const table = projection(await this.#transport.call(scope, "GET", `${path}/tables/${requested.tableId}`, { view: "STORAGE_STATS" }, undefined, false, false, guard), requested, true);
       if (table.location !== undefined && table.location !== dataset.location) fail("source_changed");
       if (!same(await this.#attest(requested, signal), prepared)) fail("approval_changed");
       await this.#transport.verify(prepared.principal, Math.min(deadline, this.#clock.now() + this.#bounds.httpMs), signal);

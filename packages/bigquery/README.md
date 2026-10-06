@@ -22,6 +22,7 @@ const metadata = new BigQueryMetadataClient({
   sources: reviewedMetadataLocators,
   provider: verifiedGoogleIdentity,
   authorizeMetadata: prepareCurrentOwnerMetadataConsent,
+  currentMetadataBinding: readCurrentJointMetadataBinding,
 });
 const observed = await metadata.discover(selectedAllowlistedSourceId, { signal });
 // Metadata evidence only. Do not activate the source or submit a query.
@@ -32,12 +33,27 @@ current application owner's explicit metadata consent, its stable consent ID,
 exact allowlisted source, verified Google principal including token generation,
 and selected future job project. This is trusted owner-scoped application state,
 not caller JSON or an OAuth token. Google consent and application-owner consent
-are separate requirements. Revoke consent on owner/account changes. The client
-rechecks that exact binding before each GET/retry and before returning evidence;
-it also re-verifies Google identity after consent preparation. A changed owner,
-consent, project, source or identity refuses dispatch/delivery. Workload identities
-are excluded from this browser slice. Use the existing GIS identity provider and
-user-triggered read-only consent described below; no silent refresh is added.
+are separate requirements. The mandatory synchronous
+`currentMetadataBinding(source)` callback returns one **current joint snapshot**
+`{ consent, read, expiresAt }`, or `undefined` when revoked. It must read protected
+current application-owner/consent/source/project state together with the current
+verified Google subject/generation/grant/expiry; cached preparation results, caller
+JSON and an async callback do not satisfy this contract. Invalidate this binding
+**before** owner/sign-out/consent/project/source/account/grant changes or token
+connect/disconnect/rotation begin; publish a new binding only after verification
+and explicit current-owner metadata consent. No token belongs in this snapshot.
+
+Async preparation/identity checks alone leave a race. The client compares the
+joint synchronous snapshot immediately at every physical GET/retry dispatch,
+after all async checks, and at public result delivery after async work and cleanup.
+No await separates the guard from these boundaries. Current read grant and expiry
+are checked too. Missing, malformed, asynchronous or changed bindings refuse
+requests/delivery with sanitized errors. Reordering separate async checks cannot
+substitute for this guard. Workload identities are excluded from this browser
+slice. Use the existing GIS identity provider and user-triggered read-only consent
+described below; no silent refresh is added. Actual consumer implementation of
+this protected joint state is a required integration/review gate, not provided by
+this metadata-only package.
 
 The selected job project is recorded only as unverified future context; it is
 never substituted for the source project or sent as a quota/billing project.

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BigQueryMetadataClient, type MetadataClientConfig, type MetadataConsent, type MetadataSource, type TrustedIdentity } from "../src/analytical.js";
+import { BigQueryMetadataClient, type MetadataClientConfig, type MetadataConsent, type MetadataCurrentBinding, type MetadataSource, type TrustedIdentity } from "../src/analytical.js";
 const source: MetadataSource = { sourceId: "fabricated-metadata", sourceProject: "source-project", datasetId: "synthetic", tableId: "metadata" };
 const principal = { kind: "google-user" as const, subject: "verified-subject", generation: "generation-1" };
 const consent: MetadataConsent = { purpose: "metadata-only", ownerId: "app-owner", consentId: "metadata-consent-1", source, principal, selectedJobProject: "future-job-project" };
@@ -21,7 +21,7 @@ function fixture(overrides: Partial<MetadataClientConfig> = {}) {
   const authorize = vi.fn(async () => identity);
   const prepare = vi.fn(async () => consent);
   const fetcher = vi.fn(async (url: string, _init: RequestInit) => { void _init; return new Response(JSON.stringify(url.includes("/tables/") ? table : dataset)); });
-  const config: MetadataClientConfig = { sources: [source], provider: { authorize }, authorizeMetadata: prepare, fetch: fetcher, ...overrides };
+  const config: MetadataClientConfig = { sources: [source], provider: { authorize }, authorizeMetadata: prepare, currentMetadataBinding: () => ({ consent, read: identity.read, expiresAt: identity.expiresAt }), fetch: fetcher, ...overrides };
   return { client: new BigQueryMetadataClient(config), identity, config, authorize, prepare, fetcher };
 }
 describe("metadata-only browser discovery", () => {
@@ -113,6 +113,101 @@ describe("metadata-only browser discovery", () => {
     await expect(client.discover(source.sourceId)).rejects.toThrow("policy_denied");
     controller.abort(); await stopped;
     expect(fetcher).not.toHaveBeenCalled();
+  });
+  it.each([
+    { stage: "dataset", rotateAt: 3, expectedRequests: 0 },
+    { stage: "retry", rotateAt: 5, expectedRequests: 1 },
+    { stage: "table", rotateAt: 5, expectedRequests: 1 },
+    { stage: "delivery", rotateAt: 6, expectedRequests: 2 },
+  ])("joint guard refuses owner/consent/project changes during delayed identity at $stage", async ({ stage, rotateAt, expectedRequests }) => {
+    for (const key of ["ownerId", "consentId", "selectedJobProject"] as const) {
+      let current = { ...consent }; let authorizations = 0; let requests = 0;
+      const { client } = fixture({
+        authorizeMetadata: async () => current,
+        currentMetadataBinding: () => ({ consent: current, read: true, expiresAt: Date.now() + 60000 }),
+        provider: { authorize: async () => {
+          if (++authorizations === rotateAt) { await Promise.resolve(); current = { ...current, [key]: "changed-project" }; }
+          return { principal, accessToken: "ephemeral", expiresAt: Date.now() + 60000, read: true, cancel: false };
+        } },
+        fetch: async url => {
+          requests += 1;
+          if (stage === "retry" && requests === 1) return new Response("{}", { status: 503, headers: { "Retry-After": "0" } });
+          return new Response(JSON.stringify(url.includes("/tables/") ? table : dataset));
+        },
+      });
+      await expect(client.discover(source.sourceId)).rejects.toThrow("approval_changed");
+      expect(requests).toBe(expectedRequests);
+    }
+  });
+  it.each(["subject", "generation"] as const)("joint guard refuses Google %s changes during delayed consent, even with a previously loaded identity", async key => {
+    let preparedCalls = 0; let current = consent;
+    const { client, fetcher } = fixture({
+      authorizeMetadata: async () => {
+        const captured = current;
+        if (++preparedCalls === 2) { await Promise.resolve(); current = { ...current, principal: { ...principal, [key]: "changed-identity" } }; }
+        return captured;
+      },
+      currentMetadataBinding: () => ({ consent: current, read: true, expiresAt: Date.now() + 60000 }),
+    });
+    await expect(client.discover(source.sourceId)).rejects.toThrow("approval_changed");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it.each([
+    { read: false, expiresAt: Date.now() + 60000, expected: "scope_missing" },
+    { read: true, expiresAt: 0, expected: "auth_expired" },
+  ])("joint guard checks current read grant/expiry after the final identity await ($expected)", async change => {
+    let calls = 0; let current: MetadataCurrentBinding = { consent, read: true, expiresAt: Date.now() + 60000 };
+    const { client, fetcher } = fixture({
+      currentMetadataBinding: () => current,
+      provider: { authorize: async () => {
+        if (++calls === 3) { await Promise.resolve(); current = { consent, read: change.read, expiresAt: change.expiresAt }; }
+        return { principal, accessToken: "ephemeral", expiresAt: Date.now() + 60000, read: true, cancel: false };
+      } },
+    });
+    await expect(client.discover(source.sourceId)).rejects.toThrow(change.expected);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("requires a synchronous current binding and refuses revoked/asynchronous snapshots without token leakage", async () => {
+    const valid = fixture();
+    const { currentMetadataBinding: omitted, ...missing } = valid.config;
+    void omitted;
+    expect(() => new BigQueryMetadataClient(missing as MetadataClientConfig)).toThrow("invalid_input");
+    for (const current of [() => undefined, () => Promise.resolve({ consent, read: true, expiresAt: Date.now() + 60000 }), () => { throw new Error("secret-test-token"); }]) {
+      const { client, fetcher } = fixture({ currentMetadataBinding: current as MetadataClientConfig["currentMetadataBinding"] });
+      const error = await client.discover(source.sourceId).catch(error => error as Error);
+      expect(String(error)).toContain("approval_changed"); expect(String(error)).not.toContain("secret-test-token");
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  });
+  it("guards public delivery after operation cleanup invokes consumer abort listeners", async () => {
+    let current = consent; let requests = 0;
+    const { client } = fixture({
+      authorizeMetadata: async () => current,
+      currentMetadataBinding: () => ({ consent: current, read: true, expiresAt: Date.now() + 60000 }),
+      clock: { now: Date.now, sleep: async (ms, signal) => { void ms; signal?.addEventListener("abort", () => { current = { ...current, ownerId: "changed-owner" }; }, { once: true }); } },
+      fetch: async url => {
+        if (++requests === 1) return new Response("{}", { status: 503, headers: { "Retry-After": "0" } });
+        return new Response(JSON.stringify(url.includes("/tables/") ? table : dataset));
+      },
+    });
+    await expect(client.discover(source.sourceId)).rejects.toThrow("approval_changed");
+    expect(requests).toBe(3);
+  });
+  it("bounds the initial identity await by httpMs rather than the discovery wall deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, fetcher } = fixture({ limits: { httpMs: 20, wallMs: 200 }, provider: { authorize: () => new Promise(() => {}) } });
+      let settled = false;
+      const result = client.discover(source.sourceId).catch(error => { settled = true; return error as Error; });
+      await vi.advanceTimersByTimeAsync(19); expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1); expect(settled).toBe(true);
+      expect(String(await result)).toContain("local_stopped"); expect(fetcher).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it.each([["REPEATED"], ["REQUIRED"], ["NULLABLE"], { mode: "REPEATED" }, null])("refuses non-string native schema mode %j", async mode => {
+    const malformed = { ...table, schema: { fields: [{ name: "a", type: "STRING", mode }] } };
+    const { client } = fixture({ fetch: async url => new Response(JSON.stringify(url.includes("/tables/") ? malformed : dataset)) });
+    await expect(client.discover(source.sourceId)).rejects.toThrow("malformed_wire");
   });
   it.each(["consent", "identity", "fetch", "stream"])("bounds ignored abort in %s", async stage => {
     const never = <T>(): Promise<T> => new Promise(() => {});
