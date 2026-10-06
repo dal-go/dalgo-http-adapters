@@ -2,7 +2,7 @@ import {
   collection, providerEvidenceDigest, type ProviderReadPlan, type QueryMetadata, type SourceRight,
 } from "@dalgo/core";
 import { describe, expect, it, vi } from "vitest";
-import { OpenVaultDbClient, OpenVaultDbDatabase } from "../src/index.js";
+import { OpenVaultDbClient, OpenVaultDbDatabase, OpenVaultDbHttpError, createOpenVaultDbExecutionId } from "../src/index.js";
 
 // Fabricated declarations and observations only. No upstream response fixtures.
 async function fixture(): Promise<{ metadata: QueryMetadata; plan: ProviderReadPlan }> {
@@ -15,7 +15,7 @@ async function fixture(): Promise<{ metadata: QueryMetadata; plan: ProviderReadP
     evidenceOrigin: "publisher-definition-verified", pins: [], transformations: ["Synthetic XML to rows"],
     attribution: { text: "Synthetic provider" }, freeSource: { text: "Free original", url },
   };
-  const execution = { id: "synthetic-execution", mode: "proxy" as const, executorId: "gateway" };
+  const execution = { id: "0123456789abcdef0123456789abcdef", mode: "proxy" as const, executorId: "gateway" };
   const binding = {
     providerSourceId: "provider:synthetic/Quote", rightsSourceId: right.sourceId, resourceId: "daily",
     definitionDigest: hash, decoderDigest: hash,
@@ -60,6 +60,12 @@ function database(fetcher: typeof globalThis.fetch, expectedServerId: string | n
 const daily = collection<{ rate: string }>("daily");
 
 describe("OpenVaultDB provider reads transport", () => {
+  it("creates fresh 128-bit lowercase hex correlation IDs", () => {
+    const ids = Array.from({ length: 3 }, () => createOpenVaultDbExecutionId());
+    expect(ids.every((id) => /^[a-f0-9]{32}$/u.test(id))).toBe(true);
+    expect(new Set(ids).size).toBe(3);
+  });
+
   it("preserves exact detached evidence for empty and populated results", async () => {
     for (const records of [[], [{ key: "daily/synthetic", data: { rate: "001.23000" } }]]) {
       const { metadata, plan } = await fixture();
@@ -68,7 +74,7 @@ describe("OpenVaultDB provider reads transport", () => {
       expect(page).toMatchObject(metadata);
       expect(page.records.map((record) => record.data.rate)).toEqual(records.length === 0 ? [] : ["001.23000"]);
       Object.assign(plan.execution, { id: "later execution" });
-      expect(page.providerReads?.execution.id).toBe("synthetic-execution");
+      expect(page.providerReads?.execution.id).toBe("0123456789abcdef0123456789abcdef");
     }
   });
 
@@ -123,12 +129,33 @@ describe("OpenVaultDB provider reads transport", () => {
     }
   });
 
+  it("refuses an unrelated executor or invalid execution ID before credentials, network and codec", async () => {
+    const decode = vi.fn((value: unknown) => value);
+    const query = collection("daily", { codec: { encode: (value: unknown) => value, decode } }).query().build();
+    for (const invalid of [
+      { executorId: "different-server" },
+      ...["", "A".repeat(32), "a".repeat(31), "a".repeat(33), "x".repeat(32), "a\r\nheader"].map((id) => ({ id })),
+    ]) {
+      const { plan } = await fixture();
+      Object.assign(plan.execution, invalid);
+      const getAccessToken = vi.fn(() => "synthetic token");
+      const fetcher = vi.fn<typeof globalThis.fetch>();
+      const db = new OpenVaultDbDatabase({ baseUrl: "https://gateway.example", databaseId: "db", expectedServerId: "gateway", getAccessToken, fetch: fetcher });
+      await expect(db.query(query, { providerReadPlan: plan })).rejects.toThrow();
+      expect(getAccessToken).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+    expect(decode).not.toHaveBeenCalled();
+  });
+
   it("captures the plan and wire query before an asynchronous token provider", async () => {
     const { metadata, plan } = await fixture();
     let release: (() => void) | undefined;
     const wait = new Promise<void>((resolve) => { release = resolve; });
     const fetcher = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-      expect(await new Request(input, init).json()).toEqual({ collection: "daily", limit: 2 });
+      const request = new Request(input, init);
+      expect(request.headers.get("OVDB-Execution-ID")).toBe("0123456789abcdef0123456789abcdef");
+      expect(await request.json()).toEqual({ collection: "daily", limit: 2 });
       return response(metadata);
     });
     const db = new OpenVaultDbDatabase({
@@ -140,7 +167,7 @@ describe("OpenVaultDB provider reads transport", () => {
     Object.assign(plan.execution, { id: "racing mutation" });
     Object.assign(query, { limit: 100 });
     release?.();
-    expect((await pending).providerReads?.execution.id).toBe("synthetic-execution");
+    expect((await pending).providerReads?.execution.id).toBe("0123456789abcdef0123456789abcdef");
   });
 
   it("requires response no-store and forces fetch no-store, omitted cookies and redirect refusal", async () => {
@@ -163,7 +190,7 @@ describe("OpenVaultDB provider reads transport", () => {
       await expect(database(fetchResponse(() => response({}, records))).query(daily.query().build())).rejects.toThrow();
     }
     await expect(database(fetchResponse(() => new Response(new Uint8Array([255])))).query(daily.query().build())).rejects.toThrow();
-    await expect(database(fetchResponse(() => new Response(" ".repeat(2 * 1024 * 1024 + 1)))).query(daily.query().build())).rejects.toThrow("exceeds 2 MiB");
+    await expect(database(fetchResponse(() => new Response(" ".repeat(2 * 1024 * 1024 + 1)))).query(daily.query().build())).rejects.toThrow("maximum 2 MiB");
   });
 
   it("preserves point-read legacy rights and refuses live evidence lacking a point-read plan API", async () => {
@@ -174,5 +201,46 @@ describe("OpenVaultDB provider reads transport", () => {
     expect(result.metadata).toMatchObject(legacy);
     await expect(database(fetchResponse(() => new Response(JSON.stringify({ ...point, ...metadata }))))
       .get(daily.key("synthetic"))).rejects.toThrow("provider point reads");
+  });
+
+  it("bounds and validates failed response bodies without retaining their supplied content", async () => {
+    const failures = [
+      JSON.stringify({ error: { code: "failed", message: "synthetic".repeat(300_000) } }),
+      JSON.stringify({ error: { code: "failed", message: "a".repeat(4097) } }),
+      JSON.stringify({ error: { code: "a".repeat(65), message: "synthetic" } }),
+      JSON.stringify({ error: { code: 1, message: {} } }),
+      JSON.stringify({ error: null }),
+      "malformed JSON",
+      new Uint8Array([255]),
+    ];
+    for (const body of failures) {
+      const error = await database(fetchResponse(() => new Response(body, { status: 500 })))
+        .query(daily.query().build()).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(OpenVaultDbHttpError);
+      expect(error).toMatchObject({ status: 500, code: "unknown", message: "OpenVaultDB request failed (500 unknown): request rejected" });
+    }
+  });
+
+  it("cancels oversized and stalled error streams, even if cancellation never resolves", async () => {
+    let cancelled = 0;
+    const oversized = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(17 * 1024)); },
+      cancel() { cancelled++; return new Promise<void>(() => undefined); },
+    });
+    await expect(database(fetchResponse(() => new Response(oversized, { status: 500 })))
+      .query(daily.query().build())).rejects.toMatchObject({ status: 500, code: "unknown" });
+    expect(cancelled).toBe(1);
+
+    vi.useFakeTimers();
+    try {
+      const stalled = new ReadableStream<Uint8Array>({ cancel() { cancelled++; return new Promise<void>(() => undefined); } });
+      const failure = database(fetchResponse(() => new Response(stalled, { status: 503 })))
+        .query(daily.query().build()).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(await failure).toMatchObject({ status: 503, code: "unknown" });
+      expect(cancelled).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

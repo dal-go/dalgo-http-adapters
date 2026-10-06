@@ -70,6 +70,12 @@ function admittedPlan<T>(
   if (plan.execution.mode !== "proxy" || plan.sourceRights.length === 0) {
     throw new TypeError("OpenVaultDB provider reads require a proxy source plan");
   }
+  if (plan.execution.executorId !== client.expectedServerId) {
+    throw new TypeError("provider read executor does not match expectedServerId");
+  }
+  if (typeof plan.execution.id !== "string" || !/^[a-f0-9]{32}$/u.test(plan.execution.id)) {
+    throw new TypeError("provider read execution ID must be 32 lowercase hex characters");
+  }
   for (const right of plan.sourceRights) {
     if (right.source.serverId !== client.expectedServerId
       || right.source.databaseId !== client.databaseId
@@ -119,12 +125,15 @@ export async function executeOpenVaultDbQuery<T>(
     const codec = query.source.codec;
     const response = await client.request(client.queryPath(), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(plan === undefined ? {} : { "OVDB-Execution-ID": plan.execution.id }),
+      },
       body: bodyText,
     });
     if (plan !== undefined && !response.headers.get("Cache-Control")?.split(",")
       .some((directive) => directive.trim().toLowerCase() === "no-store")) {
-      await response.body?.cancel();
+      void response.body?.cancel().catch(() => undefined);
       throw new TypeError("provider read response requires Cache-Control no-store");
     }
     const body = queryResponse(await readOpenVaultDbJson(response));

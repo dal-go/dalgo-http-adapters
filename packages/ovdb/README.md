@@ -62,7 +62,7 @@ ovdb serve --manifest mydb.yaml --auth --cors https://app.example
 
 Use HTTPS outside loopback development. Tokens are sent only in the `Authorization: Bearer` header; never put them in the base URL, query parameters, logs, analytics, or persisted browser metadata. The adapter rejects base URLs containing credentials, query parameters, or fragments, and refuses HTTP redirects.
 
-Pass `getAccessToken` when the token can rotate. Pass `accessToken` only when the caller already manages its lifecycle securely. Requests always use `cache: "no-store"`, `credentials: "omit"` and `redirect: "error"`; bearer authentication remains explicit. Successful record/query JSON is bounded to 2 MiB and invalid UTF-8 is rejected.
+Pass `getAccessToken` when the token can rotate. Pass `accessToken` only when the caller already manages its lifecycle securely. Requests always use `cache: "no-store"`, `credentials: "omit"` and `redirect: "error"`; bearer authentication remains explicit. Successful record/query JSON is bounded to 2 MiB and a ten-second body deadline, with invalid UTF-8 rejected. Error bodies have a 16 KiB/one-second bound; only a validated code (up to 64 characters) and message (up to 4096 characters) enter the error. Parse, budget, deadline, UTF-8 and invalid-field failures return a short error retaining only HTTP status.
 
 ## Required live-provider observations
 
@@ -77,7 +77,14 @@ For an admitted live-provider query, independently verify the immutable
 definition, decoder/model artifacts, provider/executor binding, complete rights
 and non-secret resource request plan before calling the adapter. Configure
 `expectedServerId` from trusted gateway discovery, and pass the independently
-admitted `ProviderReadPlan` as the second query argument:
+admitted `ProviderReadPlan` as the second query argument. Generate a fresh
+`createOpenVaultDbExecutionId()` before admitting each plan: its execution ID is
+exactly 32 lowercase hex characters from 128 cryptographically random bits. The
+adapter freezes and sends this ID in `OVDB-Execution-ID`; the profile-enabled Go
+server binds that exact ID before reading upstream and hashes it into the
+observation. This is request correlation, never admission, authentication, source
+selection or permission to retain results. Gateways must permit this header in
+CORS for the application's exact origin.
 
 ```ts
 import type { ProviderReadPlan } from "@dalgo/core";
@@ -94,7 +101,9 @@ async function executeAdmitted(plan: ProviderReadPlan) {
 
 The adapter freezes the plan and serialized query before awaiting credentials or
 transport. Planned rights must identify this server, database and exact queried
-recordset; this single-collection API refuses mixed-source plans. The response
+recordset, and `execution.executorId` must equal `expectedServerId`; this
+single-collection API refuses mixed-source plans. Invalid executor/ID/source
+bindings fail before credentials or transport. The response
 must have `Cache-Control: no-store`. Core validates the closed
 `ovdb-provider-read/1` envelope, exact full rights/usage/execution/definition
 bindings, canonical request/rights/observation digests and metadata budgets before
@@ -102,7 +111,10 @@ any row codec runs. The returned `QueryPage` carries the detached `sourceRights`
 `usedSourceIds` and `providerReads`, including when no rows survive filtering.
 Unsolicited live evidence without a plan, absent required evidence, malformed
 evidence and changed bindings fail. Never derive the admitted plan from the
-response being checked.
+response being checked. An old producer that generates its own uncorrelated ID
+cannot pass this independently admitted query gate. The Go producer must support
+the client nonce contract; this adapter never substitutes response execution
+identity into its trusted plan.
 
 Legacy queries preserve supplied rights/used-source metadata; absence still means
 unknown. Point reads preserve legacy rights inside `RecordSnapshot.metadata`.
@@ -118,6 +130,21 @@ no-retention guards, DataTug's ephemeral route and all actual browser/storage/CD
 receipts remain separate gates. The adapter keeps only ordinary bounded response
 buffers during a request. It creates no retained row/body store and authorizes no
 source/result copy, live source activation or paid execution.
+
+## Independent review r1 disposition
+
+B1 is addressed in code by the coordinated `OVDB-Execution-ID` nonce protocol; synthetic
+actual Go-server to JS-adapter interoperability passed against producer commit
+`2dc6a2c36a832061ef7ef9fc447fdb188a04301c`, including concurrent populated/empty
+results, nonce correlation, complete digest validation, no-store, CORS and
+invalid-header zero-read cases. An omitted nonce still refuses the uncorrelated
+legacy response at the consumer gate. Independent rereview remains required
+before acceptance. M1 is repaired by binding the proxy executor to the
+configured server before credentials/network I/O. M2 is repaired with finite
+fatal UTF-8 error-body processing, validated selected fields and short status-only
+fallbacks; oversized/stalled/malformed error tests cover those paths. No finding
+was declined. This draft does not claim review acceptance or source activation.
+
 
 ## Current server profile
 
