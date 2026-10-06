@@ -213,6 +213,31 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2)(yaml@2.9.1))
 
+  packages/d1:
+    dependencies:
+      '@dalgo/core':
+        specifier: github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336
+    devDependencies:
+      '@eslint/js':
+        specifier: 10.0.1
+        version: 10.0.1(eslint@10.11.0)
+      '@types/node':
+        specifier: 26.6.2
+        version: 26.6.2
+      eslint:
+        specifier: 10.11.0
+        version: 10.11.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      typescript-eslint:
+        specifier: 8.70.0
+        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2)(yaml@2.9.1))
+
   packages/databricks:
     dependencies:
       '@dal-go/dalgo':
@@ -347,31 +372,6 @@ importers:
       firebase:
         specifier: 12.19.0
         version: 12.19.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      typescript-eslint:
-        specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
-      vitest:
-        specifier: 5.0.1
-        version: 5.0.1(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2)(yaml@2.9.1))
-
-  packages/d1:
-    dependencies:
-      '@dalgo/core':
-        specifier: github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336
-    devDependencies:
-      '@eslint/js':
-        specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
-      '@types/node':
-        specifier: 26.6.2
-        version: 26.6.2
-      eslint:
-        specifier: 10.11.0
-        version: 10.11.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
