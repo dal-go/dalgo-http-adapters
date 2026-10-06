@@ -6,6 +6,85 @@ The ordinary package export retains the legacy DALgo record adapter described
 below. The analytical entry does not import a DALgo runtime; consumer integration
 and release acceptance remain separate required gates.
 
+## Metadata-only browser discovery
+
+`BigQueryMetadataClient` in `/analytical` makes only bounded `datasets.get` and
+`tables.get` requests against a trusted consumer's closed source allowlist. It
+has no job, dry-run, row, query approval, cost-admission or persistence method.
+Every successful result remains `inactive`, with `queryAdmission: "blocked"`
+and `costAdmission: "not-granted"`. Billing, execution-project permissions and
+source rights remain unverified; provider retention is not authorized.
+
+```ts
+import { BigQueryMetadataClient } from "@dalgo/bigquery/analytical";
+
+const metadata = new BigQueryMetadataClient({
+  sources: reviewedMetadataLocators,
+  provider: verifiedGoogleIdentity,
+  authorizeMetadata: prepareCurrentOwnerMetadataConsent,
+});
+const observed = await metadata.discover(selectedAllowlistedSourceId, { signal });
+// Metadata evidence only. Do not activate the source or submit a query.
+```
+
+The protected `authorizeMetadata(source, signal)` integration must return the
+current application owner's explicit metadata consent, its stable consent ID,
+exact allowlisted source, verified Google principal including token generation,
+and selected future job project. This is trusted owner-scoped application state,
+not caller JSON or an OAuth token. Google consent and application-owner consent
+are separate requirements. Revoke consent on owner/account changes. The client
+rechecks that exact binding before each GET/retry and before returning evidence;
+it also re-verifies Google identity after consent preparation. A changed owner,
+consent, project, source or identity refuses dispatch/delivery. Workload identities
+are excluded from this browser slice. Use the existing GIS identity provider and
+user-triggered read-only consent described below; no silent refresh is added.
+
+The selected job project is recorded only as unverified future context; it is
+never substituted for the source project or sent as a quota/billing project.
+Only fixed Google HTTPS metadata URLs are constructed. Tokens stay in transient
+Authorization headers; URLs, results and sanitized errors exclude them. The
+consumer must not log tokens/headers or persist metadata/source bodies. Requests
+omit credentials, refuse redirects, and use `cache: "no-store"`. One discovery
+per client runs at a time, with finite wall/HTTP deadlines and shared response
+byte limits (including failed/retried reads); injected integrations that ignore
+abort are still bounded. No background reads or automatic storage are created.
+
+Dataset requests use the `METADATA` view, excluding ACL information. Table
+requests use `STORAGE_STATS` because `BASIC` omits `lastModifiedTime`. The result
+is explicitly a partial metadata projection: exact resource references,
+location, etag and last-modified time when supplied, native schema (including
+nested/repeated fields and native descriptor properties), and partition/clustering
+configuration. Unknown execution types/configuration may be observed but are
+never admitted. JSON number lexemes remain `JsonNumber.text` values. Schema
+shape/reference conflicts and malformed wire evidence are refused. Observation
+time and last-modified time do not establish row coverage, freshness, uniqueness,
+semantic compatibility, rights or execution eligibility.
+
+Google documents [GIS REST/CORS access](https://developers.google.com/identity/oauth2/web/guides/use-token-model),
+[metadata-only tables.get](https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/tables/get)
+and [datasets.get permissions/views](https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/datasets/get).
+This supports the direct-browser design; deployed OAuth client/origin, CORS,
+owner-consent and live metadata acceptance remain required and unverified here.
+WDI remains inactive: no observation table, live schema or location is invented.
+
+[Public datasets](https://docs.cloud.google.com/bigquery/public-data) distinguish
+source storage from execution-project query charges. Free quota is not cost
+admission. Future queries need separate source-rights and provider-retention
+authorization plus reviewed project/location, dry-run/cap approval and same-job
+receipts. [Cost controls](https://docs.cloud.google.com/bigquery/docs/best-practices-costs)
+and [cached results](https://docs.cloud.google.com/bigquery/docs/cached-results)
+confirm that `LIMIT` is not a general scan cap and `useQueryCache: false` does not
+prevent provider result-table materialization. Client no-store/RAM limits cannot
+clear that retention gate.
+
+Package installation/release compatibility is also pending. The ordinary export
+still peers on legacy `@dal-go/dalgo`; this slice changes no dependencies. As of
+6 October 2026, npm `@dalgo/core` is 0.1.0 while its source manifest is 0.5.0,
+and the legacy peer is unpublished. Repository tests use the existing exact Git
+development pins, not proof of published/current-core consumer compatibility.
+The analytical entry has no DALgo runtime import, but this does not clear package
+publication or consumer adoption gates.
+
 ## Analytical execution
 
 `BigQueryAnalyticalClient` requires reviewed source profiles, a protected `prepare`

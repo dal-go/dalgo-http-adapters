@@ -19,3 +19,5 @@ export type { Ledger, LedgerState, Preview } from "./analytical/ledger.js";
 export type { TrustedIdentity, IdentityProvider, Clock, SafeFetch } from "./analytical/transport.js";
 export { GoogleTokenIdentityProvider, googleAuthorizationScopes } from "./analytical/google-identity.js";
 export type { GoogleTokenResponse, GoogleIdentitySummary, GoogleIdentityConfig } from "./analytical/google-identity.js";
+export { BigQueryMetadataClient } from "./analytical/metadata-client.js";
+export type { MetadataSource, MetadataConsent, MetadataLimits, MetadataClientConfig, MetadataOptions, MetadataDiscovery } from "./analytical/metadata-client.js";
