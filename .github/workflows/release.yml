@@ -66,8 +66,39 @@ jobs:
             git push origin HEAD:refs/heads/changeset-release/main
           fi
           pr=$(gh pr list --head changeset-release/main --base main --state open --json number --jq '.[0].number')
+          manual_pr=false
           if [[ -z "$pr" ]]; then
-            gh pr create --head changeset-release/main --base main --title 'chore: version DALgo adapters' --body 'Review the independent package versions, changelogs, and dependency ranges before merging.'
+            create_error=$(mktemp)
+            trap 'rm -f "$create_error"' EXIT
+            if gh pr create --head changeset-release/main --base main --title 'chore: version DALgo adapters' --body 'Review the independent package versions, changelogs, and dependency ranges before merging.' 2>"$create_error"; then
+              :
+            elif grep -Fq 'GitHub Actions is not permitted to create or approve pull requests' "$create_error"; then
+              # Organization/repository PR policy is separate from pull-requests: write.
+              # Preserve the generated branch for the authorized local WB route.
+              manual_pr=true
+            else
+              cat "$create_error" >&2
+              exit 1
+            fi
+            pr=$(gh pr list --head changeset-release/main --base main --state open --json number --jq '.[0].number')
+          fi
+          if [[ -n "$pr" ]]; then
+            :
+          elif [[ "$manual_pr" == true ]]; then
+            echo '::warning::Actions PR creation is disabled. The generated version branch requires an authorized local WB pull request.'
+            {
+              echo '### Version pull request requires a local maintainer'
+              echo
+              echo "Generated branch: changeset-release/main at $(git rev-parse HEAD)."
+              echo "Review the existing branch: https://github.com/$GITHUB_REPOSITORY/compare/main...changeset-release/main"
+              echo
+              echo 'Open or adopt that exact branch through wb pr create with base main and title chore: version DALgo adapters. Do not regenerate or duplicate it.'
+              echo 'The repository or organization disables Allow GitHub Actions to create and approve pull requests. No setting or credential change was attempted.'
+              echo 'Branch CI is dispatched below. This handoff does not authorize npm publication or resolve npm trusted publisher permissions.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Version pull request creation did not produce an open pull request.' >&2
+            exit 1
           fi
           gh workflow run ci.yml --ref changeset-release/main
 
@@ -95,8 +126,8 @@ jobs:
           SOURCE_SHA: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || exit 1
           git fetch origin main
           git merge-base --is-ancestor "$SOURCE_SHA" origin/main
           prs=$(gh api "/repos/$REPOSITORY/commits/$SOURCE_SHA/pulls")
@@ -120,6 +151,7 @@ jobs:
         run: |
           pnpm --filter @dalgo/firestore check
           pnpm --filter @dalgo/indexeddb check
+          pnpm --filter @dalgo/bigquery check
       - name: Publish changed versions and tag their npm source commits
         env:
           NPM_CONFIG_PROVENANCE: 'true'
@@ -128,18 +160,27 @@ jobs:
           source_sha=$(git rev-parse HEAD)
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          for package in firestore indexeddb; do
+          registry_metadata=$(mktemp)
+          trap 'rm -f "$registry_metadata"' EXIT
+          for package in firestore indexeddb bigquery; do
             manifest="packages/$package/package.json"
             name=$(jq -r '.name' "$manifest")
             version=$(jq -r '.version' "$manifest")
             previous_version=$(git show "HEAD^:$manifest" | jq -r '.version')
-            [[ "$name" == "@dalgo/$package" ]]
-            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+            [[ "$name" == "@dalgo/$package" ]] || exit 1
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
             if [[ "$version" == "$previous_version" ]]; then
               continue
             fi
-            if ! npm view "$name@$version" version --json >/dev/null 2>&1; then
+            # Only an explicit registry 404 permits publication; network/auth errors fail closed.
+            http_status=$(curl --silent --show-error --retry 2 --output "$registry_metadata" \
+              --write-out '%{http_code}' "https://registry.npmjs.org/${name/\//%2f}/$version")
+            if [[ "$http_status" == '404' ]]; then
+              jq -e --arg missing "version not found: $version" '. == "Not Found" or . == $missing' "$registry_metadata" >/dev/null
               (cd "packages/$package" && npm publish --access public --provenance --registry=https://registry.npmjs.org)
+            elif [[ "$http_status" != '200' ]]; then
+              echo "Registry lookup failed with HTTP $http_status" >&2
+              exit 1
             fi
             metadata=''
             for attempt in {1..20}; do
@@ -149,13 +190,13 @@ jobs:
               echo "Waiting for npm metadata for $name@$version (attempt $attempt)" >&2
               sleep 15
             done
-            [[ "$(jq -r '.name' <<< "$metadata")" == "$name" ]]
-            [[ "$(jq -r '.version' <<< "$metadata")" == "$version" ]]
-            [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$source_sha" ]]
+            [[ "$(jq -r '.name' <<< "$metadata")" == "$name" ]] || exit 1
+            [[ "$(jq -r '.version' <<< "$metadata")" == "$version" ]] || exit 1
+            [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$source_sha" ]] || exit 1
             tag="$package@v$version"
             git fetch origin tag "$tag" 2>/dev/null || true
             if git rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
-              [[ "$(git rev-list -n 1 "$tag")" == "$source_sha" ]]
+              [[ "$(git rev-list -n 1 "$tag")" == "$source_sha" ]] || exit 1
               continue
             fi
             git tag -a "$tag" "$source_sha" -m "$name $version"
