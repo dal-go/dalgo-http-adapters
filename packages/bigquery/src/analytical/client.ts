@@ -248,7 +248,7 @@ export class BigQueryAnalyticalClient {
     id, accessPrincipal:cloneFrozen(accessPrincipal), emptyDelivered: false, controller: new AbortController(), rows: [], index: 0, loaded: false, done: false, mode: "", digest: ""
   }; }
   #run(session: Session): AnalyticalRun { return new AnalyticalRun({
-    receipt: async () => cloneFrozen((await this.#load(session.id)).receipt), schema: async () => cloneFrozen((await this.#load(session.id)).schema), next: (mode, options) => this.#read(session, mode, options), close: async () => { session.controller.abort(); await this.#mutate(session.id, r => { r.receipt = {
+    receipt: async () => cloneFrozen((await this.#load(session.id)).receipt), schema: async () => cloneFrozen((await this.#load(session.id)).schema), next: (mode, options) => this.#read(session, mode, options), close: async () => { session.controller.abort(); session.rows = []; await this.#mutate(session.id, r => { r.receipt = {
       ...r.receipt, localStopped: true, reason: "local_stopped"
     }; }); }
   }); }

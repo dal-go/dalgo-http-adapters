@@ -17,3 +17,5 @@ export type { SourceProfile, ReadQuery, ReadPlan, Parameter, CompiledPredicate, 
 export { IndexedDBLedger, MemoryLedger } from "./analytical/ledger.js";
 export type { Ledger, LedgerState, Preview } from "./analytical/ledger.js";
 export type { TrustedIdentity, IdentityProvider, Clock, SafeFetch } from "./analytical/transport.js";
+export { GoogleTokenIdentityProvider, googleAuthorizationScopes } from "./analytical/google-identity.js";
+export type { GoogleTokenResponse, GoogleIdentitySummary, GoogleIdentityConfig } from "./analytical/google-identity.js";

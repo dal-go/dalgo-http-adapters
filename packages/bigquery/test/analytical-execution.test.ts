@@ -480,8 +480,10 @@ describe("bounded analytical production execution", () => {
     });
     const firstLedger = new IndexedDBLedger("durable-test");
     const f = fixture([], {}, firstLedger);
-    const { client, run, approval } = await start(f);
+    const resultSentinel = "9223372036854775719";
+    const { client, run, approval } = await start(f, { body: complete([resultSentinel, resultSentinel], "p2") });
     const first = await run.nextRow() as Page;
+    expect(first.rows[0]?.[0]?.value).toBe(resultSentinel);
     await run.close();
     const before = await firstLedger.update(state => Object.values(state.runs)[0]);
     const secondLedger = new IndexedDBLedger("durable-test");
@@ -489,7 +491,7 @@ describe("bounded analytical production execution", () => {
     const another = await f.create(secondLedger);
     await expect(another.execute(approval)).rejects.toThrow("approval_required");
     f.steps.push({
-      body: complete(["1", "1"], "p2")
+      body: complete([resultSentinel, resultSentinel], "p2")
     });
     const resumed = await another.resume(first.receipt, first.cursor as string);
     expect((await resumed.nextRow())?.receipt.counters.rows).toBe(2);
@@ -497,7 +499,12 @@ describe("bounded analytical production execution", () => {
     expect(after?.reservation).toBe("1000");
     expect(after?.receipt.executionDeadline).toBe(before?.receipt.executionDeadline);
     expect(after?.receipt.counters.bytes).toBeGreaterThan(before?.receipt.counters.bytes ?? 0);
-    expect(JSON.stringify(await secondLedger.update(state => state))).not.toContain("test-token");
+    const persisted = JSON.stringify(await secondLedger.update(state => state));
+    expect(persisted).not.toContain("test-token");
+    expect(persisted).not.toContain(resultSentinel);
+    expect(persisted).not.toContain('"rows":[');
+    expect(persisted).not.toContain('"f":[');
+    expect(persisted).not.toContain('"accessToken"');
     await expect(client.resume(first.receipt, first.cursor as string)).rejects.toThrow("cursor_invalid");
     await expect(firstLedger.update(state => { state.version = 2 as 1; throw new Error("rollback"); })).rejects.toThrow("rollback");
     expect(await secondLedger.update(state => state.version)).toBe(1);

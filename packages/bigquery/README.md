@@ -60,6 +60,35 @@ generation cannot renew it. `MemoryLedger` is for deterministic tests only;
 there is no automatic memory fallback. Consumers must preserve the durable
 session instead of choosing another database name to continue a stopped run.
 
+The ledger retains source/schema, approved user query parameters, job receipts,
+page tokens, counters and page-content hashes for protected same-job Resume.
+It never stores returned result cells, rows, raw response bodies or OAuth tokens.
+Closing a run also clears its internal in-memory row buffer; the consumer owns
+any cells it has already received. No source snapshots or retained result cache
+are created by this module.
+
+`GoogleTokenIdentityProvider` verifies a real GIS callback's grants and token
+expiry, fetches fixed Google discovery metadata, then calls its pinned UserInfo
+endpoint with the same access token used by the BigQuery transport. It requires
+`openid` and BigQuery read-only (or explicitly consented cancellation) scope,
+binds the returned stable `sub`, and permits missing email. Every connect attempt
+clears the old authorization and every successful token change gets a new
+principal generation. `authorize` never prompts or silently refreshes.
+
+Use `googleAuthorizationScopes()` in a separate GIS `initTokenClient`, then call
+`provider.connect(response)` from its callback. Trigger `requestAccessToken()`
+from a user gesture. The returned connection summary contains no token and can
+be shown separately from the Firebase/DataTug identity. Call `disconnect()` on
+app sign-out, execution-account change and local disconnect; it clears the token
+and aborts a pending identity lookup without revoking other Google grants.
+Cancellation consent uses `googleAuthorizationScopes({ cancellation: true })`;
+it grants the broader BigQuery scope and requires an explicit product action.
+OAuth client setup and deployed-origin/CORS acceptance remain required.
+
+Google's [token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model)
+defines user-triggered consent and expiry recovery; its [discovery document](https://accounts.google.com/.well-known/openid-configuration)
+pins the UserInfo endpoint used here.
+
 A run supports either `nextPage()` or `nextRow()`. Returned immutable pages carry
 schema, exact typed cells, a receipt and an opaque same-job cursor. `close()`
 stops local delivery without claiming remote cancellation. Resume requires the
