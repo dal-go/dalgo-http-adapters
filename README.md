@@ -11,7 +11,7 @@ The reference implementation is [`@dalgo/firestore`](packages/firestore). Every 
 | Algolia | [`@dal-go/dalgo2algolia`](packages/algolia) |
 | Appwrite | [`@dal-go/dalgo2appwrite`](packages/appwrite) |
 | Azure Table Storage | [`@dal-go/dalgo2azure-table`](packages/azure-table) |
-| BigQuery | [`@dal-go/dalgo2bigquery`](packages/bigquery) |
+| BigQuery | [`@dalgo/bigquery`](packages/bigquery) |
 | ClickHouse | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) |
 | Cosmos DB | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) |
 | Couchbase | [`@dal-go/dalgo2couchbase`](packages/couchbase) |
@@ -54,9 +54,10 @@ pnpm check
 pnpm --filter @dalgo/firestore check
 ```
 
-Firestore and IndexedDB are the first packages prepared for publication under
-the `@dalgo` npm scope. The remaining catalog entries are local workspace
-packages and should not be assumed to be published.
+Firestore, IndexedDB and BigQuery are configured as public packages under
+the `@dalgo` npm scope. Public manifests and source versions do not establish
+that a version is available on npm. The remaining adapters are private workspace
+packages.
 
 Package changes are versioned and published independently with Changesets.
 See [the release procedure](docs/RELEASING.md). The existing
@@ -121,7 +122,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | Firestore in Datastore mode | HTTP-capable | Implemented: [`@dal-go/dalgo2datastore`](packages/datastore), using REST lookup/commit/runQuery with explicit key/schema mappings and instance-owned cursors. Browser use needs user OAuth or a token broker, never a service-account key. |
 | Firebase Realtime Database | Browser-ready | Implemented: [`@dal-go/dalgo2firebase-rtdb`](packages/firebase-rtdb), using the browser-oriented Firebase Web SDK with explicit tree/query limitations. |
 | Firebase Data Connect | Not applicable | Generated, typed application GraphQL operations are not a generic database data plane for arbitrary DALgo collections. |
-| BigQuery | HTTP-capable | Implemented: [`@dal-go/dalgo2bigquery`](packages/bigquery), a bounded analytical read/query adapter rather than OLTP parity. |
+| BigQuery | HTTP-capable | Implemented: [`@dalgo/bigquery`](packages/bigquery), a bounded analytical read/query adapter rather than OLTP parity. |
 | Spanner | HTTP-capable | Implemented: [`@dal-go/dalgo2spanner`](packages/spanner), with session-backed parameterized reads/query and single-use atomic commits; callback transactions and silent continuation are rejected. |
 | Bigtable | Not applicable | Useful data API is gRPC rather than a general browser JSON/HTTP surface. |
 | AlloyDB | Not applicable | Administration is REST; data plane is PostgreSQL wire protocol. |
@@ -197,7 +198,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2databricks`](packages/databricks) | Implemented read/query Statement Execution API adapter with complete inline chunk validation; writes and DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) | Implemented HTTP document CRUD/query adapter; DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2dynamodb`](packages/dynamodb) | Implemented browser-capable AWS SDK v3 adapter for the documented two-key table layout; requires temporary scoped credentials. |
-| [`@dal-go/dalgo2bigquery`](packages/bigquery) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
+| [`@dalgo/bigquery`](packages/bigquery) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2neo4j`](packages/neo4j) | Implemented configured-label CRUD/query adapter over Query API v2, with explicit transactions limited to Aura affinity or declared single-instance deployments. |
 | [`@dal-go/dalgo2solr`](packages/solr) | Implemented bounded document CRUD/query adapter over Solr JSON Request and Update APIs; deployments must keep Solr behind a trusted proxy or equivalent access control. |
 | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) | Implemented bounded parameterized read/query support over the ClickHouse HTTP interface plus an explicit append-only JSONEachRow helper; OLTP-style DALgo mutations and callback transactions remain unsupported. |

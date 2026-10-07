@@ -86,7 +86,7 @@ fi
 set -euo pipefail
 if [[ "$1" == publish ]]; then
   printf 'publish %s\\n' "${PWD##*/}" >> "$MOCK_LOG"
-  [[ "$CASE" != publish_error ]] || exit 1
+  [[ "$CASE" != publish_error && "$CASE" != mixed_preceding_failure ]] || exit 1
 elif [[ "$1" == view ]]; then
   if [[ ! -f "$MOCK_SEEN" ]]; then
     touch "$MOCK_SEEN"
@@ -120,19 +120,20 @@ fi
     (root/'git').chmod(0o755)
     (root/'npm').chmod(0o755)
     (root/'curl').chmod(0o755)
-    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing']:
+    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure']:
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
         for package in ['firestore','indexeddb','bigquery']:
             manifest = root/'packages'/package/'package.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
-            version = '0.2.0' if package == 'bigquery' and case != 'unchanged' else '0.1.0'
+            version = '0.2.0' if (package == 'bigquery' and case != 'unchanged') or (package == 'indexeddb' and case == 'mixed_preceding_failure') else '0.1.0'
             manifest.write_text('{"name":"@dalgo/'+package+'","version":"'+version+'"}')
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha)
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''
         assert (result.returncode == 0) == (case in ['unchanged','bigquery_changed','registry_existing']), (case,result.stderr,calls)
-        assert ('publish bigquery' in calls) == (case not in ['unchanged','registry_error','registry_existing']), (case,calls)
-        assert 'publish firestore' not in calls and 'publish indexeddb' not in calls, (case,calls)
+        assert ('publish bigquery' in calls) == (case not in ['unchanged','registry_error','registry_existing','mixed_preceding_failure']), (case,calls)
+        assert 'publish firestore' not in calls, (case,calls)
+        assert ('publish indexeddb' in calls) == (case == 'mixed_preceding_failure'), (case,calls)
         assert ('git push origin refs/tags/bigquery@v0.2.0' in calls) == (case in ['bigquery_changed','registry_existing']), (case,calls)
         print(f'PASS {case}: exit={result.returncode}, calls={calls.splitlines()}')
 assert 'pnpm --filter @dalgo/bigquery check' in workflow
@@ -170,3 +171,47 @@ fi
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         assert (result.returncode == 0) == (case == 'merged'), (case,result.stderr)
         print(f'PASS authorization {case}: exit={result.returncode}')
+
+# Manual recovery admits all public adapters, including BigQuery, only after
+# exact registry identity, on-main source and matching source manifest checks.
+tag_workflow = (Path(__file__).resolve().parents[1] / 'workflows/tag-published-package.yml').read_text()
+start = tag_workflow.index('          set -euo pipefail')
+end = tag_workflow.index('      - name: Create package tag', start)
+shell = '\n'.join(line[10:] for line in tag_workflow[start:end].splitlines())
+assert '          - bigquery\n' in tag_workflow
+with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
+    root = Path(directory)
+    (root/'run.sh').write_text(shell)
+    (root/'npm').write_text('''#!/usr/bin/env bash
+set -euo pipefail
+name="@dalgo/$PACKAGE"
+version=$VERSION
+source_sha=$MOCK_SHA
+[[ "$CASE" != wrong_name ]] || name=@dalgo/other
+[[ "$CASE" != wrong_version ]] || version=9.9.9
+[[ "$CASE" != invalid_source ]] || source_sha=not-a-sha
+printf '{"name":"%s","version":"%s","gitHead":"%s"}\\n' "$name" "$version" "$source_sha"
+''')
+    (root/'git').write_text('''#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == fetch || "$1" == cat-file ]]; then :
+elif [[ "$1" == merge-base ]]; then [[ "$CASE" != off_main ]] || exit 1
+elif [[ "$1" == show ]]; then
+  version=$VERSION
+  [[ "$CASE" != wrong_manifest ]] || version=9.9.9
+  printf '{"name":"@dalgo/%s","version":"%s"}\\n' "$PACKAGE" "$version"
+else exit 99
+fi
+''')
+    (root/'npm').chmod(0o755)
+    (root/'git').chmod(0o755)
+    for case in ['firestore', 'indexeddb', 'bigquery', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
+        output = root/f'{case}.output'
+        package = case if case in ['firestore', 'indexeddb', 'bigquery'] else 'algolia' if case == 'private_package' else 'bigquery'
+        env = dict(os.environ, PATH=f'{root}:'+os.environ['PATH'], CASE=case, PACKAGE=package, VERSION='v0.3.0' if case == 'invalid_version' else '0.3.0', MOCK_SHA=sha, GITHUB_OUTPUT=str(output))
+        result = subprocess.run(['bash',str(root/'run.sh')],env=env,capture_output=True,text=True)
+        succeeds = case in ['firestore', 'indexeddb', 'bigquery']
+        assert (result.returncode == 0) == succeeds, (case, result.stderr)
+        assert output.exists() == succeeds, case
+        if succeeds: assert f'tag={package}@v0.3.0' in output.read_text()
+        print(f'PASS tag recovery {case}: exit={result.returncode}')

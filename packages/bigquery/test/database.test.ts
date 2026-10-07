@@ -1,4 +1,4 @@
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 import { BigQueryDatabase, type BigQueryDatabaseOptions } from "../src/index.js";
 
