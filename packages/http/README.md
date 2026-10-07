@@ -86,11 +86,12 @@ YAML browser entry/subtree from allowlisted installed package paths. No CDN or
 bundler is involved. The typed helper under `test` compiles to ignored
 `.browser-fixture-dist`, outside package exports and public `dist`.
 
-The official HTTP check builds its public exports before typed lint and tests
-resolve the fixture's self-package import. `check:clean-output` copies source,
+The official HTTP check and standalone lint each build public exports before
+typed lint resolves the fixture's self-package import. `check:clean-output` copies source,
 tests and config into an owned temporary directory without `dist` or fixture
-output, reuses installed dependencies, runs that same official check and removes
-the copy in `finally`. CI runs this regression even when earlier steps have built
+output, reuses installed dependencies, runs standalone lint and the official check
+from separately clean output state and removes the copy in `finally`. CI runs this
+regression even when earlier steps have built
 the workspace; no committed or cached output can satisfy its bootstrap check.
 
 The trusted test-only Fetch rewrites only the exact admitted ECB URL to the
