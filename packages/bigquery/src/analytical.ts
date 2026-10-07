@@ -21,3 +21,7 @@ export { GoogleTokenIdentityProvider, googleAuthorizationScopes } from "./analyt
 export type { GoogleTokenResponse, GoogleIdentitySummary, GoogleIdentityConfig } from "./analytical/google-identity.js";
 export { BigQueryMetadataClient } from "./analytical/metadata-client.js";
 export type { MetadataSource, MetadataConsent, MetadataCurrentBinding, MetadataLimits, MetadataClientConfig, MetadataOptions, MetadataDiscovery } from "./analytical/metadata-client.js";
+export { MetadataFixtureHarness } from "./analytical/metadata-harness.js";
+export type { MetadataFixtureHarnessConfig } from "./analytical/metadata-harness.js";
+export { projectFixtureMetadata } from "./analytical/public-metadata.js";
+export type { PublicMetadataObservation, PublicMetadataField } from "./analytical/public-metadata.js";

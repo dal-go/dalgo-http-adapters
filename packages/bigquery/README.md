@@ -260,16 +260,28 @@ may use a fresh limit of at most 15 seconds, while exhausted cumulative bytes
 still reject. This pure helper never creates or persists a run, dispatches an
 HTTP request, resets counters, reconciles billing or releases reservations.
 
-The byte-identical 70-case corpus is vendored from immutable Go driver commit
-`d0784c45e698069a3b69198b172d91b754cf7671`; revision 2 manifest SHA-256 is
-`90c6ee03076ccf2d90148def6cafea5488046fff7f55e49880f67070cf4f7ffe`.
-`testdata/contract/origin.json` records provenance. Production tests execute
-every case, verify all file hashes, and compare exact bytes/digests/results.
+The immutable 168-case revision-3 corpus is vendored from Go driver commit
+`b051a8cd34e9e1e51540d3598bc6d54714da52fc`, tree
+`6a7f20a6fe827ba1cc362e38f876cf6b8e060c7b`; manifest SHA-256 is
+`094b5caa11df6eb0ddef6498394b0c529464ee6ad01c75611a7a3cdb22ad64c1`.
+All original 70 case bytes are unchanged. `testdata/contract/origin.json`
+records provenance. The production runner executes the 93 canonical/scalar/row/
+hash cases and 75 raw HTTP/state cases, including complete request bodies,
+headers, one-byte response schedules, reconnect, counters and absolute deadlines.
+Fixture HTTP runs inject fetch and never contact BigQuery.
 
-Remaining required gates include the independently reviewed frozen HTTP/state
-corpus and Go/JS production report parity, protected DALgo consumer integration,
-legacy/core migration, actual GIS/browser and CLI/local-server acceptance,
-canonical source/rights admission, and both operator-authorized live journeys.
+Set `BIGQUERY_CONTRACT_REPORT` to a private output file for the unmodified HTTP
+report and `BIGQUERY_PARITY_REPORT` for the complete corpus result index. Set
+`BIGQUERY_GO_CONTRACT_REPORT` to the Go `TestSharedCorpus` HTTP report to compare
+all report fields exactly. Only the immutable scenario's explicit Go/JS exposed
+byte counter difference on rejected decompressed overflow is admitted; no
+counter is clamped or dropped. Independent review of the exact candidate and
+both production reports is still required for joint runtime acceptance.
+
+Remaining gates include independent joint review, supplemental timestamp REST
+fixture verification by Go, protected DALgo consumer integration, legacy/core
+migration, actual GIS/browser and CLI/local-server acceptance, canonical
+source/rights admission, and both operator-authorized live journeys.
 The analytical module has no runtime core import. The ordinary adapter still
 uses the legacy `@dal-go/dalgo` peer; compatibility against exact `@dalgo/core`
 commits `1534acd4d0e4a104c58eba09fb9c25619efc8f24` and
@@ -421,3 +433,42 @@ queries, or prove a particular browser's CORS/IAM configuration.
 ## License
 
 MIT
+
+
+## Protected fixture metadata consumer
+
+`MetadataFixtureHarness` composes `GoogleTokenIdentityProvider` and
+`BigQueryMetadataClient` with private current owner, Google subject/generation,
+metadata consent, exact source and selected project state. Its constructor
+requires explicit `identityFetch` and `metadataFetch` fixture callbacks; there
+is no configured live mode. Call `setOwner`, `select`, `connect` from the trusted
+fixture application, then explicitly call `consentToMetadata`. Token connection
+does not grant application metadata consent. Do not expose these trusted state
+methods as caller-JSON commands or construct protected state from URL parameters.
+
+Sign-out (`setOwner(undefined)`), disconnect, source/project changes, denied
+consent and token rotations invalidate the joint snapshot synchronously before
+asynchronous work. Consent must be granted again after changes. Discovery uses
+only the allowlisted dataset METADATA and exact table STORAGE_STATS GETs and
+rechecks current state before physical dispatch and delivery. The harness also
+rechecks after asynchronous projection hashing and retains the original
+operation deadline. Tokens remain in provider memory; no ledger or browser
+storage is created, and the returned fixture projection excludes owner,
+consent, Google subject/generation, email, job project, raw bodies and rows.
+
+`projectFixtureMetadata` emits only `synthetic-fixture` provenance in the exact
+`ovdb-bigquery-observation/draft-1` envelope accepted by the registry at
+`253e419214da22a1bcc2b5e78577bb2d46323074`. It preserves native types, field order
+and normalized modes, recursively copies only name/type/mode/nested fields,
+and enforces 8 schema levels, 500 total fields and 65,536 public bytes. Optional
+native descriptors and security/free-text/configuration properties are excluded.
+The vendored shared golden's raw SHA-256 is
+`2dcf87f754c51b7c655a42ff73d27f0e7b0fab79e9d229db06656203d8e63117`.
+Publication rights/provider authenticity require a later independent operator
+review; synthetic output cannot activate any source or clear query, cost,
+rights, billing or retention gates. Neither helper offers jobs, dry runs,
+tables.list, result rows, snapshots, exports or DataTug UI.
+
+This package-local candidate leaves manifest/version/changeset/lockfile/release
+changes with root and the release owner. It does not establish npm publication,
+current-core compatibility or a live deployed-origin OAuth/CORS journey.

@@ -8,6 +8,9 @@ import {
   type AnalyticalField, type HashPayloadName,
 } from "../src/analytical.js";
 
+import { runHTTPScenario, type HTTPScenario } from "./contract-http.js";
+import { compareHTTPReports } from "./contract-parity.js";
+
 interface Scenario {
   readonly id: string;
   readonly kind: string;
@@ -31,10 +34,10 @@ const origin = JSON.parse(text(read("origin.json"))) as { commit: string; manife
 const scenarios: Scenario[] = [];
 const seen = new Set<string>();
 
-expect(origin.commit).toBe("d0784c45e698069a3b69198b172d91b754cf7671");
-expect(sha(manifestBytes)).toBe("90c6ee03076ccf2d90148def6cafea5488046fff7f55e49880f67070cf4f7ffe");
+expect(origin.commit).toBe("b051a8cd34e9e1e51540d3598bc6d54714da52fc");
+expect(sha(manifestBytes)).toBe("094b5caa11df6eb0ddef6498394b0c529464ee6ad01c75611a7a3cdb22ad64c1");
 expect(origin.manifest_sha256).toBe(sha(manifestBytes));
-expect(manifest.revision).toBe(2);
+expect(manifest.revision).toBe(3);
 for (const [file, digest] of Object.entries(manifest.files)) {
   const data = read(file);
   expect(sha(data)).toBe(digest);
@@ -46,12 +49,14 @@ for (const [file, digest] of Object.entries(manifest.files)) {
   }
 }
 expect(scenarios.length).toBe(manifest.scenario_count);
-expect(scenarios.length).toBe(70);
+expect(scenarios.length).toBe(168);
 
-describe("immutable revision 2 production corpus", () => {
-  it("matches all 70 normalized results, errors, canonical bytes and digests", async () => {
+describe("immutable revision 3 production corpus", () => {
+  it("matches all 168 normalized results, errors, canonical bytes and digests", async () => {
     const outcomes: object[] = [];
+    const httpOutcomes: object[] = [];
     for (const scenario of scenarios) {
+      if (scenario.kind === "http-state") { httpOutcomes.push(await runHTTPScenario(scenario as unknown as HTTPScenario)); outcomes.push({ id: scenario.id, kind: scenario.kind, error: "", production_http: true }); continue; }
       let result: unknown;
       let code = "";
       let canonical: string | undefined;
@@ -79,7 +84,7 @@ describe("immutable revision 2 production corpus", () => {
         expect(error, scenario.id).toBeInstanceOf(AnalyticalError);
         code = (error as AnalyticalError).code;
       }
-      expect(code, scenario.id).toBe(scenario.error);
+      expect(code, scenario.id).toBe(scenario.error ?? "");
       if (code === "") {
         if (scenario.kind === "canonical" || scenario.kind === "hash") {
           expect(canonical, scenario.id).toBe(scenario.canonical);
@@ -89,6 +94,11 @@ describe("immutable revision 2 production corpus", () => {
       outcomes.push({ id: scenario.id, kind: scenario.kind, error: code,
         ...(code !== "" ? {} : canonical === undefined ? { result } : { canonical, digest }) });
     }
+    httpOutcomes.sort((a,b) => (a as { id: string }).id.localeCompare((b as { id: string }).id));
+    const goReport = process.env.BIGQUERY_GO_CONTRACT_REPORT;
+    if (goReport !== undefined) compareHTTPReports(httpOutcomes, JSON.parse(readFileSync(goReport, "utf8")) as unknown[], scenarios.filter(s => s.kind === "http-state") as unknown as HTTPScenario[]);
+    const httpReport = process.env.BIGQUERY_CONTRACT_REPORT;
+    if (httpReport !== undefined) writeFileSync(httpReport, JSON.stringify(httpOutcomes.sort((a,b) => (a as { id: string }).id.localeCompare((b as { id: string }).id)), null, 2) + "\n");
     const reportPath = process.env.BIGQUERY_PARITY_REPORT;
     if (reportPath !== undefined) writeFileSync(reportPath, JSON.stringify({
       runtime: "JavaScript production", corpus_commit: origin.commit,
