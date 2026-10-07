@@ -180,11 +180,11 @@ fi
         (root/executable).chmod(0o755)
     for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth']:
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
-        for package in ['firestore','indexeddb','bigquery']:
+        for package in ['firestore','indexeddb','bigquery','http']:
             manifest = root/'packages'/package/'package.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
             version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure']) else '0.1.0'
-            manifest.write_text('{"name":"@dalgo/'+package+'","version":"'+version+'"}')
+            manifest.write_text(json.dumps({'name': '@dal-go/dalgo2http' if package == 'http' else '@dalgo/'+package, 'version': version}))
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''
@@ -276,6 +276,7 @@ with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
     (root/'npm').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 name="@dalgo/$PACKAGE"
+[[ "$PACKAGE" != http ]] || name=@dal-go/dalgo2http
 version=$VERSION
 source_sha=$MOCK_SHA
 [[ "$CASE" != wrong_name ]] || name=@dalgo/other
@@ -290,18 +291,20 @@ elif [[ "$1" == merge-base ]]; then [[ "$CASE" != off_main ]] || exit 1
 elif [[ "$1" == show ]]; then
   version=$VERSION
   [[ "$CASE" != wrong_manifest ]] || version=9.9.9
-  printf '{"name":"@dalgo/%s","version":"%s"}\\n' "$PACKAGE" "$version"
+  name="@dalgo/$PACKAGE"
+  [[ "$PACKAGE" != http ]] || name=@dal-go/dalgo2http
+  printf '{"name":"%s","version":"%s"}\\n' "$name" "$version"
 else exit 99
 fi
 ''')
     (root/'npm').chmod(0o755)
     (root/'git').chmod(0o755)
-    for case in ['firestore', 'indexeddb', 'bigquery', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
+    for case in ['firestore', 'indexeddb', 'bigquery', 'http', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
         output = root/f'{case}.output'
-        package = case if case in ['firestore', 'indexeddb', 'bigquery'] else 'algolia' if case == 'private_package' else 'bigquery'
+        package = case if case in ['firestore', 'indexeddb', 'bigquery', 'http'] else 'algolia' if case == 'private_package' else 'bigquery'
         env = dict(os.environ, PATH=f'{root}:'+os.environ['PATH'], CASE=case, PACKAGE=package, VERSION='v0.3.0' if case == 'invalid_version' else '0.3.0', MOCK_SHA=sha, GITHUB_OUTPUT=str(output))
         result = subprocess.run(['bash',str(root/'run.sh')],env=env,capture_output=True,text=True)
-        succeeds = case in ['firestore', 'indexeddb', 'bigquery']
+        succeeds = case in ['firestore', 'indexeddb', 'bigquery', 'http']
         assert (result.returncode == 0) == succeeds, (case, result.stderr)
         assert output.exists() == succeeds, case
         if succeeds: assert f'tag={package}@v0.3.0' in output.read_text()

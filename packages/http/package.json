@@ -1,8 +1,7 @@
 {
   "name": "@dal-go/dalgo2http",
-  "private": true,
   "version": "0.1.0",
-  "description": "Private admitted ECB XML query adapter for DALgo TypeScript",
+  "description": "Admitted ECB daily XML query adapter for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "sideEffects": false,
@@ -51,5 +50,9 @@
     "vitest": "5.0.1",
     "jsdom": "26.1.0",
     "@types/jsdom": "21.1.7"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

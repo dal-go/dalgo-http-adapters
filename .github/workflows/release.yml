@@ -158,9 +158,12 @@ jobs:
           pnpm --filter @dalgo/firestore check
           pnpm --filter @dalgo/indexeddb check
           pnpm --filter @dalgo/bigquery check
+          pnpm --filter @dal-go/dalgo2http check
       - name: Publish changed versions and tag their npm source commits
         env:
           NPM_CONFIG_PROVENANCE: 'true'
+          HTTP_ARTIFACT_DIR: ${{ runner.temp }}/http-release
+          HTTP_CONSUMER_DIR: ${{ runner.temp }}/http-release-consumer
           BIGQUERY_ARTIFACT_DIR: ${{ runner.temp }}/bigquery-release
           BIGQUERY_CONSUMER_DIR: ${{ runner.temp }}/bigquery-release-consumer
         run: |
@@ -171,12 +174,17 @@ jobs:
           registry_metadata=$(mktemp)
           metadata_error=$(mktemp)
           trap 'rm -f "$registry_metadata" "$metadata_error"' EXIT
-          for package in firestore indexeddb bigquery; do
+          for package in firestore indexeddb bigquery http; do
             manifest="packages/$package/package.json"
             name=$(jq -r '.name' "$manifest")
             version=$(jq -r '.version' "$manifest")
             previous_version=$(git show "HEAD^:$manifest" | jq -r '.version')
-            [[ "$name" == "@dalgo/$package" ]] || exit 1
+            case "$package" in
+              firestore|indexeddb|bigquery) expected_name="@dalgo/$package" ;;
+              http) expected_name='@dal-go/dalgo2http' ;;
+              *) exit 1 ;;
+            esac
+            [[ "$name" == "$expected_name" ]] || exit 1
             [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
             if [[ "$version" == "$previous_version" ]]; then
               continue
@@ -203,15 +211,28 @@ jobs:
               cp "$BIGQUERY_CONSUMER_DIR"/parity-*.json "$BIGQUERY_CONSUMER_DIR"/http-*.json "$BIGQUERY_ARTIFACT_DIR/"
               node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
             fi
+            if [[ "$package" == http ]]; then
+              node .github/scripts/prepare-http-release.mjs pack "$HTTP_ARTIFACT_DIR" "$source_sha" "$version"
+              receipt="$HTTP_ARTIFACT_DIR/packed-artifact.json"
+              tarball=$(jq -r '.tarball' "$receipt")
+              EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
+                EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
+                EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
+                node .github/scripts/check-http-tarball.mjs "$tarball" "$HTTP_CONSUMER_DIR"
+              cp "$HTTP_CONSUMER_DIR/artifact-receipt.json" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
+              node .github/scripts/prepare-http-release.mjs verify "$HTTP_ARTIFACT_DIR" "$source_sha" "$version" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
+            fi
             # Only an explicit registry 404 permits publication; network/auth errors fail closed.
             http_status=$(curl --silent --show-error --retry 2 --output "$registry_metadata" \
               --write-out '%{http_code}' "https://registry.npmjs.org/${name/\//%2f}/$version")
             publication='already present in registry'
             if [[ "$http_status" == '404' ]]; then
               jq -e --arg missing "version not found: $version" '. == "Not Found" or . == $missing' "$registry_metadata" >/dev/null
-              if [[ "$package" == bigquery ]]; then
+              if [[ "$package" == bigquery || "$package" == http ]]; then
                 # Verify again immediately before the sole publication call.
-                node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+                artifact_dir="$BIGQUERY_ARTIFACT_DIR"
+                [[ "$package" != http ]] || artifact_dir="$HTTP_ARTIFACT_DIR"
+                node ".github/scripts/prepare-$package-release.mjs" verify "$artifact_dir" "$source_sha" "$version" "$artifact_dir/tested-artifact.json"
                 if ! npm publish "$tarball" --ignore-scripts --access public --provenance --registry=https://registry.npmjs.org; then
                   echo "::error::npm publish failed for $name@$version; metadata verification and tagging were not attempted. Inspect the publish diagnostics above." >&2
                   exit 1
@@ -264,6 +285,11 @@ jobs:
               node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
               printf '%s\n' "$metadata" > "$BIGQUERY_ARTIFACT_DIR/registry-metadata.json"
             fi
+            if [[ "$package" == http ]]; then
+              [[ "$(jq -r '.["dist.integrity"]' <<< "$metadata")" == "$(jq -r '.integrity' "$receipt")" ]] || exit 1
+              node .github/scripts/prepare-http-release.mjs verify "$HTTP_ARTIFACT_DIR" "$source_sha" "$version" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
+              printf '%s\n' "$metadata" > "$HTTP_ARTIFACT_DIR/registry-metadata.json"
+            fi
             tag="$package@v$version"
             git fetch origin tag "$tag" 2>/dev/null || true
             if git rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
@@ -279,4 +305,11 @@ jobs:
         with:
           name: bigquery-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           path: ${{ runner.temp }}/bigquery-release
+          if-no-files-found: ignore
+      - name: Retain HTTP release artifact and gate receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: http-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+          path: ${{ runner.temp }}/http-release
           if-no-files-found: ignore

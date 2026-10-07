@@ -1,4 +1,4 @@
-// Synthetic-only consumer. Never exported by the private HTTP package.
+// Synthetic-only consumer. Never exported by the HTTP package.
 import {
   Key, UnsupportedError, executeSourceComposedJoinedDTQLQuery, isJoinedDTQLQuery,
   parseDTQL, providerEvidenceDigest, requireNoSourceComposition,
