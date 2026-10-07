@@ -52,3 +52,32 @@ fields. “Query activation blocked” is a separate fixture presentation label.
 Receipts are synthetic acceptance only: no real GIS/OAuth, deployed provider CORS,
 IAM, package publication/adoption, rights/semantic admission, billable jobs, rows,
 copies/snapshots or provider result-materialization authorization is proved.
+
+## Native synthetic analytical execution acceptance
+
+After `pnpm --filter @dalgo/bigquery check`, run the separate analytical smoke
+with Node 24 and the same explicit Playwright and Chrome runtime variables:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/installed/playwright/index.mjs \
+CHROME_PATH=/absolute/owned/chrome \
+node packages/bigquery/scripts/analytical-browser-smoke.mjs
+```
+
+This test imports the built public `/analytical` entry in native Chrome. A
+synthetic GIS token callback is verified through the production Google identity
+provider's fixed discovery and UserInfo URLs. The analytical client uses a
+protected test preparation callback and the browser's `IndexedDBLedger`. Exact
+logical Google URLs are rewritten only to a loopback fixture origin; native
+`fetch` still performs authorization preflights and CORS checks. The success
+case observes metadata, two dry runs and one capped synthetic submission,
+delivers one synthetic row, and confirms the ledger did not retain the cell.
+The denial case removes CORS permission at the first dry-run preflight and
+confirms that no POST, approval, or run occurred. Browser requests outside the
+two owned loopback origins fail. The script closes Chrome and both ephemeral
+listeners even when an assertion fails.
+
+Its receipt establishes a source-local network/browser acceptance seam only.
+It does not exercise a real Google OAuth client, Google endpoint or job, IAM,
+deployed CORS, provider result retention, or source rights. Synthetic fixtures
+are not source snapshots or claims about live BigQuery data.
