@@ -141,6 +141,12 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.20.0
+      - name: Install the declared BigQuery runtime floor
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.0.0'
+      - name: Record the Node 20 runtime path
+        run: echo "BIGQUERY_NODE20=$(command -v node)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -155,6 +161,8 @@ jobs:
       - name: Publish changed versions and tag their npm source commits
         env:
           NPM_CONFIG_PROVENANCE: 'true'
+          BIGQUERY_ARTIFACT_DIR: ${{ runner.temp }}/bigquery-release
+          BIGQUERY_CONSUMER_DIR: ${{ runner.temp }}/bigquery-release-consumer
         run: |
           set -euo pipefail
           source_sha=$(git rev-parse HEAD)
@@ -172,19 +180,47 @@ jobs:
             if [[ "$version" == "$previous_version" ]]; then
               continue
             fi
+            if [[ "$package" == bigquery ]]; then
+              # Pack exactly once from the checked build, binding its gitHead
+              # without modifying the frozen checkout. Retain the original bytes.
+              node .github/scripts/prepare-bigquery-release.mjs pack "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version"
+              receipt="$BIGQUERY_ARTIFACT_DIR/packed-artifact.json"
+              tarball=$(jq -r '.tarball' "$receipt")
+              checker_status=0
+              EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
+                EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
+                EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
+                node .github/scripts/check-bigquery-tarball.mjs "$tarball" "$BIGQUERY_CONSUMER_DIR" "$BIGQUERY_NODE20" "$(command -v node)" \
+                2>&1 | tee "$BIGQUERY_ARTIFACT_DIR/check.log" || checker_status=$?
+              # Preserve partial fixture reports before propagating a failure.
+              if [[ -d "$BIGQUERY_CONSUMER_DIR" ]]; then
+                find "$BIGQUERY_CONSUMER_DIR" -maxdepth 1 -type f \( -name 'parity-*.json' -o -name 'http-*.json' \) \
+                  -exec cp '{}' "$BIGQUERY_ARTIFACT_DIR/" \;
+              fi
+              [[ "$checker_status" == 0 ]] || exit "$checker_status"
+              cp "$BIGQUERY_CONSUMER_DIR/artifact-receipt.json" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+              cp "$BIGQUERY_CONSUMER_DIR"/parity-*.json "$BIGQUERY_CONSUMER_DIR"/http-*.json "$BIGQUERY_ARTIFACT_DIR/"
+              node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+            fi
             # Only an explicit registry 404 permits publication; network/auth errors fail closed.
             http_status=$(curl --silent --show-error --retry 2 --output "$registry_metadata" \
               --write-out '%{http_code}' "https://registry.npmjs.org/${name/\//%2f}/$version")
             if [[ "$http_status" == '404' ]]; then
               jq -e --arg missing "version not found: $version" '. == "Not Found" or . == $missing' "$registry_metadata" >/dev/null
-              (cd "packages/$package" && npm publish --access public --provenance --registry=https://registry.npmjs.org)
+              if [[ "$package" == bigquery ]]; then
+                # Verify again immediately before the sole publication call.
+                node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+                npm publish "$tarball" --ignore-scripts --access public --provenance --registry=https://registry.npmjs.org
+              else
+                (cd "packages/$package" && npm publish --access public --provenance --registry=https://registry.npmjs.org)
+              fi
             elif [[ "$http_status" != '200' ]]; then
               echo "Registry lookup failed with HTTP $http_status" >&2
               exit 1
             fi
             metadata=''
             for attempt in {1..20}; do
-              if metadata=$(npm view "$name@$version" name version gitHead --json 2>/dev/null); then
+              if metadata=$(npm view "$name@$version" name version gitHead dist.integrity --json 2>/dev/null); then
                 break
               fi
               echo "Waiting for npm metadata for $name@$version (attempt $attempt)" >&2
@@ -193,6 +229,12 @@ jobs:
             [[ "$(jq -r '.name' <<< "$metadata")" == "$name" ]] || exit 1
             [[ "$(jq -r '.version' <<< "$metadata")" == "$version" ]] || exit 1
             [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$source_sha" ]] || exit 1
+            if [[ "$package" == bigquery ]]; then
+              # npm view with selected fields returns a literal dotted key.
+              [[ "$(jq -r '.["dist.integrity"]' <<< "$metadata")" == "$(jq -r '.integrity' "$receipt")" ]] || exit 1
+              node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+              printf '%s\n' "$metadata" > "$BIGQUERY_ARTIFACT_DIR/registry-metadata.json"
+            fi
             tag="$package@v$version"
             git fetch origin tag "$tag" 2>/dev/null || true
             if git rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
@@ -202,3 +244,10 @@ jobs:
             git tag -a "$tag" "$source_sha" -m "$name $version"
             git push origin "refs/tags/$tag"
           done
+      - name: Retain BigQuery release artifact and gate receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bigquery-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+          path: ${{ runner.temp }}/bigquery-release
+          if-no-files-found: ignore
