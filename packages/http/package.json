@@ -19,7 +19,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "eslint . && vitest run && tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.build.json && eslint . && vitest run",
+    "check:clean-output": "node scripts/check-clean-output.mjs",
     "lint": "eslint .",
     "prepack": "npm run build",
     "test": "vitest run",

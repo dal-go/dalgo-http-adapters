@@ -70,6 +70,7 @@ against invented XML and currency descriptors. Run with Node 24:
 ```sh
 pnpm install --frozen-lockfile
 pnpm --filter @dal-go/dalgo2http check
+pnpm --filter @dal-go/dalgo2http run check:clean-output
 pnpm --filter @dal-go/dalgo2http exec tsc -p tsconfig.browser-fixture.json
 node packages/http/scripts/browser-smoke.mjs
 ```
@@ -84,6 +85,13 @@ older core. A local import map serves that core, HTTP dist and the same core's
 YAML browser entry/subtree from allowlisted installed package paths. No CDN or
 bundler is involved. The typed helper under `test` compiles to ignored
 `.browser-fixture-dist`, outside package exports and public `dist`.
+
+The official HTTP check builds its public exports before typed lint and tests
+resolve the fixture's self-package import. `check:clean-output` copies source,
+tests and config into an owned temporary directory without `dist` or fixture
+output, reuses installed dependencies, runs that same official check and removes
+the copy in `finally`. CI runs this regression even when earlier steps have built
+the workspace; no committed or cached output can satisfy its bootstrap check.
 
 The trusted test-only Fetch rewrites only the exact admitted ECB URL to the
 second loopback origin, substitutes `Response.url`, and retains native CORS.
