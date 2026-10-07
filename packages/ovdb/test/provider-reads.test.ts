@@ -1,5 +1,5 @@
 import {
-  collection, providerEvidenceDigest, type ProviderReadPlan, type QueryMetadata, type SourceRight,
+  UnsupportedError, collection, providerEvidenceDigest, type ProviderReadPlan, type QueryMetadata, type SourceRight,
 } from "@dalgo/core";
 import { describe, expect, it, vi } from "vitest";
 import { OpenVaultDbClient, OpenVaultDbDatabase, OpenVaultDbHttpError, createOpenVaultDbExecutionId } from "../src/index.js";
@@ -201,6 +201,85 @@ describe("OpenVaultDB provider reads transport", () => {
     expect(result.metadata).toMatchObject(legacy);
     await expect(database(fetchResponse(() => new Response(JSON.stringify({ ...point, ...metadata }))))
       .get(daily.key("synthetic"))).rejects.toThrow("provider point reads");
+  });
+
+  it("refuses raw composition-only and mixed query responses, including empty or malformed rows", async () => {
+    const { metadata, plan } = await fixture();
+    const decode = vi.fn((value: unknown) => value);
+    const query = collection("daily", { codec: { encode: (value: unknown) => value, decode } }).query().build();
+    for (const sourceComposition of [null, {}, { format: "dalgo-source-composition/1", inputs: [] }]) {
+      for (const mixed of [false, true]) {
+        for (const records of [[], [{ key: "daily/synthetic", data: { rate: "001.23000" } }], null]) {
+          const body = { ...(mixed ? metadata : {}), sourceComposition };
+          await expect(database(fetchResponse(() => response(body, records))).query(
+            query, mixed ? { providerReadPlan: plan } : undefined,
+          )).rejects.toThrow("sourceComposition");
+        }
+      }
+    }
+    expect(decode).not.toHaveBeenCalled();
+  });
+
+  it("refuses raw composition-only and mixed point reads before codec output", async () => {
+    const { metadata } = await fixture();
+    const decode = vi.fn((value: unknown) => value);
+    for (const sourceComposition of [null, {}, { format: "dalgo-source-composition/1", inputs: [] }]) {
+      for (const mixed of [false, true]) {
+        const body = { key: "daily/synthetic", data: { rate: "001.23000" }, ...(mixed ? metadata : {}), sourceComposition };
+        await expect(database(fetchResponse(() => new Response(JSON.stringify(body))))
+          .get(daily.key("synthetic"), { encode: (value: unknown) => value, decode })).rejects.toThrow("sourceComposition");
+      }
+    }
+    expect(decode).not.toHaveBeenCalled();
+  });
+
+  it("rejects own composition presence without reading its value, metadata or rows", async () => {
+    const { metadata, plan } = await fixture();
+    // Instrument the raw parsed object to prove ordering; wire JSON cannot
+    // express getters or an own undefined value.
+    for (const pointRead of [false, true]) {
+      for (const sourceComposition of [undefined, null]) {
+        const composition = vi.fn(() => sourceComposition);
+        const providerReads = vi.fn(() => metadata.providerReads);
+        const rows = vi.fn(() => { throw new Error("rows accessed"); });
+        const decode = vi.fn((value: unknown) => value);
+        const raw = Object.defineProperties({}, {
+          sourceComposition: { get: composition },
+          providerReads: { get: providerReads },
+          sourceRights: { get: rows },
+          usedSourceIds: { get: rows },
+          records: { get: rows },
+          data: { get: rows },
+        });
+        const parse = vi.spyOn(JSON, "parse").mockReturnValueOnce(raw);
+        try {
+          const db = database(fetchResponse(() => new Response("{}", { headers: { "Cache-Control": "no-store" } })));
+          const codec = { encode: (value: unknown) => value, decode };
+          const result = pointRead
+            ? db.get(daily.key("synthetic"), codec)
+            : db.query(collection("daily", { codec }).query().build(), { providerReadPlan: plan });
+          await expect(result).rejects.toBeInstanceOf(UnsupportedError);
+          expect(composition).not.toHaveBeenCalled();
+          expect(providerReads).not.toHaveBeenCalled();
+          expect(rows).not.toHaveBeenCalled();
+          expect(decode).not.toHaveBeenCalled();
+        } finally {
+          parse.mockRestore();
+        }
+      }
+    }
+  });
+
+  it("does not commit buffered writes after a composition-bearing transaction read", async () => {
+    const fetcher = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response(JSON.stringify({
+      key: "daily/synthetic", data: { rate: "001.23000" }, sourceComposition: null,
+    }))));
+    await expect(database(fetcher).runReadwriteTransaction(async (transaction) => {
+      await transaction.set(daily.key("buffered"), { rate: "synthetic" });
+      await transaction.update(daily.key("synthetic"), { rate: "changed" });
+    })).rejects.toThrow("sourceComposition");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0]?.[0]).toContain("/records/daily/synthetic");
   });
 
   it("bounds and validates failed response bodies without retaining their supplied content", async () => {

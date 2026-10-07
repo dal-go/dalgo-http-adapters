@@ -47,6 +47,10 @@ function queryResponse(value: unknown): WireQueryResponse {
     throw new TypeError("invalid OpenVaultDB query response");
   }
   const body = value as Record<string, unknown>;
+  // Check the raw field before legacy snapshotting can drop it or rows are read.
+  if (Object.hasOwn(body, "sourceComposition")) {
+    throw new UnsupportedError("OpenVaultDB sourceComposition responses");
+  }
   if (!Array.isArray(body.records)) throw new TypeError("OpenVaultDB records must be an array");
   for (const record of body.records as unknown[]) {
     if (typeof record !== "object" || record === null || Array.isArray(record)
