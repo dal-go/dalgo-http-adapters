@@ -53,17 +53,63 @@ const page = await executor.query(
 );
 ```
 
-DALgo core currently refuses rights-annotated pages in JOIN/recursive execution.
-Keep that gate: single-feed execution is available here, while federated joins
-require separate rights-aware core composition work. Registry discovery alone
-does not establish live query eligibility.
+Legacy DALgo JOIN/recursive execution continues to refuse rights-annotated pages.
+The distinct `executeSourceComposedJoinedDTQLQuery` entry point supports the
+reviewed JS-local materialized route. HTTP alone adopts core commit
+`4c10c34fbd0ae9d0b020015f834b893be82f4dd0` at source version 0.5.0; this SHA
+pin is not a registry publication or a claim that every 0.5.0 build has the API.
+Public package versions/ranges and the BigQuery release lane are unchanged.
+Registry discovery alone does not establish live query eligibility.
 
 Validation uses fabricated XML/terms only: package tests use test-only jsdom.
 `pnpm --filter @dal-go/dalgo2http check` runs those tests and declaration build.
-After build, `node packages/http/scripts/browser-smoke.mjs` runs a native
-Chromium XML and actual loopback cross-origin CORS pass/fail smoke. Supply
+After build and fixture compilation, the native harness runs actual
+`ECBQueryExecutor`, native Fetch/DOMParser and the separate materialized composer
+against invented XML and currency descriptors. Run with Node 24:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @dal-go/dalgo2http check
+pnpm --filter @dal-go/dalgo2http exec tsc -p tsconfig.browser-fixture.json
+node packages/http/scripts/browser-smoke.mjs
+```
+
+Supply
 `PLAYWRIGHT_MODULE` for an existing Playwright module and optionally `CHROME_PATH`
 for installed Chrome. The harness owns two ephemeral loopback listeners and a
 fresh browser context; both listeners and the browser close in `finally`, and
-all non-fixture requests are blocked. This is synthetic browser evidence only,
-not a real ECB request or npm publication. Independent review is pending.
+all non-fixture requests and service workers are blocked. Native ESM resolution
+from HTTP's scope selects its exact core import-only entry, never the root's
+older core. A local import map serves that core, HTTP dist and the same core's
+YAML browser entry/subtree from allowlisted installed package paths. No CDN or
+bundler is involved. The typed helper under `test` compiles to ignored
+`.browser-fixture-dist`, outside package exports and public `dist`.
+
+The trusted test-only Fetch rewrites only the exact admitted ECB URL to the
+second loopback origin, substitutes `Response.url`, and retains native CORS.
+That declared identity is deliberately synthetic; the harness never sends a
+network request to ECB. It tests normal, projected-away, empty local, WHERE-empty
+and LEFT/null results, direct filtered-empty evidence, native CORS refusal,
+malformed XML, changed/missing admission evidence, mutation, bounds and raw
+unsupported-sink refusal. The receipt asserts exact loopback request counts
+and `providerRequests: 0`.
+
+The local executor admits exactly the fixed descriptor collection, no parent or
+codec, empty filters/orders, no cursors, zero/absent offset and its fixed
+positive limit (complete array length, or 1 when empty). It detaches/freezes
+known literal rows and returns no cursor. Omitted rights are explicitly admitted
+as `unknown-local`, never inferred as permission. ECB's complete scan is
+unfiltered limit 256 with `ecb-full-decoded-feed`, scoped only to the decoded
+fabricated feed. Native currency/date/decimal strings retain their meanings;
+no EUR synthesis or conversion occurs.
+
+The transient viewer validates/snapshots composition before row access and uses
+`textContent` to show rows, original notices, rights status and source scopes,
+even for zero rows. Unsupported sink callbacks refuse raw composition presence
+before row getters or dispatch; no storage handler is implemented. Core budget
+defaults are tightened for this fixture to 512 fetched/result rows, 128 KiB
+retained and 32 KiB metadata. Legacy guards and the OVDB raw-field refusal stay
+intact. No Go/OVDB roundtrip, persistence, public API facade, registry activation
+or end-to-end join cancellation is implied. Real ECB CORS, availability, rights
+admission and host configuration remain separate deployment gates. Independent
+implementation review is pending.

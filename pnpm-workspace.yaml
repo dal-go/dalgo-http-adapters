@@ -2,14 +2,14 @@ packages:
   - "packages/*"
 
 overrides:
-  "@dal-go/dalgo2http>@dalgo/core": github:dal-go/dalgo-js#3c4fd82451ac47e040d1be608fd7a9f2952f1792
+  "@dal-go/dalgo2http>@dalgo/core": github:dal-go/dalgo-js#4c10c34fbd0ae9d0b020015f834b893be82f4dd0
   "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d"
   "@dalgo/bigquery>@dalgo/core": "0.1.0"
   "@dalgo/core": "github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336"
   "@dal-go/dalgo2ovdb>@dalgo/core": "github:dal-go/dalgo-js#5f80adc2fe53cfaef2d6e73bc4e053259deeec3e"
 
 allowBuilds:
-  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/3c4fd82451ac47e040d1be608fd7a9f2952f1792": true
+  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/4c10c34fbd0ae9d0b020015f834b893be82f4dd0": true
   "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/5f80adc2fe53cfaef2d6e73bc4e053259deeec3e": true
   "@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d": true
   "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336": true
