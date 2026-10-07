@@ -1,5 +1,11 @@
 # @dalgo/bigquery
 
+## 0.3.1
+
+### Patch Changes
+
+- bffaccd: Add an opt-in exact-readonly Google token scope policy for metadata pilots, rejecting missing or broader GIS callback grants before identity requests while preserving compatible email and cancellation clients.
+
 ## 0.3.0
 
 ### Minor Changes
