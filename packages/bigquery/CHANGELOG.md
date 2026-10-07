@@ -1,5 +1,11 @@
 # @dalgo/bigquery
 
+## 0.3.0
+
+### Minor Changes
+
+- fbda24f: Add protected metadata discovery exports and use the published @dalgo/core 0.1.0 peer namespace for the ordinary record adapter. Preserve both root and analytical entry points.
+
 ## 0.2.0
 
 ### Minor Changes
