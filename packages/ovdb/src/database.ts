@@ -94,7 +94,13 @@ function applyUpdate(data: Readonly<Record<string, unknown>>, update: UpdateData
 async function getRecord<T>(client: OpenVaultDbClient, key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
   try {
     const response = await client.request(client.recordPath(key));
-    const body = await readOpenVaultDbJson(response) as RecordResponse;
+    const raw = await readOpenVaultDbJson(response);
+    // Presence, including null/malformed values, cannot be laundered by the
+    // legacy metadata snapshot or decoded through the point-read API.
+    if (typeof raw === "object" && raw !== null && Object.hasOwn(raw, "sourceComposition")) {
+      throw new UnsupportedError("OpenVaultDB sourceComposition responses");
+    }
+    const body = raw as RecordResponse;
     // The generic point-read API has no independent provider plan. Never drop
     // live evidence or mislabel an unverified point read as an admitted result.
     if (body.providerReads !== undefined) throw new UnsupportedError("OpenVaultDB provider point reads require a query plan");
