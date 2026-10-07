@@ -9,7 +9,7 @@ import {
   type ReadwriteTransaction,
   type RecordSnapshot,
   type StructuredQuery,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import { compileBigQueryQuery, parameter, quoteTable, validateIdentifier, validateProjectId, type BigQueryParameter } from "./sql.js";
 import type { BigQueryColumn, BigQueryDatabaseOptions, BigQueryQueryMetadata, BigQueryTable } from "./types.js";
 

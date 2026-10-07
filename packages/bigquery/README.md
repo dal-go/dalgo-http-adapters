@@ -93,13 +93,12 @@ confirm that `LIMIT` is not a general scan cap and `useQueryCache: false` does n
 prevent provider result-table materialization. Client no-store/RAM limits cannot
 clear that retention gate.
 
-Package installation/release compatibility is also pending. The ordinary export
-still peers on legacy `@dal-go/dalgo`; this slice changes no dependencies. As of
-6 October 2026, npm `@dalgo/core` is 0.1.0 while its source manifest is 0.5.0,
-and the legacy peer is unpublished. Repository tests use the existing exact Git
-development pins, not proof of published/current-core consumer compatibility.
-The analytical entry has no DALgo runtime import, but this does not clear package
-publication or consumer adoption gates.
+The ordinary export requires `@dalgo/core` with peer range `^0.1.0` and uses
+the exact published `0.1.0` development baseline. A package-specific workspace
+override preserves this registry dependency while other adapters retain their
+separate Git pins. The analytical entry has no DALgo runtime import. Package
+publication and application consumer adoption remain separate gates; this
+contract does not claim compatibility with newer unpublished core source versions.
 
 ## Analytical execution
 
@@ -279,20 +278,19 @@ counter is clamped or dropped. Independent review of the exact candidate and
 both production reports is still required for joint runtime acceptance.
 
 Remaining gates include independent joint review, supplemental timestamp REST
-fixture verification by Go, protected DALgo consumer integration, legacy/core
-migration, actual GIS/browser and CLI/local-server acceptance, canonical
+fixture verification by Go, protected DALgo consumer integration, application core
+adoption, actual GIS/browser and CLI/local-server acceptance, canonical
 source/rights admission, and both operator-authorized live journeys.
-The analytical module has no runtime core import. The ordinary adapter still
-uses the legacy `@dal-go/dalgo` peer; compatibility against exact `@dalgo/core`
-commits `1534acd4d0e4a104c58eba09fb9c25619efc8f24` and
-`04a7f1293ad57a50a282ecc13314ce7b1488211e` remains required. Analytical protocol
-checks do not establish that compatibility. Package publication still requires
+The analytical module has no runtime core import. The ordinary adapter uses
+the published `@dalgo/core@0.1.0` baseline. Application consumers using other
+core source commits still require their own compatibility and adoption checks.
+Analytical protocol checks do not establish application compatibility. Package publication still requires
 root-controlled shared release wiring and permission/provenance gates.
 
-## Legacy DALgo record adapter
+## DALgo record adapter
 
 The ordinary `@dalgo/bigquery` export implements the read and structured-query portions of
-[`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) through BigQuery's
+[`@dalgo/core`](https://github.com/dal-go/dalgo-js) through BigQuery's
 official REST `jobs.query` and `jobs.getQueryResults` endpoints. It uses plain
 `fetch`, not a server SDK.
 
@@ -309,8 +307,8 @@ tokens, or broad project credentials to the browser.
 # Build packages/bigquery from the maintained dalgo-http-adapters repository.
 ```
 
-This revision does not claim an npm release. The legacy core dependency remains
-the explicit `@dal-go/dalgo` version in this package's manifest.
+This revision does not claim an npm release. The required peer is
+`@dalgo/core@^0.1.0`; package development uses exact registry version `0.1.0`.
 
 ## Configure an explicit record projection
 
@@ -320,7 +318,7 @@ identifiers, keeps table names out of application input, and makes parameter
 types explicit.
 
 ```ts
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { BigQueryDatabase } from "@dalgo/bigquery";
 
 interface Item {
