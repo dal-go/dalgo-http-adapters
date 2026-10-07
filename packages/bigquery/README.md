@@ -303,12 +303,14 @@ tokens, or broad project credentials to the browser.
 
 ## Install
 
+Once the package is published to npm:
+
 ```sh
-# Build packages/bigquery from the maintained dalgo-http-adapters repository.
+pnpm add @dalgo/bigquery @dalgo/core
 ```
 
-This revision does not claim an npm release. The required peer is
-`@dalgo/core@^0.1.0`; package development uses exact registry version `0.1.0`.
+The required peer is `@dalgo/core@^0.1.0`; package development uses exact
+registry version `0.1.0`.
 
 ## Configure an explicit record projection
 
@@ -462,11 +464,10 @@ and enforces 8 schema levels, 500 total fields and 65,536 public bytes. Optional
 native descriptors and security/free-text/configuration properties are excluded.
 The vendored shared golden's raw SHA-256 is
 `2dcf87f754c51b7c655a42ff73d27f0e7b0fab79e9d229db06656203d8e63117`.
-Publication rights/provider authenticity require a later independent operator
-review; synthetic output cannot activate any source or clear query, cost,
-rights, billing or retention gates. Neither helper offers jobs, dry runs,
+Provider authenticity requires independent operator review; synthetic output
+cannot activate any source or clear query, cost, rights, billing, or retention
+gates. Neither helper offers jobs, dry runs,
 tables.list, result rows, snapshots, exports or DataTug UI.
 
-This package-local candidate leaves manifest/version/changeset/lockfile/release
-changes with root and the release owner. It does not establish npm publication,
-current-core compatibility or a live deployed-origin OAuth/CORS journey.
+Package publication does not establish compatibility with other `@dalgo/core`
+versions or a live deployed-origin OAuth/CORS journey.
