@@ -306,7 +306,7 @@ tokens, or broad project credentials to the browser.
 Once the package is published to npm:
 
 ```sh
-pnpm add @dalgo/bigquery @dalgo/core
+pnpm add @dalgo/bigquery '@dalgo/core@^0.1.0'
 ```
 
 The required peer is `@dalgo/core@^0.1.0`; package development uses exact
