@@ -28,6 +28,7 @@ for (const name of await readdir(dist, { recursive: true })) {
 }
 
 const cases = ['success', 'cors-refused'];
+const cellSentinel = '73104265098731427';
 const physical = [];
 const violations = [];
 let appOrigin, fixtureOrigin, browser;
@@ -97,7 +98,7 @@ const fixture = createServer(async (req, res) => {
   if (body.dryRun) { res.end(JSON.stringify({ totalBytesProcessed: '100' })); return; }
   res.end(JSON.stringify({ jobReference: { projectId: 'job-project', jobId: 'synthetic-job', location: 'EU' },
     jobComplete: true, schema: { fields: [{ name: 'n', type: 'INTEGER', mode: 'NULLABLE' }] },
-    rows: [{ f: [{ v: '42' }] }] }));
+    rows: [{ f: [{ v: cellSentinel }] }] }));
 });
 const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
 const close = server => new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections(); });
@@ -122,7 +123,7 @@ try {
       page.setDefaultTimeout(5000);
       await page.goto(appOrigin);
       let timer;
-      const result = await Promise.race([page.evaluate(async ({ name, fixtureOrigin }) => {
+      const result = await Promise.race([page.evaluate(async ({ name, fixtureOrigin, cellSentinel }) => {
         const { BigQueryAnalyticalClient, GoogleTokenIdentityProvider, IndexedDBLedger, googleAuthorizationScopes } = await import('/bigquery/analytical.js');
         const check = (condition, message) => { if (!condition) throw Error(message); };
         const source = { version: 1, sourceId: 'synthetic', descriptorDigest: 'synthetic', logicalCollection: 'sample',
@@ -160,13 +161,17 @@ try {
         const approval = await client.approve(preview, preview.approvalDigest);
         const run = await client.execute(approval);
         const first = await run.nextPage();
-        check(first?.rows.length === 1 && first.rows[0][0].value === '42', 'wrong native result');
+        check(first?.rows.length === 1 && first.rows[0][0].value === cellSentinel, 'wrong native result');
         check(first.receipt.job?.jobId === 'synthetic-job' && first.receipt.counters.rows === 1, 'wrong same-job receipt');
         check(await run.nextPage() === null, 'unexpected extra page');
         const state = await ledger.update(value => value);
-        check(!JSON.stringify(state).includes('"v":"42"'), 'result cell persisted in ledger');
+        const retainsCell = value => JSON.stringify(value).includes(cellSentinel);
+        const seededRaw = { ...state, runs: { ...state.runs, __retentionProbe: { rows: [{ f: [{ v: cellSentinel }] }] } } };
+        const seededDecoded = { ...state, runs: { ...state.runs, __retentionProbe: { rows: first.rows } } };
+        check(retainsCell(seededRaw) && retainsCell(seededDecoded), 'retention detector missed positive controls');
+        check(!retainsCell(state), 'result cell persisted in durable ledger');
         return { code: 'success', rows: first.rows.length, job: first.receipt.job.jobId };
-      }, { name, fixtureOrigin }), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('native case deadline')), 20000); })]).finally(() => clearTimeout(timer));
+      }, { name, fixtureOrigin, cellSentinel }), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('native case deadline')), 20000); })]).finally(() => clearTimeout(timer));
       assert.deepEqual(unrelated, []);
       const trace = physical.slice(start);
       const count = (endpoint, method) => trace.filter(item => item.endpoint === endpoint && item.method === method).length;

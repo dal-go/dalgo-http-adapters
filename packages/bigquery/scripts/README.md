@@ -72,6 +72,9 @@ logical Google URLs are rewritten only to a loopback fixture origin; native
 `fetch` still performs authorization preflights and CORS checks. The success
 case observes metadata, two dry runs and one capped synthetic submission,
 delivers one synthetic row, and confirms the ledger did not retain the cell.
+The ledger check uses a distinctive integer sentinel and first proves that
+the same scan catches seeded raw and decoded rows in copies of the durable
+state; those positive controls are never written to IndexedDB.
 The denial case removes CORS permission at the first dry-run preflight and
 confirms that no POST, approval, or run occurred. Browser requests outside the
 two owned loopback origins fail. The script closes Chrome and both ephemeral
@@ -81,3 +84,6 @@ Its receipt establishes a source-local network/browser acceptance seam only.
 It does not exercise a real Google OAuth client, Google endpoint or job, IAM,
 deployed CORS, provider result retention, or source rights. Synthetic fixtures
 are not source snapshots or claims about live BigQuery data.
+The repository CI currently provisions Node and pnpm but no Playwright module
+or Chrome path for these standalone native smokes; package checks run in CI,
+while native-browser acceptance remains an explicitly invoked local gate.
