@@ -169,7 +169,8 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           registry_metadata=$(mktemp)
-          trap 'rm -f "$registry_metadata"' EXIT
+          metadata_error=$(mktemp)
+          trap 'rm -f "$registry_metadata" "$metadata_error"' EXIT
           for package in firestore indexeddb bigquery; do
             manifest="packages/$package/package.json"
             name=$(jq -r '.name' "$manifest")
@@ -205,27 +206,55 @@ jobs:
             # Only an explicit registry 404 permits publication; network/auth errors fail closed.
             http_status=$(curl --silent --show-error --retry 2 --output "$registry_metadata" \
               --write-out '%{http_code}' "https://registry.npmjs.org/${name/\//%2f}/$version")
+            publication='already present in registry'
             if [[ "$http_status" == '404' ]]; then
               jq -e --arg missing "version not found: $version" '. == "Not Found" or . == $missing' "$registry_metadata" >/dev/null
               if [[ "$package" == bigquery ]]; then
                 # Verify again immediately before the sole publication call.
                 node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
-                npm publish "$tarball" --ignore-scripts --access public --provenance --registry=https://registry.npmjs.org
+                if ! npm publish "$tarball" --ignore-scripts --access public --provenance --registry=https://registry.npmjs.org; then
+                  echo "::error::npm publish failed for $name@$version; metadata verification and tagging were not attempted. Inspect the publish diagnostics above." >&2
+                  exit 1
+                fi
               else
-                (cd "packages/$package" && npm publish --access public --provenance --registry=https://registry.npmjs.org)
+                if ! (cd "packages/$package" && npm publish --access public --provenance --registry=https://registry.npmjs.org); then
+                  echo "::error::npm publish failed for $name@$version; metadata verification and tagging were not attempted. Inspect the publish diagnostics above." >&2
+                  exit 1
+                fi
               fi
+              publication='npm publish succeeded'
             elif [[ "$http_status" != '200' ]]; then
               echo "Registry lookup failed with HTTP $http_status" >&2
               exit 1
             fi
             metadata=''
-            for attempt in {1..20}; do
-              if metadata=$(npm view "$name@$version" name version gitHead dist.integrity --json 2>/dev/null); then
+            metadata_verified=false
+            # Allow ten minutes of propagation delays; each request has a ten
+            # second process timeout, two second kill grace, and no npm retries
+            # (under 18 minutes total, including the 39 sleeps).
+            for attempt in {1..40}; do
+              if metadata=$(timeout --kill-after=2s 10s npm view "$name@$version" name version gitHead dist.integrity --json \
+                --registry=https://registry.npmjs.org --prefer-online --fetch-retries=0 --fetch-timeout=10000 2>"$metadata_error"); then
+                metadata_verified=true
                 break
               fi
-              echo "Waiting for npm metadata for $name@$version (attempt $attempt)" >&2
-              sleep 15
+              cat "$metadata_error" >&2
+              if grep -Eq 'E401|E403|ENEEDAUTH' "$metadata_error"; then
+                echo "::error::$publication for $name@$version, but registry verification was denied. Inspect npm authentication diagnostics above; no source tag was created." >&2
+                exit 1
+              fi
+              if grep -Fq 'E404' "$metadata_error"; then
+                lookup_state='registry has not indexed this version'
+              else
+                lookup_state='registry lookup failed; indexing state is unknown'
+              fi
+              echo "$publication for $name@$version; $lookup_state (attempt $attempt/40)" >&2
+              if [[ "$attempt" -lt 40 ]]; then sleep 15; fi
             done
+            if [[ "$metadata_verified" != true ]]; then
+              echo "::error::$publication for $name@$version; $lookup_state after bounded verification. No source tag was created. Retry this workflow with release_sha=$source_sha after resolving the lookup; the registry preflight skips versions already present." >&2
+              exit 1
+            fi
             [[ "$(jq -r '.name' <<< "$metadata")" == "$name" ]] || exit 1
             [[ "$(jq -r '.version' <<< "$metadata")" == "$version" ]] || exit 1
             [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$source_sha" ]] || exit 1
