@@ -55,9 +55,13 @@ const page = await executor.query(
 Legacy DALgo JOIN/recursive execution continues to refuse rights-annotated pages.
 The distinct `executeSourceComposedJoinedDTQLQuery` entry point supports the
 reviewed JS-local materialized route. The release gate installs exact registry `@dalgo/core@0.5.0` and the packed HTTP
-artifact in an isolated consumer. Until that core release is available, the
-workspace retains its reviewed immutable development pin and this release-readiness
-branch must remain unmerged. The pin is never a published runtime dependency.
+artifact in an isolated consumer. HTTP uses the verified public registry core
+0.5.0 in its workspace lockfile, with a package-specific override that preserves
+other adapters' independent core contracts.
+The public 0.5.0 artifact does not export the materialized source-composition
+API used by the synthetic consumer below. This readiness branch remains blocked
+until a reviewed core registry release supplies that API; its peer floor,
+workspace lock and release-consumer identity must then be updated together.
 The HTTP-only patch changeset produces version 0.1.1 in a reviewed version PR;
 changing package visibility alone does not satisfy the changed-version release gate.
 Registry discovery alone does not establish live query eligibility.
@@ -81,7 +85,7 @@ Supply
 for installed Chrome. The harness owns two ephemeral loopback listeners and a
 fresh browser context; both listeners and the browser close in `finally`, and
 all non-fixture requests and service workers are blocked. Native ESM resolution
-from HTTP's scope selects its exact core import-only entry, never the root's
+from HTTP's scope selects its registry core 0.5.0 import-only entry, never the root's
 older core. A local import map serves that core, HTTP dist and the same core's
 YAML browser entry/subtree from allowlisted installed package paths. No CDN or
 bundler is involved. The typed helper under `test` compiles to ignored

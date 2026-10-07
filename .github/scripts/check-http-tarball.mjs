@@ -27,7 +27,7 @@ const lock = JSON.parse(readFileSync(resolve(destination, 'package-lock.json'), 
 const core = lock.packages['node_modules/@dalgo/core'];
 assert.equal(core?.version, '0.5.0');
 assert.equal(core.resolved, 'https://registry.npmjs.org/@dalgo/core/-/core-0.5.0.tgz');
-assert.match(core.integrity, /^sha512-/);
+assert.equal(core.integrity, 'sha512-pb5b4ia7iO4gxmVKs+7UZZNn3f8iVDIS9T68w830Y7T1Jlilx3dgdtbQXm2kk0kyOicBOLVlur60tqoPYUmTvA==');
 assert.equal(Object.keys(lock.packages).filter(p => p.endsWith('node_modules/@dalgo/core')).length, 1);
 assert.ok(!lock.packages['node_modules/@dal-go/dalgo']);
 for (const [path, pkg] of Object.entries(lock.packages)) {

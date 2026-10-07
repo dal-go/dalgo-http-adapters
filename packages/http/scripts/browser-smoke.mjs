@@ -12,7 +12,7 @@ const httpRoot = process.env.HTTP_PACKAGE_ROOT ?? fileURLToPath(new URL('..', im
 const coreEntry = process.env.CORE_PACKAGE_ROOT ? join(process.env.CORE_PACKAGE_ROOT, 'dist/index.js') : fileURLToPath(import.meta.resolve('@dalgo/core'));
 const registryConsumer = !!process.env.CORE_PACKAGE_ROOT;
 if (registryConsumer) assert.equal(JSON.parse(await readFile(join(process.env.CORE_PACKAGE_ROOT, 'package.json'), 'utf8')).version, '0.5.0');
-else assert.ok(coreEntry.includes('4c10c34fbd0ae9d0b020015f834b893be82f4dd0'), 'HTTP must own the exact reviewed core SHA');
+else assert.equal(JSON.parse(await readFile(join(dirname(coreEntry), '../package.json'), 'utf8')).version, '0.5.0');
 const yamlRoot = join(dirname(createRequire(coreEntry).resolve('yaml/package.json')), 'browser');
 const assets = new Map();
 for (const [prefix, root] of [['/http/', join(httpRoot, 'dist')], ['/core/', dirname(coreEntry)], ['/yaml/', yamlRoot], ['/fixture/', process.env.HTTP_FIXTURE_ROOT ?? join(httpRoot, '.browser-fixture-dist')]]) {
@@ -149,7 +149,7 @@ try {
   for (const flags of [result.parserRefusals, result.bounds, result.sinks]) assert.ok(flags.every(Boolean));
   assert.deepEqual(result.viewerCases, ['normal', 'projected', 'empty-local', 'where-empty', 'left']); assert.deepEqual(blocked, []);
   assert.deepEqual(requests, [...Array(6).fill('/pass.xml'), '/fail.xml', '/malformed.xml', ...Array(6).fill('/pass.xml')]); assert.equal(result.calls, requests.length);
-  console.log(JSON.stringify({ synthetic: true, browser: browser.version(), core: registryConsumer ? 'registry:0.5.0' : 'git:4c10c34fbd0ae9d0b020015f834b893be82f4dd0', cases: result.cases.map(value => ({ name: value.name, rowCount: value.rows.length, rights: value.notices.map(notice => notice.rightsStatus), evidenceReads: 1 })), refusals: { cors: result.corsFailure, malformed: result.malformedFailure, invalidLater: result.invalidLater, mismatch: result.mismatch, missingEvidence: result.missingEvidence, changedEvidence: result.changedEvidence, bounds: result.bounds.length, unsupportedSinks: result.sinks.length }, fixtureRequests: requests, blockedExternalRequests: blocked, providerRequests: 0 }));
+  console.log(JSON.stringify({ synthetic: true, browser: browser.version(), core: 'registry:0.5.0', cases: result.cases.map(value => ({ name: value.name, rowCount: value.rows.length, rights: value.notices.map(notice => notice.rightsStatus), evidenceReads: 1 })), refusals: { cors: result.corsFailure, malformed: result.malformedFailure, invalidLater: result.invalidLater, mismatch: result.mismatch, missingEvidence: result.missingEvidence, changedEvidence: result.changedEvidence, bounds: result.bounds.length, unsupportedSinks: result.sinks.length }, fixtureRequests: requests, blockedExternalRequests: blocked, providerRequests: 0 }));
 } finally {
   await browser?.close();
   if (fixture.listening) await close(fixture);
