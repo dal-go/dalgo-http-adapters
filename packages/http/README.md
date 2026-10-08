@@ -24,7 +24,7 @@ this package's structural checks do not establish permission or publisher trust.
 It validates the core's plan/digest/rights/budget rules before HTTP using a
 private discarded validation probe, then validates only the actual observation
 before returning records. All rights and read metadata are detached, including
-when filters produce no rows. Raw XML is absent from evidence. The public peer contract requires registry `@dalgo/core >=0.5.0 <0.6.0`.
+when filters produce no rows. Raw XML is absent from evidence. The public peer contract requires registry `@dalgo/core >=0.6.0 <0.7.0`.
 
 The injected Fetch must be trusted and honor the request. Every query performs
 a fresh bounded GET with `mode: cors`, `cache: no-store`, `redirect: error`, and
@@ -54,14 +54,13 @@ const page = await executor.query(
 
 Legacy DALgo JOIN/recursive execution continues to refuse rights-annotated pages.
 The distinct `executeSourceComposedJoinedDTQLQuery` entry point supports the
-reviewed JS-local materialized route. The release gate installs exact registry `@dalgo/core@0.5.0` and the packed HTTP
+reviewed JS-local materialized route. The release gate installs exact registry `@dalgo/core@0.6.0` and the packed HTTP
 artifact in an isolated consumer. HTTP uses the verified public registry core
-0.5.0 in its workspace lockfile, with a package-specific override that preserves
+0.6.0 in its workspace lockfile, with a package-specific override that preserves
 other adapters' independent core contracts.
-The public 0.5.0 artifact does not export the materialized source-composition
-API used by the synthetic consumer below. This readiness branch remains blocked
-until a reviewed core registry release supplies that API; its peer floor,
-workspace lock and release-consumer identity must then be updated together.
+The public 0.6.0 artifact exports the materialized source-composition API used
+by the synthetic consumer below. The peer floor, workspace lock and release
+consumer identity bind to that published version and its registry integrity.
 The HTTP-only patch changeset produces version 0.1.1 in a reviewed version PR;
 changing package visibility alone does not satisfy the changed-version release gate.
 Registry discovery alone does not establish live query eligibility.
@@ -85,7 +84,7 @@ Supply
 for installed Chrome. The harness owns two ephemeral loopback listeners and a
 fresh browser context; both listeners and the browser close in `finally`, and
 all non-fixture requests and service workers are blocked. Native ESM resolution
-from HTTP's scope selects its registry core 0.5.0 import-only entry, never the root's
+from HTTP's scope selects its registry core 0.6.0 import-only entry, never the root's
 older core. A local import map serves that core, HTTP dist and the same core's
 YAML browser entry/subtree from allowlisted installed package paths. No CDN or
 bundler is involved. The typed helper under `test` compiles to ignored

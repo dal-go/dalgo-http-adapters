@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@dal-go/dalgo2http>@dalgo/core': 0.5.0
+  '@dal-go/dalgo2http>@dalgo/core': 0.6.0
   '@dal-go/dalgo': github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
   '@dalgo/bigquery>@dalgo/core': 0.1.0
   '@dalgo/core': github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
@@ -387,8 +387,8 @@ importers:
   packages/http:
     devDependencies:
       '@dalgo/core':
-        specifier: 0.5.0
-        version: 0.5.0
+        specifier: 0.6.0
+        version: 0.6.0
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -1029,8 +1029,8 @@ packages:
     resolution: {integrity: sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==}
     engines: {node: '>=20'}
 
-  '@dalgo/core@0.5.0':
-    resolution: {integrity: sha512-pb5b4ia7iO4gxmVKs+7UZZNn3f8iVDIS9T68w830Y7T1Jlilx3dgdtbQXm2kk0kyOicBOLVlur60tqoPYUmTvA==}
+  '@dalgo/core@0.6.0':
+    resolution: {integrity: sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==}
     engines: {node: '>=20'}
 
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/5f80adc2fe53cfaef2d6e73bc4e053259deeec3e':
@@ -2795,7 +2795,7 @@ snapshots:
 
   '@dalgo/core@0.1.0': {}
 
-  '@dalgo/core@0.5.0':
+  '@dalgo/core@0.6.0':
     dependencies:
       yaml: 2.8.2
 

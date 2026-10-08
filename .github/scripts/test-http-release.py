@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix='http-artifact-guards-') as directory:
         print('PASS pack', case)
     artifact = root/'valid'
     original = json.loads((artifact/'packed-artifact.json').read_text())
-    consumer = dict(original, core={'version':'0.5.0', 'resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.5.0.tgz', 'integrity':'sha512-pb5b4ia7iO4gxmVKs+7UZZNn3f8iVDIS9T68w830Y7T1Jlilx3dgdtbQXm2kk0kyOicBOLVlur60tqoPYUmTvA=='}, browser={'synthetic':True, 'providerRequests':0, 'blockedExternalRequests':[], 'core':'registry:0.5.0'})
+    consumer = dict(original, core={'version':'0.6.0', 'resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz', 'integrity':'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=='}, browser={'synthetic':True, 'providerRequests':0, 'blockedExternalRequests':[], 'core':'registry:0.6.0'})
     receipt = root/'tested.json'
     for case in ['valid', 'changed_integrity', 'wrong_source', 'git_core', 'wrong_core', 'provider_request', 'missing_browser']:
         changed = json.loads(json.dumps(consumer))
