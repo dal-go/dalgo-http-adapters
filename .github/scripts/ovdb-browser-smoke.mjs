@@ -6,15 +6,16 @@ await build({ entryPoints: ['test/browser-fixture.ts'], bundle: true, platform: 
 const { readFileSync } = await import('node:fs');
 const browser = await chromium.launch({ headless: true });
 const blocked = [], prepared = new Map();
-let nativeDefaultPosts = 0;
+const nativePosts = { default: 0, explicit: 0 };
 try {
   const page = await browser.newPage();
-  await page.exposeFunction('prepareNativeResponse', (endpoint, executionId, body) => {
+  await page.exposeFunction('prepareNativeResponse', (endpoint, executionId, body, mode) => {
     assert.equal(endpoint, 'https://worker.example/ecb-public/v1/databases/ecb/dtql');
     assert.match(executionId, /^[a-f0-9]{32}$/);
     assert.equal(JSON.parse(body).providerReads.execution.id, executionId);
     assert.ok(!prepared.has(executionId));
-    prepared.set(executionId, body);
+    assert.ok(mode === "default" || mode === "explicit");
+    prepared.set(executionId, { body, mode });
   });
   await page.route('**/*', async route => {
     const request = route.request(), url = request.url();
@@ -28,23 +29,26 @@ try {
       assert.equal(request.headers().cookie, undefined);
       assert.equal(request.headers().authorization, undefined);
       assert.deepEqual(parse(request.postData()), { from: { name: 'daily' }, limit: 50 });
-      const id = request.headers()['ovdb-execution-id'], body = prepared.get(id);
-      assert.ok(body, 'native request must use the prepared owner nonce');
+      const id = request.headers()['ovdb-execution-id'], preparedResponse = prepared.get(id);
+      assert.ok(preparedResponse, 'native request must use the prepared owner nonce');
       prepared.delete(id);
-      nativeDefaultPosts++;
-      return route.fulfill({ contentType: 'application/json', headers, body });
+      nativePosts[preparedResponse.mode]++;
+      return route.fulfill({ contentType: 'application/json', headers, body: preparedResponse.body });
     }
     blocked.push(url); await route.abort();
   });
   await page.goto('https://directory.example/');
   const proof = await page.evaluate(() => window.proof);
-  assert.equal(nativeDefaultPosts, 2, 'both public exports must POST through untouched native Fetch');
+  assert.equal(nativePosts.default, 2, 'both public exports must POST through default native Fetch');
+  assert.equal(nativePosts.explicit, 2, 'both public exports must POST through explicit global native Fetch');
   assert.equal(proof.defaultNativeFetch, true);
   assert.equal(proof.nativeDefaultRows, 2);
+  assert.equal(proof.explicitNativeFetch, true);
+  assert.equal(proof.nativeExplicitRows, 2);
   assert.equal(prepared.size, 0);
   if (blocked.length) throw new Error('external browser request refused');
-  console.log(JSON.stringify({ ...proof, nativeDefaultPosts, blockedExternalRequests: blocked }));
+  console.log(JSON.stringify({ ...proof, nativeDefaultPosts: nativePosts.default, nativeExplicitPosts: nativePosts.explicit, blockedExternalRequests: blocked }));
 } catch (error) {
-  console.error(JSON.stringify({ nativeDefaultPosts, blockedExternalRequests: blocked }));
+  console.error(JSON.stringify({ nativeDefaultPosts: nativePosts.default, nativeExplicitPosts: nativePosts.explicit, blockedExternalRequests: blocked }));
   throw error;
 } finally { await browser.close(); }

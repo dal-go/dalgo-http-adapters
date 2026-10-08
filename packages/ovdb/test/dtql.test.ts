@@ -44,6 +44,26 @@ describe("completed native DTQL executor", () => {
     expect((await executor.query(query())).records[0]?.data.rate).toBe("001.23000");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it("binds an explicit current global Fetch override to its global receiver", async () => {
+    const handle = owner(), f = await fixture(createOpenVaultDbExecutionId(handle.budget));
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(function (this: unknown) {
+      expect(this).toBe(globalThis);
+      return Promise.resolve(response(f.metadata));
+    });
+    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: globalThis.fetch });
+    expect((await executor.query(query())).records[0]?.data.rate).toBe("001.23000");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("preserves a custom injected Fetch function and its receiver semantics", async () => {
+    const handle = owner(), f = await fixture(createOpenVaultDbExecutionId(handle.budget));
+    const fetcher = vi.fn<typeof fetch>(function () {
+      return Promise.resolve(response(f.metadata));
+    });
+    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: fetcher });
+    expect((await executor.query(query())).records[0]?.data.rate).toBe("001.23000");
+    expect(fetcher.mock.contexts[0]).toBe(executor);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("preserves mandatory evidence on zero results", async () => {
     const s = await setup(); s.fetcher.mockResolvedValueOnce(response(s.metadata, []));
     expect(await s.executor.query(query())).toEqual({ ...s.metadata, records: [], complete: true });
