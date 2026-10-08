@@ -141,12 +141,14 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.20.0
-      - name: Install the declared BigQuery runtime floor
+      - name: Install the declared adapter runtime floor
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.0.0'
       - name: Record the Node 20 runtime path
-        run: echo "BIGQUERY_NODE20=$(command -v node)" >> "$GITHUB_ENV"
+        run: |
+          echo "BIGQUERY_NODE20=$(command -v node)" >> "$GITHUB_ENV"
+          echo "HTTP_NODE20=$(command -v node)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -218,7 +220,7 @@ jobs:
               EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
                 EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
                 EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
-                node .github/scripts/check-http-tarball.mjs "$tarball" "$HTTP_CONSUMER_DIR"
+                node .github/scripts/check-http-tarball.mjs "$tarball" "$HTTP_CONSUMER_DIR" "$HTTP_NODE20" "$(command -v node)"
               cp "$HTTP_CONSUMER_DIR/artifact-receipt.json" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
               node .github/scripts/prepare-http-release.mjs verify "$HTTP_ARTIFACT_DIR" "$source_sha" "$version" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
             fi

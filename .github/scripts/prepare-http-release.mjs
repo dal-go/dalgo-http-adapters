@@ -64,5 +64,12 @@ if (mode === "pack") {
   failUnless(consumer.sourceSHA === sourceSHA && Object.entries(identity).every(([key, value]) => consumer.package?.[key] === value), "wrong tested package/version/gitHead");
   failUnless(consumer.core?.version === "0.6.0" && consumer.core.resolved === "https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz" && consumer.core.integrity === "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==", "wrong tested registry core");
   failUnless(consumer.browser?.synthetic === true && consumer.browser.providerRequests === 0 && consumer.browser.blockedExternalRequests?.length === 0 && consumer.browser.core === "registry:0.6.0", "native synthetic registry consumer receipt required");
+  failUnless(Array.isArray(consumer.runtimes) && consumer.runtimes.length === 2, "Node 20 and Node 24 runtime receipts required");
+  for (const [index, major] of [20, 24].entries()) {
+    const proof = consumer.runtimes[index];
+    failUnless(typeof proof?.nodeVersion === "string" && new RegExp(`^v${major}\\.`).test(proof.nodeVersion), `wrong Node ${major} runtime`);
+    failUnless(proof.synthetic === true && proof.typedImports === true && proof.localComposedRows === 1 && proof.preIORefusal === true && proof.providerRequests === 0 && proof.core === "registry:0.6.0", "strict typed/public synthetic runtime proof required");
+    failUnless(proof.sourceSHA === sourceSHA && proof.sha256 === hashes.sha256 && proof.integrity === hashes.integrity && Object.entries(identity).every(([key, value]) => proof.package?.[key] === value), "runtime artifact identity mismatch");
+  }
   inspect(receipt.tarball);
 }

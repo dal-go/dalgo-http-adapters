@@ -35,8 +35,9 @@ with tempfile.TemporaryDirectory(prefix='http-artifact-guards-') as directory:
     artifact = root/'valid'
     original = json.loads((artifact/'packed-artifact.json').read_text())
     consumer = dict(original, core={'version':'0.6.0', 'resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz', 'integrity':'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=='}, browser={'synthetic':True, 'providerRequests':0, 'blockedExternalRequests':[], 'core':'registry:0.6.0'})
+    consumer['runtimes'] = [dict(nodeVersion=f'v{major}.0.0', synthetic=True, typedImports=True, localComposedRows=1, preIORefusal=True, providerRequests=0, core='registry:0.6.0', package=original['package'], sourceSHA=original['sourceSHA'], sha256=original['sha256'], integrity=original['integrity']) for major in [20,24]]
     receipt = root/'tested.json'
-    for case in ['valid', 'changed_integrity', 'wrong_source', 'git_core', 'wrong_core', 'provider_request', 'missing_browser']:
+    for case in ['valid', 'changed_integrity', 'wrong_source', 'git_core', 'wrong_core', 'provider_request', 'missing_browser', 'missing_runtime', 'wrong_runtime', 'wrong_runtime24', 'swapped_runtimes', 'one_runtime', 'duplicate_runtime', 'wrong_runtime_artifact', 'wrong_runtime_source', 'missing_typed_import', 'missing_runtime_refusal']:
         changed = json.loads(json.dumps(consumer))
         if case == 'changed_integrity': changed['integrity'] = 'sha512-wrong'
         if case == 'wrong_source': changed['sourceSHA'] = 'b'*40
@@ -44,6 +45,16 @@ with tempfile.TemporaryDirectory(prefix='http-artifact-guards-') as directory:
         if case == 'wrong_core': changed['core']['version'] = '0.4.0'
         if case == 'provider_request': changed['browser']['providerRequests'] = 1
         if case == 'missing_browser': changed.pop('browser')
+        if case == 'missing_runtime': changed.pop('runtimes')
+        if case == 'wrong_runtime': changed['runtimes'][0]['nodeVersion'] = 'v22.0.0'
+        if case == 'wrong_runtime24': changed['runtimes'][1]['nodeVersion'] = 'v22.0.0'
+        if case == 'swapped_runtimes': changed['runtimes'].reverse()
+        if case == 'one_runtime': changed['runtimes'].pop()
+        if case == 'duplicate_runtime': changed['runtimes'][1]['nodeVersion'] = 'v20.0.0'
+        if case == 'wrong_runtime_artifact': changed['runtimes'][0]['integrity'] = 'sha512-wrong'
+        if case == 'wrong_runtime_source': changed['runtimes'][0]['sourceSHA'] = 'b'*40
+        if case == 'missing_typed_import': changed['runtimes'][0]['typedImports'] = False
+        if case == 'missing_runtime_refusal': changed['runtimes'][0]['preIORefusal'] = False
         receipt.write_text(json.dumps(changed))
         result = subprocess.run([node, str(helper), 'verify', str(artifact), 'a'*40, manifest['version'], str(receipt)], env=env, capture_output=True, text=True)
         assert (result.returncode == 0) == (case == 'valid'), (case, result.stderr)

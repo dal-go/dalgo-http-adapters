@@ -129,7 +129,10 @@ admission and host configuration remain separate deployment gates. Release readi
 Public release validation runs `prepare-http-release.mjs pack`,
 `check-http-tarball.mjs`, then `prepare-http-release.mjs verify` on the same
 bytes. The consumer requires one registry core, the packed LICENSE, typed public
-imports, and the synthetic native browser fixture. `release.yml` is the HTTP
+imports under both Node 20 and Node 24, public runtime imports, synthetic local
+composition and pre-request refusal proofs bound to the same artifact, and the
+synthetic native browser fixture. The immutable receipt requires both runtime
+versions, source identity and artifact hashes. `release.yml` is the HTTP
 publication route; the manual browser publisher remains limited to Firestore and
 IndexedDB. HTTP package ownership and its own npm trusted publisher must be
 verified separately before authorized publication.

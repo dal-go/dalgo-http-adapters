@@ -5,8 +5,8 @@ import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-const [tarballArg, destinationArg] = process.argv.slice(2);
-assert.ok(tarballArg && destinationArg, 'tarball and fresh external directory required');
+const [tarballArg, destinationArg, node20, node24] = process.argv.slice(2);
+assert.ok(tarballArg && destinationArg && node20 && node24, 'tarball, fresh external directory and Node 20/24 paths required');
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const tarball = resolve(tarballArg), destination = resolve(destinationArg);
 const rel = relative(repository, destination);
@@ -46,7 +46,15 @@ assert.equal(readFileSync(resolve(httpRoot, 'LICENSE'), 'utf8').trimEnd(), readF
 mkdirSync(resolve(destination, 'test'));
 cpSync(resolve(repository, 'packages/http/test/browser-fixture.ts'), resolve(destination, 'test/browser-fixture.ts'));
 writeFileSync(resolve(destination, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', lib: ['ES2022', 'DOM'], strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, skipLibCheck: false, rootDir: 'test', outDir: 'fixture' }, include: ['test/browser-fixture.ts'] }));
-run(process.execPath, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.json']);
+cpSync(resolve(repository, '.github/scripts/http-runtime-smoke.mjs'), resolve(destination, 'runtime-smoke.mjs'));
+const runtimes = [node20, node24].map((runtime, index) => {
+  const major = index === 0 ? 20 : 24;
+  assert.match(run(runtime, ['--version']).trim(), new RegExp(`^v${major}\\.`), `Node ${major} required`);
+  run(runtime, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.json']);
+  const proof = JSON.parse(run(runtime, ['runtime-smoke.mjs']).trim());
+  assert.match(proof.nodeVersion, new RegExp(`^v${major}\\.`));
+  return { ...proof, typedImports: true, ...hashes, sourceSHA: manifest.gitHead };
+});
 run('npm', ['ls', '@dalgo/core', '@dal-go/dalgo2http', '--all']);
 run(process.execPath, ['node_modules/playwright/cli.js', 'install', 'chromium']);
 const browser = JSON.parse(run(process.execPath, [resolve(repository, 'packages/http/scripts/browser-smoke.mjs')], {
@@ -57,4 +65,4 @@ const browser = JSON.parse(run(process.execPath, [resolve(repository, 'packages/
 assert.equal(browser.synthetic, true);
 assert.equal(browser.providerRequests, 0);
 assert.deepEqual(digest(), hashes, 'artifact changed during verification');
-writeFileSync(resolve(destination, 'artifact-receipt.json'), JSON.stringify({ tarball, ...hashes, sourceSHA: manifest.gitHead, package: { name: manifest.name, version: manifest.version, gitHead: manifest.gitHead }, core, browser }, null, 2) + '\n');
+writeFileSync(resolve(destination, 'artifact-receipt.json'), JSON.stringify({ tarball, ...hashes, sourceSHA: manifest.gitHead, package: { name: manifest.name, version: manifest.version, gitHead: manifest.gitHead }, core, browser, runtimes }, null, 2) + '\n');
