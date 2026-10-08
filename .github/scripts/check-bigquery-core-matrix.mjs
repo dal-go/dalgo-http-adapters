@@ -28,6 +28,9 @@ process.stdout.write(run('npm', ['install', '--strict-peer-deps', '--legacy-peer
 const lock = json(resolve(modern.path, 'package-lock.json'));
 assert.equal(Object.keys(lock.packages).filter(p => p.endsWith('node_modules/@dalgo/core')).length, 1);
 assert.equal(lock.packages['node_modules/@dalgo/core'].version, '0.6.0');
+assert.equal(lock.packages['node_modules/@dalgo/core'].integrity, modern.receipt.core.integrity);
+assert.equal(lock.packages['node_modules/@dalgo/core'].resolved, modern.receipt.core.resolved);
+assert.ok(!lock.packages['node_modules/@dal-go/dalgo']);
 assert.equal(lock.packages['node_modules/@dalgo/bigquery'].integrity, baseline.receipt.integrity);
 for (const candidate of candidates) {
   const name = candidate.package.name; assert.equal(lock.packages[`node_modules/${name}`].integrity, candidate.integrity);

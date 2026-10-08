@@ -64,9 +64,9 @@ const fixtures = resolve(repository, ".github/fixtures/bigquery-consumer");
 cpSync(resolve(fixtures, "core-identity.test.ts"), resolve(destination, "test/core-identity.test.ts"));
 cpSync(resolve(fixtures, "consumer.ts"), resolve(destination, "consumer.ts"));
 writeFileSync(resolve(destination, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, skipLibCheck: false, noEmit: true }, include: ["consumer.ts"] }));
-run(process.execPath, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"]);
 run("npm", ["ls", "@dalgo/core", "@dalgo/bigquery", "--all"]);
 for (const [index, runtime] of runtimes.entries()) {
+  run(resolve(runtime), ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"]);
   run(resolve(runtime), ["node_modules/vitest/vitest.mjs", "run", "--pool=forks", "--maxWorkers=1", "--minWorkers=1"], {
     BIGQUERY_PARITY_REPORT: resolve(destination, `parity-${index}.json`),
     BIGQUERY_CONTRACT_REPORT: resolve(destination, `http-${index}.json`),

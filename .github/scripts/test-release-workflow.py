@@ -534,5 +534,5 @@ tsc.write_text('process.exit(0);')
             receipt=json.loads((destination/'artifact-receipt.json').read_text())
             assert receipt['package']['gitHead'] == sha and receipt['sha256'] == hashes['sha256'] and receipt['integrity'] == hashes['integrity']
             assert [runtime['version'] for runtime in receipt['runtimes']] == ['v20.0.0','v24.15.0']
-            assert log.read_text().splitlines() == ['strict-install','runtime-20','runtime-24']
+            assert log.read_text().splitlines() == ['strict-install','runtime-20','runtime-20','runtime-24','runtime-24']
         print(f'PASS real checker {case}: exit={result.returncode}')
