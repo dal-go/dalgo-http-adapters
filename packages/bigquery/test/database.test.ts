@@ -1,5 +1,5 @@
 import { collection } from "@dalgo/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BigQueryDatabase, type BigQueryDatabaseOptions } from "../src/index.js";
 
 interface Call {
@@ -154,5 +154,35 @@ describe("BigQueryDatabase", () => {
     await floatDb.query(items.query().orderBy("rank").startAfter(...(floatFirst.nextCursor?.values ?? [])).limit(1).build());
     const floatRequest = JSON.parse(String(floatCalls[1]?.init?.body)) as { queryParameters: readonly { name: string; parameterValue: { value: string } }[] };
     expect(floatRequest.queryParameters).toContainEqual({ name: "c0", parameterType: { type: "FLOAT64" }, parameterValue: { value: "1.5" } });
+  });
+});
+
+// A native browser Fetch cannot be invoked with a database instance receiver.
+describe("global Fetch receiver", () => {
+  it("preserves custom injected Fetch receiver behavior", async () => {
+    let receiver: unknown;
+    const fetcher = vi.fn<typeof fetch>(function (this: unknown) {
+      receiver = this;
+      return Promise.resolve(response({ jobComplete: true, schema, rows: [firstRow] }));
+    });
+    const db = database([], [], { fetch: fetcher });
+    await db.query(collection("items").query().limit(1).build());
+    expect(receiver).toBe(db);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it.each(["default", "explicit"])("binds %s global Fetch while retaining the consumer core", async mode => {
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(function (this: unknown) {
+      expect(this).toBe(globalThis);
+      return Promise.resolve(response({ jobComplete: true, schema, rows: [firstRow] }));
+    });
+    try {
+      const db = new BigQueryDatabase({ projectId: "example-project", accessToken: () => "synthetic-token", tables: {
+        items: { datasetId: "app_data", tableId: "items", keyColumn: { column: "id", type: "STRING" },
+          columns: { title: { column: "title", type: "STRING" }, done: { column: "done", type: "BOOL" }, rank: { column: "rank", type: "INT64" } } },
+      }, ...(mode === "explicit" ? { fetch: globalThis.fetch } : {}) });
+      const page = await db.query(collection("items").query().limit(1).build());
+      expect(page.records[0]?.data).toEqual({ title: "Milk", done: "false", rank: "10" });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally { fetcher.mockRestore(); }
   });
 });

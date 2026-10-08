@@ -5,6 +5,9 @@ import { createHash } from "node:crypto";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+const coreVersion = process.env.BIGQUERY_CORE_VERSION ?? "0.1.0";
+const coreIntegrity = { "0.1.0": "sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==", "0.6.0": "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==" }[coreVersion];
+if (!coreIntegrity) throw new Error("unsupported core compatibility target");
 const [tarballArg, destinationArg, ...runtimes] = process.argv.slice(2);
 if (!tarballArg || !destinationArg || !runtimes.length) throw new Error("tarball, external directory and runtime paths are required");
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -24,14 +27,14 @@ mkdirSync(destination, { recursive: true });
 writeFileSync(resolve(destination, "package.json"), JSON.stringify({ name: "bigquery-packed-consumer", private: true, type: "module" }));
 // Vitest 2 runs on the declared Node 20.0.0 floor. It is a test tool only;
 // package code and declarations come exclusively from the supplied tarball.
-run("npm", ["install", "--strict-peer-deps", "--legacy-peer-deps=false", "--force=false", "--ignore-scripts", "--registry=https://registry.npmjs.org", "--save-exact", tarball, "@dalgo/core@0.1.0", "typescript@6.0.3", "vitest@2.1.9"]);
+run("npm", ["install", "--strict-peer-deps", "--legacy-peer-deps=false", "--force=false", "--ignore-scripts", "--registry=https://registry.npmjs.org", "--save-exact", tarball, `@dalgo/core@${coreVersion}`, "typescript@6.0.3", "vitest@2.1.9"]);
 const lock = JSON.parse(readFileSync(resolve(destination, "package-lock.json"), "utf8"));
 const core = lock.packages["node_modules/@dalgo/core"];
-if (core?.version !== "0.1.0" || core.resolved !== "https://registry.npmjs.org/@dalgo/core/-/core-0.1.0.tgz" || core.integrity !== "sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==") throw new Error("registry core baseline required");
+if (core?.version !== coreVersion || core.resolved !== `https://registry.npmjs.org/@dalgo/core/-/core-${coreVersion}.tgz` || core.integrity !== coreIntegrity) throw new Error("registry core baseline required");
 if (Object.keys(lock.packages).filter(p => p.endsWith("node_modules/@dalgo/core")).length !== 1 || lock.packages["node_modules/@dal-go/dalgo"]) throw new Error("exactly one canonical core required");
 const installedPackage = resolve(destination, "node_modules/@dalgo/bigquery");
 const manifest = JSON.parse(readFileSync(resolve(installedPackage, "package.json"), "utf8"));
-if (manifest.name !== "@dalgo/bigquery" || manifest.private || manifest.peerDependencies?.["@dalgo/core"] !== "^0.1.0" || manifest.peerDependencies?.["@dal-go/dalgo"]) throw new Error("unexpected package contract");
+if (manifest.name !== "@dalgo/bigquery" || manifest.private || manifest.peerDependencies?.["@dalgo/core"] !== "^0.1.0 || ^0.6.0" || manifest.peerDependencies?.["@dal-go/dalgo"]) throw new Error("unexpected package contract");
 if (lock.packages["node_modules/@dalgo/bigquery"]?.integrity !== artifactIntegrity) throw new Error("installed artifact integrity mismatch");
 if (process.env.EXPECTED_PACKAGE_VERSION && manifest.version !== process.env.EXPECTED_PACKAGE_VERSION) throw new Error("unexpected package version");
 if (process.env.EXPECTED_SOURCE_SHA && manifest.gitHead !== process.env.EXPECTED_SOURCE_SHA) throw new Error("unexpected package gitHead");
@@ -71,4 +74,4 @@ for (const [index, runtime] of runtimes.entries()) {
 }
 const bytes = readFileSync(tarball);
 if (createHash("sha256").update(bytes).digest("hex") !== artifactSHA256) throw new Error("artifact changed during verification");
-writeFileSync(resolve(destination, "artifact-receipt.json"), JSON.stringify({ tarball, sha256: artifactSHA256, integrity: artifactIntegrity, sourceSHA: manifest.gitHead, package: { name: manifest.name, version: manifest.version, gitHead: manifest.gitHead }, core, runtimes: runtimes.map(runtime => ({ path: resolve(runtime), version: execFileSync(resolve(runtime), ["--version"], { encoding: "utf8" }).trim() })) }, null, 2) + "\n");
+writeFileSync(resolve(destination, "artifact-receipt.json"), JSON.stringify({ tarball, sha256: artifactSHA256, integrity: artifactIntegrity, sourceSHA: manifest.gitHead, package: { name: manifest.name, version: manifest.version, gitHead: manifest.gitHead }, core, runtimes: runtimes.map(runtime => ({ typedImports: true, path: resolve(runtime), version: execFileSync(resolve(runtime), ["--version"], { encoding: "utf8" }).trim() })) }, null, 2) + "\n");

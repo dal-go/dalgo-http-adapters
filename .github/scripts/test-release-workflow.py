@@ -168,7 +168,7 @@ if [[ "$1" == .github/scripts/prepare-bigquery-release.mjs ]]; then
     [[ -f "$6" ]] || exit 98
     [[ "$CASE" != wrong_artifact && "$CASE" != wrong_core && "$CASE" != wrong_packed_githead ]] || exit 1
   fi
-elif [[ "$1" == .github/scripts/check-bigquery-tarball.mjs ]]; then
+elif [[ "$1" == .github/scripts/check-bigquery-core-matrix.mjs ]]; then
   printf 'artifact check\\n' >> "$MOCK_LOG"
   [[ "$EXPECTED_SOURCE_SHA" == "$MOCK_SHA" && "$EXPECTED_PACKAGE_VERSION" == 0.2.0 ]] || exit 98
   [[ "$EXPECTED_ARTIFACT_SHA256" == mock && "$EXPECTED_ARTIFACT_INTEGRITY" == sha512-mock ]] || exit 98
@@ -377,7 +377,7 @@ with tempfile.TemporaryDirectory(prefix='bigquery-pack-once-') as directory:
     shutil.copyfile(repository/'.github/scripts/prepare-bigquery-release.mjs', helper)
     pkg = repo/'packages/bigquery'
     (pkg/'dist').mkdir(parents=True)
-    manifest = {'name':'@dalgo/bigquery','version':'0.2.0','peerDependencies':{'@dalgo/core':'^0.1.0'}, 'exports':{'.':{'import':'./dist/index.js','types':'./dist/index.d.ts'},'./analytical':{'import':'./dist/analytical.js','types':'./dist/analytical.d.ts'}}}
+    manifest = {'name':'@dalgo/bigquery','version':'0.2.0','peerDependencies':{'@dalgo/core':'^0.1.0 || ^0.6.0'}, 'exports':{'.':{'import':'./dist/index.js','types':'./dist/index.d.ts'},'./analytical':{'import':'./dist/analytical.js','types':'./dist/analytical.d.ts'}}}
     (pkg/'package.json').write_text(json.dumps(manifest))
     for file in ['dist/index.js','dist/index.d.ts','dist/analytical.js','dist/analytical.d.ts','README.md','LICENSE']:
         (pkg/file).write_text('export {};')
@@ -420,7 +420,10 @@ print(json.dumps([{'filename':output.name,'integrity':integrity}]))
     output=root/'good'
     packed=json.loads((output/'packed-artifact.json').read_text())
     consumer={**packed,'core':{'version':'0.1.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.1.0.tgz','integrity':core_integrity},'runtimes':[{'version':'v20.0.0'},{'version':'v24.15.0'}]}
-    for case in ['good','wrong_sha256','wrong_sri','wrong_core','wrong_core_integrity','wrong_runtime','wrong_githead','wrong_artifact_path','wrong_bytes']:
+    consumer['coreMatrix'] = [{'core':consumer['core'],'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}, {'core':{'version':'0.6.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz','integrity':'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=='},'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}]
+    consumer['combinedBrowser'] = dict(synthetic=True, coreVersion='0.6.0', providerRequests=0, blockedExternalRequests=[], sharedKeyIdentity=True, bigqueryDefaultNativeFetch=True, bigqueryExplicitNativeFetch=True, bigqueryRows=2, bigqueryPosts=2, httpRows=1, httpGets=1, ovdbDefaultRows=2, ovdbExplicitRows=2, ovdbPosts=dict(default=2, explicit=2))
+    consumer['combinedArtifacts'] = [dict(package=dict(name=name,gitHead=sha),sourceSHA=sha,sha256='a'*64,integrity='sha512-fixture') for name in ['@dalgo/http','@dalgo/ovdb']]
+    for case in ['good','wrong_sha256','wrong_sri','wrong_core','wrong_core_integrity','wrong_runtime','wrong_githead','wrong_artifact_path','missing_core_matrix','wrong_modern_core','missing_modern_types','missing_combined_browser','wrong_native_count','missing_explicit_fetch','provider_request','wrong_combined_source','wrong_bytes']:
         candidate=json.loads(json.dumps(consumer))
         if case == 'wrong_sha256': candidate['sha256']='0'*64
         if case == 'wrong_sri': candidate['integrity']='sha512-wrong'
@@ -429,6 +432,14 @@ print(json.dumps([{'filename':output.name,'integrity':integrity}]))
         if case == 'wrong_runtime': candidate['runtimes'][0]['version']='v20.1.0'
         if case == 'wrong_githead': candidate['package']['gitHead']='0'*40
         if case == 'wrong_artifact_path': candidate['tarball']=str(root/'other.tgz')
+        if case == 'missing_core_matrix': candidate.pop('coreMatrix')
+        if case == 'wrong_modern_core': candidate['coreMatrix'][1]['core']['version']='0.2.0'
+        if case == 'missing_modern_types': candidate['coreMatrix'][1]['runtimes'][0].pop('typedImports')
+        if case == 'missing_combined_browser': candidate.pop('combinedBrowser')
+        if case == 'wrong_native_count': candidate['combinedBrowser']['bigqueryPosts']=0
+        if case == 'missing_explicit_fetch': candidate['combinedBrowser'].pop('bigqueryExplicitNativeFetch')
+        if case == 'provider_request': candidate['combinedBrowser']['providerRequests']=1
+        if case == 'wrong_combined_source': candidate['combinedArtifacts'][1]['sourceSHA']='b'*40
         if case == 'wrong_bytes': Path(packed['tarball']).write_bytes(b'changed')
         receipt=root/(case+'.json')
         receipt.write_text(json.dumps(candidate))
