@@ -4,14 +4,15 @@ import json, os, subprocess, tempfile
 repo = Path(__file__).resolve().parents[2]
 workflow = (repo/'.github/workflows/release.yml').read_text()
 start = workflow.index('          source_sha=$(git rev-parse HEAD)')
-end = workflow.index('          done', start) + len('          done')
-end = workflow.index('          done', end) + len('          done')
+# Exact package-loop indentation excludes nested report and metadata loops.
+end = workflow.index('\n          done\n', start) + len('\n          done')
 shell = 'set -euo pipefail\n' + '\n'.join(line[10:] for line in workflow[start:end].splitlines()) + '\n'
 shell = shell.replace('for package in firestore indexeddb bigquery http ovdb; do', 'for package in "$SELECTED"; do')
 sha = 'a'*40
 with tempfile.TemporaryDirectory(prefix='ovdb-release-selection-') as directory:
     root = Path(directory)
     (root/'run.sh').write_text(shell)
+    subprocess.run(['bash','-n',str(root/'run.sh')],check=True)
     scripts = {
       'git': '''#!/usr/bin/env bash
 set -euo pipefail

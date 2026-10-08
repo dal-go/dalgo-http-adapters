@@ -65,6 +65,7 @@ sha = 'f58da4d2f5007c862bd49c851e9afe8cfd9065db'
 with tempfile.TemporaryDirectory(prefix='adapters-release-selection-') as directory:
     root = Path(directory)
     (root/'run.sh').write_text(shell)
+    subprocess.run(['bash','-n',str(root/'run.sh')],check=True)
     (root/'git').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == 'rev-parse HEAD' ]]; then
