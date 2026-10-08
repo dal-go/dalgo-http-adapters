@@ -67,5 +67,8 @@ run(process.execPath, ['node_modules/playwright/cli.js', 'install', 'chromium'])
 const browser = JSON.parse(run(process.execPath, ['browser-smoke.mjs']).trim());
 assert.equal(browser.synthetic, true);
 assert.equal(browser.providerRequests, 0);
+assert.equal(browser.defaultNativeFetch, true);
+assert.equal(browser.nativeDefaultPosts, 2);
+assert.equal(browser.nativeDefaultRows, 2);
 assert.deepEqual(digest(), hashes, 'artifact changed during verification');
 writeFileSync(resolve(destination, 'artifact-receipt.json'), JSON.stringify({ tarball, ...hashes, sourceSHA: manifest.gitHead, package: { name: manifest.name, version: manifest.version, gitHead: manifest.gitHead }, core, browser, runtimes }, null, 2) + '\n');

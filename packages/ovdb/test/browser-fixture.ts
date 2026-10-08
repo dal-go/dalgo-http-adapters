@@ -27,3 +27,24 @@ export async function runSyntheticOVDBConsumer(): Promise<object> {
     return { synthetic: true, providerRequests: 0, nativeRows: 1, preIORefusal: true, posts, core: "registry:0.6.0" };
   } finally { owner.dispose(); }
 }
+
+/** Native Chromium regression: the executor captures Fetch with no injection. */
+export async function runSyntheticOVDBNativeBrowserConsumer(
+  prepare: (endpoint: string, executionId: string, body: string) => Promise<void>,
+): Promise<object> {
+  let nativeDefaultRows = 0;
+  for (const Executor of [root.OpenVaultDbDTQLQueryExecutor, dtql.OpenVaultDbDTQLQueryExecutor]) {
+    const owner = root.createOpenVaultDbExecutionBudget();
+    try {
+      const f = await fixture(root.createOpenVaultDbExecutionId(owner.budget));
+      await prepare(f.config.endpoint, f.plan.execution.id, await response(f.metadata).text());
+      const executor = new Executor({ ...f.config, providerReadPlan: f.plan, budget: owner.budget });
+      const page = await executor.query(collection<{ rate: string }>("daily").query().build());
+      if ((page.complete as unknown) !== true || page.records.length !== 1 || page.records[0]?.data.rate !== "001.23000") throw new Error("incomplete native Fetch output");
+      await root.validateOpenVaultDbDTQLEvidence(page, f.plan, owner.budget);
+      root.assertOpenVaultDbExecutionBudget(owner.budget);
+      nativeDefaultRows++;
+    } finally { owner.dispose(); }
+  }
+  return { defaultNativeFetch: true, nativeDefaultRows };
+}

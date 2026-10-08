@@ -22,7 +22,7 @@ export class OpenVaultDbDTQLQueryExecutor implements QueryExecutor {
     this.#config = structuredClone(configuration);
     this.#plan = structuredClone(providerReadPlan);
     this.#budget = budget;
-    this.#fetch = fetcher ?? globalThis.fetch;
+    this.#fetch = fetcher ?? globalThis.fetch.bind(globalThis);
   }
   public async query<T>(query: StructuredQuery<T>, options?: { readonly signal?: AbortSignal }): Promise<CompletedOpenVaultDbQueryPage<T>> {
     if (this.#used) throw new TypeError("OpenVaultDB execution already used");

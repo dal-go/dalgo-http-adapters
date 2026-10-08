@@ -34,6 +34,16 @@ describe("completed native DTQL executor", () => {
     expect(page.providerReads?.execution.id).toMatch(/^[0-9a-f]{32}$/u);
     await expect(s.executor.query(query())).rejects.toThrow("already used");
   });
+  it("binds the default Fetch to the global receiver without an injection option", async () => {
+    const handle = owner(), f = await fixture(createOpenVaultDbExecutionId(handle.budget));
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(function (this: unknown) {
+      expect(this).toBe(globalThis);
+      return Promise.resolve(response(f.metadata));
+    });
+    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget });
+    expect((await executor.query(query())).records[0]?.data.rate).toBe("001.23000");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("preserves mandatory evidence on zero results", async () => {
     const s = await setup(); s.fetcher.mockResolvedValueOnce(response(s.metadata, []));
     expect(await s.executor.query(query())).toEqual({ ...s.metadata, records: [], complete: true });
