@@ -84,13 +84,18 @@ fi
 ''')
     (root/'npm').write_text('''#!/usr/bin/env bash
 set -euo pipefail
+CASE=${CASE#http_}
 if [[ "$1" == publish ]]; then
   if [[ "$2" == --access ]]; then
     printf 'publish %s\\n' "${PWD##*/}" >> "$MOCK_LOG"
   else
-    [[ "$2" == "$BIGQUERY_ARTIFACT_DIR/dalgo-bigquery-0.2.0.tgz" ]] || exit 98
+    if [[ "$2" == "$BIGQUERY_ARTIFACT_DIR/dalgo-bigquery-0.2.0.tgz" ]]; then
+      printf 'publish bigquery\\n' >> "$MOCK_LOG"
+    elif [[ "$2" == "$HTTP_ARTIFACT_DIR/dal-go-dalgo2http-0.2.0.tgz" ]]; then
+      printf 'publish http\\n' >> "$MOCK_LOG"
+    else exit 98
+    fi
     [[ "$*" == *--ignore-scripts* ]] || exit 98
-    printf 'publish bigquery\\n' >> "$MOCK_LOG"
   fi
   [[ "$CASE" != publish_error && "$CASE" != mixed_preceding_failure && "$CASE" != mixed_firestore_failure ]] || exit 1
 elif [[ "$1" == view ]]; then
@@ -116,7 +121,10 @@ elif [[ "$1" == view ]]; then
   reported_sha=$MOCK_SHA
   [[ "$CASE" != wrong_source && "$CASE" != mixed_preceding_wrong_source ]] || reported_sha=0000000000000000000000000000000000000000
   integrity=sha512-mock
+  [[ "$name" != @dal-go/dalgo2http ]] || integrity=sha512-http-mock
   [[ "$CASE" != wrong_registry_integrity ]] || integrity=sha512-wrong
+  [[ "$CASE" != wrong_metadata_name ]] || name=@dalgo/wrong
+  [[ "$CASE" != wrong_metadata_version ]] || version=9.9.9
   if [[ "$CASE" == nested_registry_metadata ]]; then
     printf '{"name":"%s","version":"%s","gitHead":"%s","dist":{"integrity":"%s"}}\\n' "$name" "$version" "$reported_sha" "$integrity"
   elif [[ "$CASE" == conflicting_registry_metadata ]]; then
@@ -130,6 +138,7 @@ fi
 ''')
     (root/'curl').write_text('''#!/usr/bin/env bash
 set -euo pipefail
+CASE=${CASE#http_}
 while [[ "$1" != '--output' ]]; do shift; done
 output=$2
 touch "$MOCK_SEEN"
@@ -146,6 +155,7 @@ fi
 ''')
     (root/'node').write_text('''#!/usr/bin/env bash
 set -euo pipefail
+CASE=${CASE#http_}
 if [[ "$1" == .github/scripts/prepare-bigquery-release.mjs ]]; then
   printf 'artifact %s\\n' "$2" >> "$MOCK_LOG"
   if [[ "$2" == pack ]]; then
@@ -171,6 +181,26 @@ elif [[ "$1" == .github/scripts/check-bigquery-tarball.mjs ]]; then
   fi
   echo '{}' > "$3/artifact-receipt.json"
   for report in parity-0 parity-1 http-0 http-1; do echo '{}' > "$3/$report.json"; done
+elif [[ "$1" == .github/scripts/prepare-http-release.mjs ]]; then
+  printf 'http artifact %s\\n' "$2" >> "$MOCK_LOG"
+  [[ "$3" == "$HTTP_ARTIFACT_DIR" && "$3" != "$BIGQUERY_ARTIFACT_DIR" ]] || exit 98
+  if [[ "$2" == pack ]]; then
+    [[ ! -d "$3" ]] || exit 98
+    mkdir "$3"
+    echo http-mock > "$3/dal-go-dalgo2http-0.2.0.tgz"
+    printf '{"tarball":"%s/dal-go-dalgo2http-0.2.0.tgz","sha256":"http-mock","integrity":"sha512-http-mock"}' "$3" > "$3/packed-artifact.json"
+  else
+    [[ "$6" == "$HTTP_ARTIFACT_DIR/tested-artifact.json" && -f "$6" ]] || exit 98
+  fi
+elif [[ "$1" == .github/scripts/check-http-tarball.mjs ]]; then
+  printf 'http artifact check\\n' >> "$MOCK_LOG"
+  [[ "$2" == "$HTTP_ARTIFACT_DIR/dal-go-dalgo2http-0.2.0.tgz" && "$3" == "$HTTP_CONSUMER_DIR" && "$3" != "$BIGQUERY_CONSUMER_DIR" ]] || exit 98
+  [[ "$EXPECTED_SOURCE_SHA" == "$MOCK_SHA" && "$EXPECTED_PACKAGE_VERSION" == 0.2.0 ]] || exit 98
+  [[ "$EXPECTED_ARTIFACT_SHA256" == http-mock && "$EXPECTED_ARTIFACT_INTEGRITY" == sha512-http-mock ]] || exit 98
+  [[ "$4" == "$HTTP_NODE20" && "$5" == "$(command -v node)" ]] || exit 98
+  mkdir "$3"
+  [[ "$CASE" != checker_error ]] || exit 1
+  echo '{}' > "$3/artifact-receipt.json"
 else exit 99
 fi
 ''')
@@ -178,16 +208,38 @@ fi
     (root/'sleep').write_text('#!/usr/bin/env bash\necho sleep >> "$MOCK_SLEEP_LOG"\n')
     for executable in ['git', 'npm', 'curl', 'node', 'sleep', 'timeout']:
         (root/executable).chmod(0o755)
-    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth']:
+    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http']:
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
-        for package in ['firestore','indexeddb','bigquery']:
+        for package in ['firestore','indexeddb','bigquery','http']:
             manifest = root/'packages'/package/'package.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
             version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure']) else '0.1.0'
-            manifest.write_text('{"name":"@dalgo/'+package+'","version":"'+version+'"}')
-        env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
+            if case.startswith('http_'):
+                version = '0.2.0' if package == 'http' else '0.1.0'
+            elif case == 'mixed_bigquery_http':
+                version = '0.2.0' if package in ['bigquery','http'] else '0.1.0'
+            manifest.write_text(json.dumps({'name': '@dal-go/dalgo2http' if package == 'http' else '@dalgo/'+package, 'version': version}))
+        env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''
+        if case.startswith('http_') or case == 'mixed_bigquery_http':
+            succeeds = case in ['http_changed','http_registry_existing','mixed_bigquery_http']
+            assert (result.returncode == 0) == succeeds, (case,result.stderr,calls)
+            publishes = case in ['http_changed','http_wrong_source','http_wrong_registry_integrity','http_wrong_metadata_name','http_wrong_metadata_version','mixed_bigquery_http']
+            assert ('publish http' in calls) == publishes, (case,calls)
+            assert ('git push origin refs/tags/http@v0.2.0' in calls) == succeeds, (case,calls)
+            assert calls.count('http artifact pack') == 1 and calls.count('http artifact check') == 1, (case,calls)
+            if case == 'mixed_bigquery_http':
+                assert 'publish bigquery' in calls and 'git push origin refs/tags/bigquery@v0.2.0' in calls, calls
+                assert calls.splitlines().count('artifact pack') == 1 and calls.splitlines().count('http artifact pack') == 1, calls
+                assert Path(env['BIGQUERY_ARTIFACT_DIR'],'registry-metadata.json').exists()
+                assert Path(env['HTTP_ARTIFACT_DIR'],'registry-metadata.json').exists()
+            else:
+                assert 'publish bigquery' not in calls and not Path(env['BIGQUERY_ARTIFACT_DIR']).exists(), calls
+            if case == 'http_checker_error':
+                assert not Path(env['HTTP_ARTIFACT_DIR'],'tested-artifact.json').exists()
+            print(f'PASS {case}: exit={result.returncode}, calls={calls.splitlines()}')
+            continue
         assert (result.returncode == 0) == (case in ['unchanged','bigquery_changed','registry_existing','firestore_changed','indexeddb_changed','metadata_delayed']), (case,result.stderr,calls)
         assert ('publish bigquery' in calls) == (case in ['bigquery_changed','publish_error','wrong_source','wrong_registry_integrity','metadata_pending','metadata_delayed','metadata_network','metadata_auth']), (case,calls)
         assert ('publish firestore' in calls) == (case in ['firestore_changed','mixed_firestore_failure']), (case,calls)
@@ -276,6 +328,7 @@ with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
     (root/'npm').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 name="@dalgo/$PACKAGE"
+[[ "$PACKAGE" != http ]] || name=@dal-go/dalgo2http
 version=$VERSION
 source_sha=$MOCK_SHA
 [[ "$CASE" != wrong_name ]] || name=@dalgo/other
@@ -290,18 +343,20 @@ elif [[ "$1" == merge-base ]]; then [[ "$CASE" != off_main ]] || exit 1
 elif [[ "$1" == show ]]; then
   version=$VERSION
   [[ "$CASE" != wrong_manifest ]] || version=9.9.9
-  printf '{"name":"@dalgo/%s","version":"%s"}\\n' "$PACKAGE" "$version"
+  name="@dalgo/$PACKAGE"
+  [[ "$PACKAGE" != http ]] || name=@dal-go/dalgo2http
+  printf '{"name":"%s","version":"%s"}\\n' "$name" "$version"
 else exit 99
 fi
 ''')
     (root/'npm').chmod(0o755)
     (root/'git').chmod(0o755)
-    for case in ['firestore', 'indexeddb', 'bigquery', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
+    for case in ['firestore', 'indexeddb', 'bigquery', 'http', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
         output = root/f'{case}.output'
-        package = case if case in ['firestore', 'indexeddb', 'bigquery'] else 'algolia' if case == 'private_package' else 'bigquery'
+        package = case if case in ['firestore', 'indexeddb', 'bigquery', 'http'] else 'algolia' if case == 'private_package' else 'bigquery'
         env = dict(os.environ, PATH=f'{root}:'+os.environ['PATH'], CASE=case, PACKAGE=package, VERSION='v0.3.0' if case == 'invalid_version' else '0.3.0', MOCK_SHA=sha, GITHUB_OUTPUT=str(output))
         result = subprocess.run(['bash',str(root/'run.sh')],env=env,capture_output=True,text=True)
-        succeeds = case in ['firestore', 'indexeddb', 'bigquery']
+        succeeds = case in ['firestore', 'indexeddb', 'bigquery', 'http']
         assert (result.returncode == 0) == succeeds, (case, result.stderr)
         assert output.exists() == succeeds, case
         if succeeds: assert f'tag={package}@v0.3.0' in output.read_text()

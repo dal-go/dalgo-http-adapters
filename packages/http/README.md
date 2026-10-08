@@ -1,6 +1,6 @@
-# Private ECB XML query adapter
+# ECB daily XML query adapter
 
-`@dal-go/dalgo2http` is a private first implementation slice for the named
+`@dal-go/dalgo2http` implements the first supported slice for the named
 `ecb-eurofxref/1` daily XML contract. It implements DALgo `QueryExecutor` with
 native string fields `time`, `currency`, and `rate`, and currency record IDs.
 It supports string equality filters and a positive limit of at most 256.
@@ -24,8 +24,7 @@ this package's structural checks do not establish permission or publisher trust.
 It validates the core's plan/digest/rights/budget rules before HTTP using a
 private discarded validation probe, then validates only the actual observation
 before returning records. All rights and read metadata are detached, including
-when filters produce no rows. Raw XML is absent from evidence. The core version
-is pinned only for this private package to the reviewed 0.5.0 source API.
+when filters produce no rows. Raw XML is absent from evidence. The public peer contract requires registry `@dalgo/core >=0.6.0 <0.7.0`.
 
 The injected Fetch must be trusted and honor the request. Every query performs
 a fresh bounded GET with `mode: cors`, `cache: no-store`, `redirect: error`, and
@@ -55,10 +54,15 @@ const page = await executor.query(
 
 Legacy DALgo JOIN/recursive execution continues to refuse rights-annotated pages.
 The distinct `executeSourceComposedJoinedDTQLQuery` entry point supports the
-reviewed JS-local materialized route. HTTP alone adopts core commit
-`4c10c34fbd0ae9d0b020015f834b893be82f4dd0` at source version 0.5.0; this SHA
-pin is not a registry publication or a claim that every 0.5.0 build has the API.
-Public package versions/ranges and the BigQuery release lane are unchanged.
+reviewed JS-local materialized route. The release gate installs exact registry `@dalgo/core@0.6.0` and the packed HTTP
+artifact in an isolated consumer. HTTP uses the verified public registry core
+0.6.0 in its workspace lockfile, with a package-specific override that preserves
+other adapters' independent core contracts.
+The public 0.6.0 artifact exports the materialized source-composition API used
+by the synthetic consumer below. The peer floor, workspace lock and release
+consumer identity bind to that published version and its registry integrity.
+The HTTP-only patch changeset produces version 0.1.1 in a reviewed version PR;
+changing package visibility alone does not satisfy the changed-version release gate.
 Registry discovery alone does not establish live query eligibility.
 
 Validation uses fabricated XML/terms only: package tests use test-only jsdom.
@@ -80,7 +84,7 @@ Supply
 for installed Chrome. The harness owns two ephemeral loopback listeners and a
 fresh browser context; both listeners and the browser close in `finally`, and
 all non-fixture requests and service workers are blocked. Native ESM resolution
-from HTTP's scope selects its exact core import-only entry, never the root's
+from HTTP's scope selects its registry core 0.6.0 import-only entry, never the root's
 older core. A local import map serves that core, HTTP dist and the same core's
 YAML browser entry/subtree from allowlisted installed package paths. No CDN or
 bundler is involved. The typed helper under `test` compiles to ignored
@@ -120,5 +124,15 @@ defaults are tightened for this fixture to 512 fetched/result rows, 128 KiB
 retained and 32 KiB metadata. Legacy guards and the OVDB raw-field refusal stay
 intact. No Go/OVDB roundtrip, persistence, public API facade, registry activation
 or end-to-end join cancellation is implied. Real ECB CORS, availability, rights
-admission and host configuration remain separate deployment gates. Independent
-implementation review is pending.
+admission and host configuration remain separate deployment gates. Release readiness does not establish live provider admission.
+
+Public release validation runs `prepare-http-release.mjs pack`,
+`check-http-tarball.mjs`, then `prepare-http-release.mjs verify` on the same
+bytes. The consumer requires one registry core, the packed LICENSE, typed public
+imports under both Node 20 and Node 24, public runtime imports, synthetic local
+composition and pre-request refusal proofs bound to the same artifact, and the
+synthetic native browser fixture. The immutable receipt requires both runtime
+versions, source identity and artifact hashes. `release.yml` is the HTTP
+publication route; the manual browser publisher remains limited to Firestore and
+IndexedDB. HTTP package ownership and its own npm trusted publisher must be
+verified separately before authorized publication.

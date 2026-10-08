@@ -27,6 +27,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Check HTTP immutable release artifact guards
+        run: python3 .github/scripts/test-http-release.py
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - name: Verify HTTP check without pre-existing generated output
