@@ -7,7 +7,7 @@ import {
   type QueryExecutor, type QueryPage, type SourceCompositionJoinOptions,
   type SourceRight, type StructuredQuery,
 } from "@dalgo/core";
-import { ECB_DAILY_URL, ECBQueryExecutor, type ECBQueryOptions } from "@dal-go/dalgo2http";
+import { ECB_DAILY_URL, ECBQueryExecutor, type ECBQueryOptions } from "@dalgo/http";
 
 export const syntheticXML = `<g:Envelope xmlns:g="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><Cube><Cube time="2037-02-03"><Cube currency="AAA" rate="001.23000"/><Cube currency="ZZZ" rate="0.00001"/></Cube></Cube></g:Envelope>`;
 export interface Descriptor { readonly currency: string; readonly name: string; readonly note: { readonly text: string } }
