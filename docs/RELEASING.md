@@ -2,8 +2,8 @@
 
 The public package manifests in this workspace are `@dalgo/firestore`,
 `@dalgo/indexeddb`, `@dalgo/bigquery` and `@dalgo/http`. They have independent
-versions; a public manifest does not establish npm availability. Every other adapter is
-currently private in its package manifest and is excluded from Changesets
+versions; a public manifest does not establish npm availability. Every other
+adapter is currently private in its package manifest and is excluded from Changesets
 publishing. Remove `private: true` only as part of preparing that adapter for
 its first npm release.
 
@@ -28,7 +28,8 @@ workflow publishes only package versions changed by that merge, using direct
 `npm publish` for trusted publishing. It then verifies each version's npm
 `gitHead` and creates
 `firestore@v<version>`, `indexeddb@v<version>`, `bigquery@v<version>` or
-`http@v<version>` at that exact commit. A release for one package leaves other package versions unchanged.
+`http@v<version>` at that exact commit. A release for one package leaves other
+package versions unchanged.
 
 Publishing uses npm trusted publishing through GitHub Actions. The npm settings
 for **each** published package must authorize GitHub repository
@@ -48,11 +49,10 @@ packages also change, their publication and tag gates must be resolved before
 that merge; retrying the same SHA repeats an earlier package failure.
 
 BigQuery package compatibility checks use the published `@dalgo/core@0.1.0`
-baseline. Before its first release, the release workflow must test an external
-strict-peer consumer of the exact packed artifact on Node 20 and 24, retain its
-SHA256/SRI and source SHA, then publish those same tarball bytes. The current
-directory-publication step does not yet satisfy this artifact gate. Owner
-authorization and package-specific trusted publishing remain release gates.
+baseline. The release workflow tests an external strict-peer consumer of the
+exact packed artifact on Node 20 and 24, retains its SHA256/SRI and source SHA,
+then publishes those same tarball bytes. Owner authorization and package-specific
+trusted publishing remain release gates.
 
 For a preliminary packed-artifact check, build and pack with Node 24, then run
 `.github/scripts/check-bigquery-tarball.mjs <tarball> <fresh-external-directory>
@@ -61,7 +61,8 @@ registry core with strict peers, checks declarations and both exports, runs the
 existing synthetic corpus, SQL, metadata/consent and TIMESTAMP fixtures against
 the packed production package on each runtime, and writes an artifact receipt.
 It uses a Node-20-compatible test runner without changing workspace tooling.
-This local check does not implement the release workflow's artifact gate.
+The release workflow runs this checker against its retained packed artifact;
+a standalone local check does not establish publication.
 
 `@dalgo/core` is released from the separate `dalgo-js` repository. A new
 core release does not automatically bump adapter versions or peer dependency
