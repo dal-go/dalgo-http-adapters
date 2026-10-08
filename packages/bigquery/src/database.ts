@@ -231,7 +231,7 @@ export class BigQueryDatabase implements Database {
     this.#pageSize = exactPositiveInteger(options.pageSize, 500, "pageSize");
     this.#timeoutMs = exactPositiveInteger(options.timeoutMs, 30_000, "timeoutMs");
     this.#initialWaitMs = exactPositiveInteger(options.initialWaitMs, 1000, "initialWaitMs");
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = options.fetch === undefined || options.fetch === globalThis.fetch ? globalThis.fetch.bind(globalThis) : options.fetch;
   }
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {

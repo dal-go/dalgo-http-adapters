@@ -58,14 +58,14 @@ printf 'f58da4d2f5007c862bd49c851e9afe8cfd9065db\\n'
 # Execute the actual publishing shell against synthetic manifests and local mocks.
 # No registry, tags, pushes, builds, credentials or BigQuery calls are used.
 start = workflow.index('          source_sha=$(git rev-parse HEAD)')
-end = workflow.index('          done', start) + len('          done')
-# The metadata polling loop ends before the package loop.
-end = workflow.index('          done', end) + len('          done')
+# Match the package loop's exact indentation, never an inner report/poll loop.
+end = workflow.index('\n          done\n', start) + len('\n          done')
 shell = 'set -euo pipefail\n' + '\n'.join(line[10:] for line in workflow[start:end].splitlines()) + '\n'
 sha = 'f58da4d2f5007c862bd49c851e9afe8cfd9065db'
 with tempfile.TemporaryDirectory(prefix='adapters-release-selection-') as directory:
     root = Path(directory)
     (root/'run.sh').write_text(shell)
+    subprocess.run(['bash','-n',str(root/'run.sh')],check=True)
     (root/'git').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == 'rev-parse HEAD' ]]; then
@@ -168,19 +168,29 @@ if [[ "$1" == .github/scripts/prepare-bigquery-release.mjs ]]; then
     [[ -f "$6" ]] || exit 98
     [[ "$CASE" != wrong_artifact && "$CASE" != wrong_core && "$CASE" != wrong_packed_githead ]] || exit 1
   fi
-elif [[ "$1" == .github/scripts/check-bigquery-tarball.mjs ]]; then
+elif [[ "$1" == .github/scripts/check-bigquery-core-matrix.mjs ]]; then
   printf 'artifact check\\n' >> "$MOCK_LOG"
   [[ "$EXPECTED_SOURCE_SHA" == "$MOCK_SHA" && "$EXPECTED_PACKAGE_VERSION" == 0.2.0 ]] || exit 98
   [[ "$EXPECTED_ARTIFACT_SHA256" == mock && "$EXPECTED_ARTIFACT_INTEGRITY" == sha512-mock ]] || exit 98
   [[ "$4" == "$BIGQUERY_NODE20" && "$5" == "$(command -v node)" ]] || exit 98
   mkdir "$3"
   if [[ "$CASE" == checker_error ]]; then
-    echo '{"partial":true}' > "$3/parity-0.json"
+    mkdir "$3/core-0.1.0"
+    echo '{"partial":true}' > "$3/core-0.1.0/parity-0.json"
     echo 'partial fixture failure'
     exit 1
   fi
   echo '{}' > "$3/artifact-receipt.json"
-  for report in parity-0 parity-1 http-0 http-1; do echo '{}' > "$3/$report.json"; done
+  for core in 0.1.0 0.6.0; do
+    mkdir "$3/core-$core"
+    for report in parity-0 parity-1 http-0 http-1; do printf '{"core":"%s"}\\n' "$core" > "$3/core-$core/$report.json"; done
+  done
+  if [[ "$CASE" == checker_error_modern ]]; then
+    echo '{"partial":true}' > "$3/core-0.6.0/parity-0.json"
+    echo 'partial fixture failure'
+    exit 1
+  fi
+  [[ "$CASE" != missing_matrix_report ]] || rm "$3/core-0.6.0"/http-*.json
 elif [[ "$1" == .github/scripts/prepare-http-release.mjs ]]; then
   printf 'http artifact %s\\n' "$2" >> "$MOCK_LOG"
   [[ "$3" == "$HTTP_ARTIFACT_DIR" && "$3" != "$BIGQUERY_ARTIFACT_DIR" ]] || exit 98
@@ -208,7 +218,7 @@ fi
     (root/'sleep').write_text('#!/usr/bin/env bash\necho sleep >> "$MOCK_SLEEP_LOG"\n')
     for executable in ['git', 'npm', 'curl', 'node', 'sleep', 'timeout']:
         (root/executable).chmod(0o755)
-    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http']:
+    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http']:
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
         for package in ['firestore','indexeddb','bigquery','http','ovdb']:
             manifest = root/'packages'/package/'package.json'
@@ -265,11 +275,15 @@ fi
         if case == 'publish_error':
             assert 'npm publish failed' in result.stderr
             assert not Path(env['MOCK_VIEW_LOG']).exists()
-        if case == 'checker_error':
+        if case in ['checker_error','checker_error_modern']:
             artifacts = Path(env['BIGQUERY_ARTIFACT_DIR'])
-            assert json.loads((artifacts/'parity-0.json').read_text()) == {'partial':True}
+            assert json.loads((artifacts/('core-0.6.0' if case == 'checker_error_modern' else 'core-0.1.0')/'parity-0.json').read_text()) == {'partial':True}
             assert 'partial fixture failure' in (artifacts/'check.log').read_text()
             assert not (artifacts/'tested-artifact.json').exists()
+        if case in ['bigquery_changed','registry_existing','metadata_delayed']:
+            for core in ['0.1.0','0.6.0']:
+                for report in ['parity-0','parity-1','http-0','http-1']:
+                    assert json.loads(Path(env['BIGQUERY_ARTIFACT_DIR'],f'core-{core}',report+'.json').read_text()) == {'core':core}
         print(f'PASS {case}: exit={result.returncode}, calls={calls.splitlines()}')
 assert 'pnpm --filter @dalgo/bigquery check' in workflow
 
@@ -377,7 +391,7 @@ with tempfile.TemporaryDirectory(prefix='bigquery-pack-once-') as directory:
     shutil.copyfile(repository/'.github/scripts/prepare-bigquery-release.mjs', helper)
     pkg = repo/'packages/bigquery'
     (pkg/'dist').mkdir(parents=True)
-    manifest = {'name':'@dalgo/bigquery','version':'0.2.0','peerDependencies':{'@dalgo/core':'^0.1.0'}, 'exports':{'.':{'import':'./dist/index.js','types':'./dist/index.d.ts'},'./analytical':{'import':'./dist/analytical.js','types':'./dist/analytical.d.ts'}}}
+    manifest = {'name':'@dalgo/bigquery','version':'0.2.0','peerDependencies':{'@dalgo/core':'^0.1.0 || ^0.6.0'}, 'exports':{'.':{'import':'./dist/index.js','types':'./dist/index.d.ts'},'./analytical':{'import':'./dist/analytical.js','types':'./dist/analytical.d.ts'}}}
     (pkg/'package.json').write_text(json.dumps(manifest))
     for file in ['dist/index.js','dist/index.d.ts','dist/analytical.js','dist/analytical.d.ts','README.md','LICENSE']:
         (pkg/file).write_text('export {};')
@@ -420,7 +434,10 @@ print(json.dumps([{'filename':output.name,'integrity':integrity}]))
     output=root/'good'
     packed=json.loads((output/'packed-artifact.json').read_text())
     consumer={**packed,'core':{'version':'0.1.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.1.0.tgz','integrity':core_integrity},'runtimes':[{'version':'v20.0.0'},{'version':'v24.15.0'}]}
-    for case in ['good','wrong_sha256','wrong_sri','wrong_core','wrong_core_integrity','wrong_runtime','wrong_githead','wrong_artifact_path','wrong_bytes']:
+    consumer['coreMatrix'] = [{'core':consumer['core'],'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}, {'core':{'version':'0.6.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz','integrity':'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=='},'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}]
+    consumer['combinedBrowser'] = dict(synthetic=True, coreVersion='0.6.0', providerRequests=0, blockedExternalRequests=[], sharedKeyIdentity=True, bigqueryDefaultNativeFetch=True, bigqueryExplicitNativeFetch=True, bigqueryRows=2, bigqueryPosts=2, httpRows=1, httpGets=1, ovdbDefaultRows=2, ovdbExplicitRows=2, ovdbPosts=dict(default=2, explicit=2))
+    consumer['combinedArtifacts'] = [dict(package=dict(name=name,gitHead=sha),sourceSHA=sha,sha256='a'*64,integrity='sha512-fixture') for name in ['@dalgo/http','@dalgo/ovdb']]
+    for case in ['good','wrong_sha256','wrong_sri','wrong_core','wrong_core_integrity','wrong_runtime','wrong_githead','wrong_artifact_path','missing_core_matrix','wrong_modern_core','missing_modern_types','missing_combined_browser','wrong_native_count','missing_explicit_fetch','provider_request','wrong_combined_source','wrong_bytes']:
         candidate=json.loads(json.dumps(consumer))
         if case == 'wrong_sha256': candidate['sha256']='0'*64
         if case == 'wrong_sri': candidate['integrity']='sha512-wrong'
@@ -429,6 +446,14 @@ print(json.dumps([{'filename':output.name,'integrity':integrity}]))
         if case == 'wrong_runtime': candidate['runtimes'][0]['version']='v20.1.0'
         if case == 'wrong_githead': candidate['package']['gitHead']='0'*40
         if case == 'wrong_artifact_path': candidate['tarball']=str(root/'other.tgz')
+        if case == 'missing_core_matrix': candidate.pop('coreMatrix')
+        if case == 'wrong_modern_core': candidate['coreMatrix'][1]['core']['version']='0.2.0'
+        if case == 'missing_modern_types': candidate['coreMatrix'][1]['runtimes'][0].pop('typedImports')
+        if case == 'missing_combined_browser': candidate.pop('combinedBrowser')
+        if case == 'wrong_native_count': candidate['combinedBrowser']['bigqueryPosts']=0
+        if case == 'missing_explicit_fetch': candidate['combinedBrowser'].pop('bigqueryExplicitNativeFetch')
+        if case == 'provider_request': candidate['combinedBrowser']['providerRequests']=1
+        if case == 'wrong_combined_source': candidate['combinedArtifacts'][1]['sourceSHA']='b'*40
         if case == 'wrong_bytes': Path(packed['tarball']).write_bytes(b'changed')
         receipt=root/(case+'.json')
         receipt.write_text(json.dumps(candidate))
@@ -523,5 +548,5 @@ tsc.write_text('process.exit(0);')
             receipt=json.loads((destination/'artifact-receipt.json').read_text())
             assert receipt['package']['gitHead'] == sha and receipt['sha256'] == hashes['sha256'] and receipt['integrity'] == hashes['integrity']
             assert [runtime['version'] for runtime in receipt['runtimes']] == ['v20.0.0','v24.15.0']
-            assert log.read_text().splitlines() == ['strict-install','runtime-20','runtime-24']
+            assert log.read_text().splitlines() == ['strict-install','runtime-20','runtime-20','runtime-24','runtime-24']
         print(f'PASS real checker {case}: exit={result.returncode}')

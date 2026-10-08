@@ -210,16 +210,24 @@ jobs:
               EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
                 EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
                 EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
-                node .github/scripts/check-bigquery-tarball.mjs "$tarball" "$BIGQUERY_CONSUMER_DIR" "$BIGQUERY_NODE20" "$(command -v node)" \
+                node .github/scripts/check-bigquery-core-matrix.mjs "$tarball" "$BIGQUERY_CONSUMER_DIR" "$BIGQUERY_NODE20" "$(command -v node)" \
                 2>&1 | tee "$BIGQUERY_ARTIFACT_DIR/check.log" || checker_status=$?
               # Preserve partial fixture reports before propagating a failure.
               if [[ -d "$BIGQUERY_CONSUMER_DIR" ]]; then
-                find "$BIGQUERY_CONSUMER_DIR" -maxdepth 1 -type f \( -name 'parity-*.json' -o -name 'http-*.json' \) \
-                  -exec cp '{}' "$BIGQUERY_ARTIFACT_DIR/" \;
+                for core in 0.1.0 0.6.0; do
+                  reports="$BIGQUERY_CONSUMER_DIR/core-$core"
+                  if [[ -d "$reports" ]]; then
+                    mkdir -p "$BIGQUERY_ARTIFACT_DIR/core-$core"
+                    find "$reports" -maxdepth 1 -type f \( -name 'parity-*.json' -o -name 'http-*.json' \) \
+                      -exec cp '{}' "$BIGQUERY_ARTIFACT_DIR/core-$core/" \;
+                  fi
+                done
               fi
               [[ "$checker_status" == 0 ]] || exit "$checker_status"
               cp "$BIGQUERY_CONSUMER_DIR/artifact-receipt.json" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
-              cp "$BIGQUERY_CONSUMER_DIR"/parity-*.json "$BIGQUERY_CONSUMER_DIR"/http-*.json "$BIGQUERY_ARTIFACT_DIR/"
+              for core in 0.1.0 0.6.0; do
+                cp "$BIGQUERY_CONSUMER_DIR/core-$core"/parity-*.json "$BIGQUERY_CONSUMER_DIR/core-$core"/http-*.json "$BIGQUERY_ARTIFACT_DIR/core-$core/"
+              done
               node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
             fi
             if [[ "$package" == http ]]; then
