@@ -210,7 +210,7 @@ fi
         (root/executable).chmod(0o755)
     for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http']:
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
-        for package in ['firestore','indexeddb','bigquery','http']:
+        for package in ['firestore','indexeddb','bigquery','http','ovdb']:
             manifest = root/'packages'/package/'package.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
             version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure']) else '0.1.0'
@@ -218,7 +218,8 @@ fi
                 version = '0.2.0' if package == 'http' else '0.1.0'
             elif case == 'mixed_bigquery_http':
                 version = '0.2.0' if package in ['bigquery','http'] else '0.1.0'
-            manifest.write_text(json.dumps({'name': '@dalgo/http' if package == 'http' else '@dalgo/'+package, 'version': version}))
+            if package == 'ovdb': version = '0.1.0'
+            manifest.write_text(json.dumps({'name': {'http':'@dalgo/http','ovdb':'@dalgo/ovdb'}.get(package, '@dalgo/'+package), 'version': version}))
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''

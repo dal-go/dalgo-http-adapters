@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "rootDir": "src/dtql",
+    "outDir": "dist-dtql"
+  },
+  "include": [
+    "src/dtql"
+  ]
+}

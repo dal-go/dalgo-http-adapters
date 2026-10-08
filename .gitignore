@@ -3,3 +3,5 @@ dist/
 *.tgz
 .pnpm-store/
 .browser-fixture-dist/
+
+dist-dtql/

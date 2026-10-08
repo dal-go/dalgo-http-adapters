@@ -1,7 +1,7 @@
 # Releasing DALgo adapters
 
 The public package manifests in this workspace are `@dalgo/firestore`,
-`@dalgo/indexeddb`, `@dalgo/bigquery` and `@dalgo/http`. They have independent
+`@dalgo/indexeddb`, `@dalgo/bigquery`, `@dalgo/http` and `@dalgo/ovdb`. They have independent
 versions; a public manifest does not establish npm availability. Every other
 adapter is currently private in its package manifest and is excluded from Changesets
 publishing. Remove `private: true` only as part of preparing that adapter for
@@ -28,7 +28,7 @@ workflow publishes only package versions changed by that merge, using direct
 `npm publish` for trusted publishing. It then verifies each version's npm
 `gitHead` and creates
 `firestore@v<version>`, `indexeddb@v<version>`, `bigquery@v<version>` or
-`http@v<version>` at that exact commit. A release for one package leaves other
+`http@v<version>` or `ovdb@v<version>` at that exact commit. A release for one package leaves other
 package versions unchanged.
 
 Publishing uses npm trusted publishing through GitHub Actions. The npm settings
@@ -79,3 +79,5 @@ package identity, SHA256 and SRI immediately before publication. Synthetic
 checks make no provider requests. Package bootstrap and package-specific
 trusted publishing remain external gates; a public manifest or reviewed local
 tarball does not establish npm availability.
+
+The query-only `@dalgo/ovdb` root and `./dtql` release uses an isolated `dist-dtql` inventory and exact tested tarball. Its ordinary minor changeset advances the initial public manifest from 0.1.0 to 0.2.0. The clean consumer verifies both exports, forbidden legacy imports, released registry core 0.6, exact Node 20.0.0, Node 24 and Chromium with authored synthetic responses and no provider requests. Publication does not activate the public provider route; separately pinned public-free admission and Cloud/Directory acceptance remain required. First npm publication also requires an authorized bootstrap before trusted-publisher settings can be configured; a registry 404 does not prove namespace ownership or publication authority.
