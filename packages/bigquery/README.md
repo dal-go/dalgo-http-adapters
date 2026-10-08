@@ -179,6 +179,18 @@ Cancellation consent uses `googleAuthorizationScopes({ cancellation: true })`;
 it grants the broader BigQuery scope and requires an explicit product action.
 OAuth client setup and deployed-origin/CORS acceptance remain required.
 
+For a metadata pilot requiring only `openid` and BigQuery read-only, construct
+`new GoogleTokenIdentityProvider({ scopePolicy: "exact-readonly" })`. This opt-in
+rejects missing or extra grants (including email, writable BigQuery and
+cloud-platform) from the actual GIS callback before identity requests, and
+invalidates any earlier authorization. Pass `googleAuthorizationScopes()` and
+`include_granted_scopes: false` to GIS `initTokenClient`; never replace callback
+scope metadata with the requested scopes. The default `"compatible"` policy
+preserves the optional email and cancellation behavior above. Exact-scope mode
+retains the same-token UserInfo check, memory-only token and explicit expiry
+handling; client registration and a live browser acceptance receipt are separate.
+
+
 Google's [token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model)
 defines user-triggered consent and expiry recovery; its [discovery document](https://accounts.google.com/.well-known/openid-configuration)
 pins the UserInfo endpoint used here.

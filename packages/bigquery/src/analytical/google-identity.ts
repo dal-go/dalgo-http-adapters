@@ -34,6 +34,8 @@ export interface GoogleIdentityConfig {
   readonly fetch?: SafeFetch;
   readonly now?: () => number;
   readonly timeoutMs?: number;
+  /** Metadata pilots may accept only the exact openid + BigQuery readonly grant set. */
+  readonly scopePolicy?: "compatible" | "exact-readonly";
 }
 
 /** Memory-only GIS token provider. It never prompts, refreshes, links Firebase
@@ -44,6 +46,7 @@ export class GoogleTokenIdentityProvider implements IdentityProvider {
   readonly #fetch: SafeFetch;
   readonly #now: () => number;
   readonly #timeout: number;
+  readonly #scopePolicy: "compatible" | "exact-readonly";
   #revision = 0;
   #identity: TrustedIdentity | undefined;
   #pending: AbortController | undefined;
@@ -51,6 +54,8 @@ export class GoogleTokenIdentityProvider implements IdentityProvider {
     this.#fetch = config.fetch ?? ((url, init) => globalThis.fetch(url, init));
     this.#now = config.now ?? Date.now;
     this.#timeout = config.timeoutMs ?? 15000;
+    this.#scopePolicy = config.scopePolicy ?? "compatible";
+    if (this.#scopePolicy !== "compatible" && this.#scopePolicy !== "exact-readonly") fail("invalid_input");
     if (!Number.isSafeInteger(this.#timeout) || this.#timeout < 1 || this.#timeout > 15000) fail("invalid_input");
   }
   public disconnect(): void {
@@ -76,6 +81,8 @@ export class GoogleTokenIdentityProvider implements IdentityProvider {
     if (typeof response.scope !== "string" || response.scope.length > 8192) fail("scope_missing");
     const grants = new Set(response.scope.split(/\s+/u));
     if (!grants.has("openid") || !(grants.has(readonlyScope) || grants.has(cancelScope))) fail("scope_missing");
+    if (this.#scopePolicy === "exact-readonly" &&
+        (grants.size !== 2 || !grants.has(readonlyScope))) fail("scope_missing");
     const controller = new AbortController();
     this.#pending = controller;
     const abort = (): void => controller.abort();

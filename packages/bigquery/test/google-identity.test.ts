@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GoogleTokenIdentityProvider, googleAuthorizationScopes, type GoogleTokenResponse, type SafeFetch } from "../src/analytical.js";
+import { GoogleTokenIdentityProvider, googleAuthorizationScopes, type GoogleIdentityConfig, type GoogleTokenResponse, type SafeFetch } from "../src/analytical.js";
 
 const token: GoogleTokenResponse = {
   access_token: "synthetic-access-token", token_type: "Bearer", expires_in: 3600,
@@ -7,7 +7,7 @@ const token: GoogleTokenResponse = {
 };
 const discovery = { issuer: "https://accounts.google.com", userinfo_endpoint: "https://openidconnect.googleapis.com/v1/userinfo" };
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status });
-function fixture(user: unknown = { sub: "stable-google-subject" }) {
+function fixture(user: unknown = { sub: "stable-google-subject" }, scopePolicy?: GoogleIdentityConfig["scopePolicy"]) {
   const calls: { url: string; init: RequestInit }[] = [];
   let now = 1000000;
   const responses = [json(discovery), json(user)];
@@ -17,7 +17,7 @@ function fixture(user: unknown = { sub: "stable-google-subject" }) {
     if (!response) throw new Error("unexpected synthetic request");
     return response;
   };
-  const provider = new GoogleTokenIdentityProvider({ fetch, now: () => now });
+  const provider = new GoogleTokenIdentityProvider({ fetch, now: () => now, ...(scopePolicy === undefined ? {} : { scopePolicy }) });
   return { provider, calls, responses, advance: (ms: number) => { now += ms; } };
 }
 const signal = (): AbortSignal => new AbortController().signal;
@@ -47,6 +47,43 @@ describe("same-token Google execution identity", () => {
     expect(Object.isFrozen(identity)).toBe(true);
     expect(JSON.stringify(f.provider)).toBe("{}");
     expect(JSON.stringify(connected)).not.toContain(token.access_token);
+  });
+  it("exact readonly policy keeps the real callback token and verifies its same-token subject", async () => {
+    const f = fixture(undefined, "exact-readonly");
+    const response = { ...token, scope: "https://www.googleapis.com/auth/bigquery.readonly openid" };
+    const connected = await f.provider.connect(response);
+    expect(connected.cancel).toBe(false);
+    expect(connected.principal.subject).toBe("stable-google-subject");
+    expect(f.calls).toHaveLength(2);
+    expect(f.calls[0].init.headers).not.toHaveProperty("Authorization");
+    expect(f.calls[1].init.headers).toHaveProperty("Authorization", `Bearer ${response.access_token}`);
+    expect((await f.provider.authorize(signal())).accessToken).toBe(response.access_token);
+  });
+  it.each([
+    undefined, "", "openid", "https://www.googleapis.com/auth/bigquery.readonly",
+    googleAuthorizationScopes({ cancellation: true }),
+    `${googleAuthorizationScopes()} https://www.googleapis.com/auth/bigquery`,
+    `${googleAuthorizationScopes()} https://www.googleapis.com/auth/cloud-platform`,
+    `${googleAuthorizationScopes()} email`, `${googleAuthorizationScopes()} arbitrary-grant`,
+  ])("exact readonly policy refuses absent or broader actual grants before identity I/O: %s", async scope => {
+    const f = fixture(undefined, "exact-readonly");
+    await f.provider.connect(token);
+    const response = scope === undefined ? { access_token: "rotation", token_type: "Bearer", expires_in: 3600 } : { ...token, scope };
+    await expect(f.provider.connect(response)).rejects.toThrow("scope_missing");
+    expect(f.calls).toHaveLength(2);
+    await expect(f.provider.authorize(signal())).rejects.toThrow("auth_required");
+  });
+  it("exact readonly policy invalidates authorization on a GIS callback error without leaking the error", async () => {
+    const f = fixture(undefined, "exact-readonly");
+    await f.provider.connect(token);
+    await expect(f.provider.connect({ error: "invented callback secret", ...token })).rejects.toThrow("auth_required");
+    await expect(f.provider.authorize(signal())).rejects.toThrow("auth_required");
+    expect(f.calls).toHaveLength(2);
+  });
+  it("compatible default still permits requested optional email and cancellation grants", async () => {
+    const f = fixture();
+    const result = await f.provider.connect({ ...token, scope: googleAuthorizationScopes({ email: true, cancellation: true }) });
+    expect(result.cancel).toBe(true);
   });
   it("binds stable sub independently of email and replaces generation on every token change", async () => {
     const f = fixture({ sub: "subject1", email: "label@example.test", email_verified: true });
