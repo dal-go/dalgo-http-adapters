@@ -93,7 +93,8 @@ with tempfile.TemporaryDirectory(prefix='ovdb-changesets-') as directory:
     (root/'pnpm-workspace.yaml').write_text('packages:\n  - packages/*\n')
     config = json.loads((repo/'.changeset/config.json').read_text()); config['changelog'] = False
     (root/'.changeset/config.json').write_text(json.dumps(config))
-    (root/'.changeset/ovdb.md').write_text((repo/'.changeset/ovdb-completed-dtql.md').read_text())
+    # Author the fixture: repository changesets are consumed on generated version branches.
+    (root/'.changeset/ovdb.md').write_text('---\n"@dalgo/ovdb": minor\n---\n\nSynthetic OVDB release.\n')
     for package, name in [('ovdb','@dalgo/ovdb'),('unrelated','@dalgo/unrelated')]:
         p=root/'packages'/package; p.mkdir(parents=True)
         (p/'package.json').write_text(json.dumps({'name':name,'version':'0.1.0','private':False}))
@@ -103,3 +104,10 @@ with tempfile.TemporaryDirectory(prefix='ovdb-changesets-') as directory:
     assert json.loads((root/'packages/unrelated/package.json').read_text())['version'] == '0.1.0'
     assert not (root/'.changeset/ovdb.md').exists()
     print('PASS ordinary public 0.1.0 minor Changesets generation to 0.2.0')
+    result = subprocess.run(['node',str(repo/'node_modules/@changesets/cli/bin.js'),'version'],cwd=root,capture_output=True,text=True)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert 'No unreleased changesets found.' in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert json.loads((root/'packages/ovdb/package.json').read_text())['version'] == '0.2.0'
+    assert json.loads((root/'packages/unrelated/package.json').read_text())['version'] == '0.1.0'
+    assert not (root/'.changeset/ovdb.md').exists()
+    print('PASS generated version workspace without pending changesets stays unchanged')
