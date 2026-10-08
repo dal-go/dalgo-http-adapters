@@ -29,7 +29,7 @@ The reference implementation is [`@dalgo/firestore`](packages/firestore). Every 
 | Neo4j | [`@dal-go/dalgo2neo4j`](packages/neo4j) |
 | Amazon Neptune | [`@dal-go/dalgo2neptune`](packages/neptune) |
 | OpenSearch | [`@dal-go/dalgo2opensearch`](packages/opensearch) |
-| ECB daily XML (private) | [`@dal-go/dalgo2http`](packages/http) |
+| ECB daily XML | [`@dalgo/http`](packages/http) |
 | OpenVaultDB | [`@dalgo/ovdb`](packages/ovdb) |
 | Pinecone | [`@dal-go/dalgo2pinecone`](packages/pinecone) |
 | PocketBase | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) |
@@ -194,7 +194,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 |---|---|
 | [`@dalgo/firestore`](packages/firestore) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
 | [`@dalgo/indexeddb`](packages/indexeddb) | Implemented local browser adapter. |
-| [`@dal-go/dalgo2http`](packages/http) | Private ECB daily XML query slice with detached rights/read evidence and synthetic validation; independent review and live CORS/rights admission remain pending. |
+| [`@dalgo/http`](packages/http) | ECB daily XML query slice with detached rights/read evidence, reviewed synthetic validation and registry-only release gates; npm publication and live CORS/rights admission remain separate. |
 | [`@dalgo/ovdb`](packages/ovdb) | Bounded query-only OpenVaultDB DTQL adapter; public activation requires separate admission. |
 | [`@dal-go/dalgo2snowflake`](packages/snowflake) | Implemented read/query SQL API adapter; writes and DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2databricks`](packages/databricks) | Implemented read/query Statement Execution API adapter with complete inline chunk validation; writes and DALgo callback transactions remain explicitly unsupported. |

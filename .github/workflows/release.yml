@@ -161,7 +161,7 @@ jobs:
           pnpm --filter @dalgo/firestore check
           pnpm --filter @dalgo/indexeddb check
           pnpm --filter @dalgo/bigquery check
-          pnpm --filter @dal-go/dalgo2http check
+          pnpm --filter @dalgo/http check
           pnpm --filter @dalgo/ovdb check
       - name: Publish changed versions and tag their npm source commits
         env:
@@ -189,7 +189,7 @@ jobs:
               firestore) expected_name='@dalgo/firestore' ;;
               indexeddb) expected_name='@dalgo/indexeddb' ;;
               bigquery) expected_name='@dalgo/bigquery' ;;
-              http) expected_name='@dal-go/dalgo2http' ;;
+              http) expected_name='@dalgo/http' ;;
               ovdb) expected_name='@dalgo/ovdb' ;;
               *) exit 1 ;;
             esac

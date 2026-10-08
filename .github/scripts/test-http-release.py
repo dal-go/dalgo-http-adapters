@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='http-artifact-guards-') as directory:
         if case == 'private': changed['private'] = True
         if case == 'wrong_access': changed['publishConfig']['access'] = 'restricted'
         if case == 'git_peer': changed['peerDependencies']['@dalgo/core'] = 'github:dal-go/dalgo-js#main'
-        if case == 'wrong_name': changed['name'] = '@dalgo/http'
+        if case == 'wrong_name': changed['name'] = '@dal-go/dalgo2http'
         (package/'package.json').write_text(json.dumps(changed))
         if case == 'missing_license': (package/'LICENSE').unlink()
         artifact = root/case

@@ -2,7 +2,7 @@ packages:
   - "packages/*"
 
 overrides:
-  "@dal-go/dalgo2http>@dalgo/core": "0.6.0"
+  "@dalgo/http>@dalgo/core": "0.6.0"
   "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d"
   "@dalgo/bigquery>@dalgo/core": "0.1.0"
   "@dalgo/core": "github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336"

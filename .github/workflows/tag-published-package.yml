@@ -45,7 +45,7 @@ jobs:
           set -euo pipefail
           case "$PACKAGE" in
             firestore|indexeddb|bigquery) name="@dalgo/$PACKAGE" ;;
-            http) name='@dal-go/dalgo2http' ;;
+            http) name='@dalgo/http' ;;
             *) exit 1 ;;
           esac
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then

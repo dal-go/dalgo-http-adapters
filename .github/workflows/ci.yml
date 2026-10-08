@@ -37,7 +37,7 @@ jobs:
         run: python3 .github/scripts/test-ovdb-release-selection.py
       - run: pnpm check
       - name: Verify HTTP check without pre-existing generated output
-        run: pnpm --filter @dal-go/dalgo2http run check:clean-output
+        run: pnpm --filter @dalgo/http run check:clean-output
       - run: pnpm --filter @dalgo/firestore run test:emulator
 
   ovdb-artifact:

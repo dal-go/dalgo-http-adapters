@@ -91,7 +91,7 @@ if [[ "$1" == publish ]]; then
   else
     if [[ "$2" == "$BIGQUERY_ARTIFACT_DIR/dalgo-bigquery-0.2.0.tgz" ]]; then
       printf 'publish bigquery\\n' >> "$MOCK_LOG"
-    elif [[ "$2" == "$HTTP_ARTIFACT_DIR/dal-go-dalgo2http-0.2.0.tgz" ]]; then
+    elif [[ "$2" == "$HTTP_ARTIFACT_DIR/dalgo-http-0.2.0.tgz" ]]; then
       printf 'publish http\\n' >> "$MOCK_LOG"
     else exit 98
     fi
@@ -121,7 +121,7 @@ elif [[ "$1" == view ]]; then
   reported_sha=$MOCK_SHA
   [[ "$CASE" != wrong_source && "$CASE" != mixed_preceding_wrong_source ]] || reported_sha=0000000000000000000000000000000000000000
   integrity=sha512-mock
-  [[ "$name" != @dal-go/dalgo2http ]] || integrity=sha512-http-mock
+  [[ "$name" != @dalgo/http ]] || integrity=sha512-http-mock
   [[ "$CASE" != wrong_registry_integrity ]] || integrity=sha512-wrong
   [[ "$CASE" != wrong_metadata_name ]] || name=@dalgo/wrong
   [[ "$CASE" != wrong_metadata_version ]] || version=9.9.9
@@ -187,14 +187,14 @@ elif [[ "$1" == .github/scripts/prepare-http-release.mjs ]]; then
   if [[ "$2" == pack ]]; then
     [[ ! -d "$3" ]] || exit 98
     mkdir "$3"
-    echo http-mock > "$3/dal-go-dalgo2http-0.2.0.tgz"
-    printf '{"tarball":"%s/dal-go-dalgo2http-0.2.0.tgz","sha256":"http-mock","integrity":"sha512-http-mock"}' "$3" > "$3/packed-artifact.json"
+    echo http-mock > "$3/dalgo-http-0.2.0.tgz"
+    printf '{"tarball":"%s/dalgo-http-0.2.0.tgz","sha256":"http-mock","integrity":"sha512-http-mock"}' "$3" > "$3/packed-artifact.json"
   else
     [[ "$6" == "$HTTP_ARTIFACT_DIR/tested-artifact.json" && -f "$6" ]] || exit 98
   fi
 elif [[ "$1" == .github/scripts/check-http-tarball.mjs ]]; then
   printf 'http artifact check\\n' >> "$MOCK_LOG"
-  [[ "$2" == "$HTTP_ARTIFACT_DIR/dal-go-dalgo2http-0.2.0.tgz" && "$3" == "$HTTP_CONSUMER_DIR" && "$3" != "$BIGQUERY_CONSUMER_DIR" ]] || exit 98
+  [[ "$2" == "$HTTP_ARTIFACT_DIR/dalgo-http-0.2.0.tgz" && "$3" == "$HTTP_CONSUMER_DIR" && "$3" != "$BIGQUERY_CONSUMER_DIR" ]] || exit 98
   [[ "$EXPECTED_SOURCE_SHA" == "$MOCK_SHA" && "$EXPECTED_PACKAGE_VERSION" == 0.2.0 ]] || exit 98
   [[ "$EXPECTED_ARTIFACT_SHA256" == http-mock && "$EXPECTED_ARTIFACT_INTEGRITY" == sha512-http-mock ]] || exit 98
   [[ "$4" == "$HTTP_NODE20" && "$5" == "$(command -v node)" ]] || exit 98
@@ -219,7 +219,7 @@ fi
             elif case == 'mixed_bigquery_http':
                 version = '0.2.0' if package in ['bigquery','http'] else '0.1.0'
             if package == 'ovdb': version = '0.1.0'
-            manifest.write_text(json.dumps({'name': {'http':'@dal-go/dalgo2http','ovdb':'@dalgo/ovdb'}.get(package, '@dalgo/'+package), 'version': version}))
+            manifest.write_text(json.dumps({'name': {'http':'@dalgo/http','ovdb':'@dalgo/ovdb'}.get(package, '@dalgo/'+package), 'version': version}))
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''
@@ -329,7 +329,7 @@ with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
     (root/'npm').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 name="@dalgo/$PACKAGE"
-[[ "$PACKAGE" != http ]] || name=@dal-go/dalgo2http
+[[ "$PACKAGE" != http ]] || name=@dalgo/http
 version=$VERSION
 source_sha=$MOCK_SHA
 [[ "$CASE" != wrong_name ]] || name=@dalgo/other
@@ -345,7 +345,7 @@ elif [[ "$1" == show ]]; then
   version=$VERSION
   [[ "$CASE" != wrong_manifest ]] || version=9.9.9
   name="@dalgo/$PACKAGE"
-  [[ "$PACKAGE" != http ]] || name=@dal-go/dalgo2http
+  [[ "$PACKAGE" != http ]] || name=@dalgo/http
   printf '{"name":"%s","version":"%s"}\\n' "$name" "$version"
 else exit 99
 fi

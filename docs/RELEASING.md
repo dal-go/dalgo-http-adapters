@@ -1,8 +1,8 @@
 # Releasing DALgo adapters
 
 The public package manifests in this workspace are `@dalgo/firestore`,
-`@dalgo/indexeddb` and `@dalgo/bigquery`. They have independent versions; a public
-manifest does not establish npm availability. Every other adapter is
+`@dalgo/indexeddb`, `@dalgo/bigquery` and `@dalgo/http`. They have independent
+versions; a public manifest does not establish npm availability. Every other adapter is
 currently private in its package manifest and is excluded from Changesets
 publishing. Remove `private: true` only as part of preparing that adapter for
 its first npm release.
@@ -27,8 +27,8 @@ updated by `GITHUB_TOKEN`. The
 workflow publishes only package versions changed by that merge, using direct
 `npm publish` for trusted publishing. It then verifies each version's npm
 `gitHead` and creates
-`firestore@v<version>`, `indexeddb@v<version>` or `bigquery@v<version>` at that
-exact commit. A release for one package leaves other package versions unchanged.
+`firestore@v<version>`, `indexeddb@v<version>`, `bigquery@v<version>` or
+`http@v<version>` at that exact commit. A release for one package leaves other package versions unchanged.
 
 Publishing uses npm trusted publishing through GitHub Actions. The npm settings
 for **each** published package must authorize GitHub repository
@@ -41,8 +41,8 @@ If publishing itself fails, manually run **Release packages** with the exact
 merged version pull request's commit SHA in `release_sha`. The workflow checks
 that this commit belongs to `main` and was produced by the merged version pull
 request, then safely retries publication and tagging. Do not use a later
-unrelated commit SHA. The publish loop processes Firestore, IndexedDB, then
-BigQuery and stops on the first failure. Before merging a BigQuery-only version
+unrelated commit SHA. The publish loop processes Firestore, IndexedDB, BigQuery,
+then HTTP and stops on the first failure. Before merging a BigQuery-only version
 pull request, verify its manifest-version diff changes only BigQuery. If earlier
 packages also change, their publication and tag gates must be resolved before
 that merge; retrying the same SHA repeats an earlier package failure.
@@ -67,3 +67,14 @@ This local check does not implement the release workflow's artifact gate.
 core release does not automatically bump adapter versions or peer dependency
 ranges across repositories. Change an adapter's `@dalgo/core` peer range and
 add an adapter changeset when its compatibility contract changes.
+
+HTTP uses the controlled npm organization scope and package name `@dalgo/http`;
+the GitHub source repository remains `dal-go/dalgo-http-adapters`. Its independent
+version changeset, release selection and `http@v<version>` source tags use that
+exact package identity. Before publication, the release workflow packs once,
+tests the retained tarball with registry `@dalgo/core@0.6.0` on Node 20 and 24
+and in the native synthetic browser fixture, then reverifies source SHA,
+package identity, SHA256 and SRI immediately before publication. Synthetic
+checks make no provider requests. Package bootstrap and package-specific
+trusted publishing remain external gates; a public manifest or reviewed local
+tarball does not establish npm availability.
