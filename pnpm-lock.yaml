@@ -9,6 +9,7 @@ overrides:
   '@dal-go/dalgo': github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
   '@dalgo/bigquery>@dalgo/core': 0.1.0
   '@dalgo/core': github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
+  '@dalgo/indexeddb>@dalgo/core': 0.6.0
   '@dal-go/dalgo2ovdb>@dalgo/core': github:dal-go/dalgo-js#5f80adc2fe53cfaef2d6e73bc4e053259deeec3e
 
 importers:
@@ -412,11 +413,10 @@ importers:
         version: 5.0.1(@types/node@26.6.2)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.2)(yaml@2.9.1))
 
   packages/indexeddb:
-    dependencies:
-      '@dalgo/core':
-        specifier: github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336
     devDependencies:
+      '@dalgo/core':
+        specifier: 0.6.0
+        version: 0.6.0
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
