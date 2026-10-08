@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='ovdb-artifact-guards-') as directory:
         if case == 'private': changed['private'] = True
         if case == 'wrong_access': changed['publishConfig']['access'] = 'restricted'
         if case == 'git_peer': changed['peerDependencies']['@dalgo/core'] = 'github:dal-go/dalgo-js#main'
-        if case == 'wrong_name': changed['name'] = '@dalgo/ovdb'
+        if case == 'wrong_name': changed['name'] = '@dal-go/dalgo2ovdb'
         if case == 'legacy_output': (package/'dist-dtql/legacy.js').write_text('export class OpenVaultDbClient {}')
         if case == 'extra_export': changed['exports']['./legacy'] = changed['exports']['.']
         (package/'package.json').write_text(json.dumps(changed))

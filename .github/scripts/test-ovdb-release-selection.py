@@ -34,8 +34,8 @@ if [[ "$1" == *check-* ]]; then
 else
   echo "$2" >> "$MOCK_LOG"
   if [[ "$2" == pack ]]; then
-    mkdir "$3"; echo synthetic > "$3/dal-go-dalgo2ovdb-0.2.0.tgz"
-    printf '{"tarball":"%s/dal-go-dalgo2ovdb-0.2.0.tgz","sha256":"mock","integrity":"sha512-mock"}' "$3" > "$3/packed-artifact.json"
+    mkdir "$3"; echo synthetic > "$3/dalgo-ovdb-0.2.0.tgz"
+    printf '{"tarball":"%s/dalgo-ovdb-0.2.0.tgz","sha256":"mock","integrity":"sha512-mock"}' "$3" > "$3/packed-artifact.json"
   else [[ -f "$6" ]] || exit 98; fi
 fi
 ''',
@@ -53,11 +53,11 @@ else echo '"Not Found"' > "$2"; echo -n 404; fi
       'npm': '''#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == publish ]]; then
-  [[ "$2" == "$OVDB_ARTIFACT_DIR/dal-go-dalgo2ovdb-0.2.0.tgz" && "$*" == *--ignore-scripts* && "$*" == *--provenance* ]] || exit 98
+  [[ "$2" == "$OVDB_ARTIFACT_DIR/dalgo-ovdb-0.2.0.tgz" && "$*" == *--ignore-scripts* && "$*" == *--provenance* ]] || exit 98
   echo publish >> "$MOCK_LOG"
   [[ "$CASE" != bootstrap_auth ]] || exit 1
 elif [[ "$1" == view ]]; then
-  name=@dal-go/dalgo2ovdb; version=0.2.0; integrity=sha512-mock; source=$MOCK_SHA
+  name=@dalgo/ovdb; version=0.2.0; integrity=sha512-mock; source=$MOCK_SHA
   [[ "$CASE" != wrong_integrity ]] || integrity=wrong
   [[ "$CASE" != wrong_sha ]] || source=wrong
   [[ "$CASE" != wrong_registry_name ]] || name=@dalgo/wrong
@@ -73,7 +73,7 @@ else exit 99; fi
     for case in cases:
         selected = 'unknown' if case == 'unknown' else 'ovdb'
         manifest = root/'packages'/selected/'package.json'; manifest.parent.mkdir(parents=True, exist_ok=True)
-        manifest.write_text(json.dumps({'name':'@dalgo/ovdb' if case == 'wrong_name' else '@dal-go/dalgo2ovdb', 'version':'0.1.0' if case == 'unchanged' else '0.2.0'}))
+        manifest.write_text(json.dumps({'name':'@dal-go/dalgo2ovdb' if case == 'wrong_name' else '@dalgo/ovdb', 'version':'0.1.0' if case == 'unchanged' else '0.2.0'}))
         log = root/(case+'.log')
         env = dict(os.environ, PATH=str(root)+':'+os.environ['PATH'], CASE=case, SELECTED=selected, MOCK_SHA=sha, MOCK_LOG=str(log), OVDB_NODE20=str(root/'node20'), BIGQUERY_ARTIFACT_DIR=str(root/'unrelated-bigquery'), HTTP_ARTIFACT_DIR=str(root/'unrelated-http'), OVDB_ARTIFACT_DIR=str(root/(case+'.artifact')), OVDB_CONSUMER_DIR=str(root/(case+'.consumer')))
         result = subprocess.run(['bash', str(root/'run.sh')], cwd=root, env=env, capture_output=True, text=True)
@@ -94,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='ovdb-changesets-') as directory:
     config = json.loads((repo/'.changeset/config.json').read_text()); config['changelog'] = False
     (root/'.changeset/config.json').write_text(json.dumps(config))
     (root/'.changeset/ovdb.md').write_text((repo/'.changeset/ovdb-completed-dtql.md').read_text())
-    for package, name in [('ovdb','@dal-go/dalgo2ovdb'),('unrelated','@dalgo/unrelated')]:
+    for package, name in [('ovdb','@dalgo/ovdb'),('unrelated','@dalgo/unrelated')]:
         p=root/'packages'/package; p.mkdir(parents=True)
         (p/'package.json').write_text(json.dumps({'name':name,'version':'0.1.0','private':False}))
     result = subprocess.run(['node',str(repo/'node_modules/@changesets/cli/bin.js'),'version'],cwd=root,capture_output=True,text=True)

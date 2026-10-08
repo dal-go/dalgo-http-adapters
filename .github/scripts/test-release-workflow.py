@@ -219,7 +219,7 @@ fi
             elif case == 'mixed_bigquery_http':
                 version = '0.2.0' if package in ['bigquery','http'] else '0.1.0'
             if package == 'ovdb': version = '0.1.0'
-            manifest.write_text(json.dumps({'name': {'http':'@dal-go/dalgo2http','ovdb':'@dal-go/dalgo2ovdb'}.get(package, '@dalgo/'+package), 'version': version}))
+            manifest.write_text(json.dumps({'name': {'http':'@dal-go/dalgo2http','ovdb':'@dalgo/ovdb'}.get(package, '@dalgo/'+package), 'version': version}))
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''

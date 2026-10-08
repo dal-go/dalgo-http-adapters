@@ -1,6 +1,6 @@
 # OpenVaultDB DTQL executor
 
-`@dal-go/dalgo2ovdb` exposes the query-only `OpenVaultDbDTQLQueryExecutor` at both the package root and `@dal-go/dalgo2ovdb/dtql`. Requires Node >=20 or a browser with Fetch and Web Crypto, and the released `@dalgo/core` 0.6 family.
+`@dalgo/ovdb` exposes the query-only `OpenVaultDbDTQLQueryExecutor` at both the package root and `@dalgo/ovdb/dtql`. Requires Node >=20 or a browser with Fetch and Web Crypto, and the released `@dalgo/core` 0.6 family.
 
 The first native profile accepts one `daily` collection query, zero through ten flat string equality filters on `time`, `currency` and `rate`, and a limit of 1–50 (default 50). It preserves native lexical strings, validates one independently admitted source read and full immutable rights metadata, and returns `complete: true` only after bounded JSON reaches EOF and evidence passes. Completion describes a bounded query, not complete source inventory.
 

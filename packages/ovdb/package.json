@@ -1,5 +1,5 @@
 {
-  "name": "@dal-go/dalgo2ovdb",
+  "name": "@dalgo/ovdb",
   "private": false,
   "version": "0.1.0",
   "description": "Completed read-only OpenVaultDB DTQL executor for DALgo TypeScript",

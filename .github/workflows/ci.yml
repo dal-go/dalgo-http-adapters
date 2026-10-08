@@ -59,7 +59,7 @@ jobs:
         with:
           go-version: '1.27.0'
           cache-dependency-path: .github/fixtures/ovdb-yaml-parity/go.sum
-      - run: pnpm --filter @dal-go/dalgo2ovdb check
+      - run: pnpm --filter @dalgo/ovdb check
       - name: Verify native YAML string parity with the released Go parser
         run: node .github/scripts/check-ovdb-yaml-parity.mjs
       - name: Verify exact query-only artifact under Node 20, Node 24 and Chromium

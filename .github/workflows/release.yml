@@ -162,7 +162,7 @@ jobs:
           pnpm --filter @dalgo/indexeddb check
           pnpm --filter @dalgo/bigquery check
           pnpm --filter @dal-go/dalgo2http check
-          pnpm --filter @dal-go/dalgo2ovdb check
+          pnpm --filter @dalgo/ovdb check
       - name: Publish changed versions and tag their npm source commits
         env:
           NPM_CONFIG_PROVENANCE: 'true'
@@ -190,7 +190,7 @@ jobs:
               indexeddb) expected_name='@dalgo/indexeddb' ;;
               bigquery) expected_name='@dalgo/bigquery' ;;
               http) expected_name='@dal-go/dalgo2http' ;;
-              ovdb) expected_name='@dal-go/dalgo2ovdb' ;;
+              ovdb) expected_name='@dalgo/ovdb' ;;
               *) exit 1 ;;
             esac
             [[ "$name" == "$expected_name" ]] || exit 1

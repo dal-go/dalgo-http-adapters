@@ -1,6 +1,6 @@
 import { collection } from "@dalgo/core";
-import * as root from "@dal-go/dalgo2ovdb";
-import * as dtql from "@dal-go/dalgo2ovdb/dtql";
+import * as root from "@dalgo/ovdb";
+import * as dtql from "@dalgo/ovdb/dtql";
 import { fixture, response } from "./dtql-fixture.js";
 
 export async function runSyntheticOVDBConsumer(): Promise<object> {

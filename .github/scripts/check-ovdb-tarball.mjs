@@ -31,24 +31,24 @@ assert.equal(core.integrity, 'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+7
 assert.equal(Object.keys(lock.packages).filter(p => p.endsWith('node_modules/@dalgo/core')).length, 1);
 assert.ok(!lock.packages['node_modules/@dal-go/dalgo']);
 for (const [path, pkg] of Object.entries(lock.packages)) {
-  if (!path || path === 'node_modules/@dal-go/dalgo2ovdb') continue;
+  if (!path || path === 'node_modules/@dalgo/ovdb') continue;
   assert.ok(!pkg.link && pkg.resolved?.startsWith('https://registry.npmjs.org/'), `nonregistry dependency: ${path}`);
 }
-const ovdbRoot = resolve(destination, 'node_modules/@dal-go/dalgo2ovdb');
+const ovdbRoot = resolve(destination, 'node_modules/@dalgo/ovdb');
 const manifest = JSON.parse(readFileSync(resolve(ovdbRoot, 'package.json'), 'utf8'));
 assert.deepEqual(Object.keys(manifest.exports).sort(), ['.', './dtql']);
 for (const path of ['client', 'database', 'query', 'path', 'dist/index.js']) {
-  run(process.execPath, ['--input-type=module', '-e', `try { await import('@dal-go/dalgo2ovdb/${path}'); process.exit(1); } catch (e) { if(e.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw e; }`]);
+  run(process.execPath, ['--input-type=module', '-e', `try { await import('@dalgo/ovdb/${path}'); process.exit(1); } catch (e) { if(e.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw e; }`]);
 }
-assert.equal(manifest.name, '@dal-go/dalgo2ovdb');
+assert.equal(manifest.name, '@dalgo/ovdb');
 assert.equal(manifest.version, process.env.EXPECTED_PACKAGE_VERSION);
 assert.equal(manifest.gitHead, process.env.EXPECTED_SOURCE_SHA);
-assert.equal(lock.packages['node_modules/@dal-go/dalgo2ovdb'].integrity, hashes.integrity);
+assert.equal(lock.packages['node_modules/@dalgo/ovdb'].integrity, hashes.integrity);
 assert.ok(!manifest.private);
 assert.equal(manifest.peerDependencies['@dalgo/core'], '>=0.6.0 <0.7.0');
 assert.equal(readFileSync(resolve(ovdbRoot, 'LICENSE'), 'utf8').trimEnd(), readFileSync(resolve(repository, 'LICENSE'), 'utf8').trimEnd());
 mkdirSync(resolve(destination, 'test'));
-const fixtureSource = readFileSync(resolve(repository, 'packages/ovdb/test/dtql-fixture.ts'), 'utf8').replace('../src/dtql/index.js', '@dal-go/dalgo2ovdb/dtql');
+const fixtureSource = readFileSync(resolve(repository, 'packages/ovdb/test/dtql-fixture.ts'), 'utf8').replace('../src/dtql/index.js', '@dalgo/ovdb/dtql');
 writeFileSync(resolve(destination, 'test/dtql-fixture.ts'), fixtureSource);
 cpSync(resolve(repository, 'packages/ovdb/test/browser-fixture.ts'), resolve(destination, 'test/browser-fixture.ts'));
 writeFileSync(resolve(destination, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', lib: ['ES2022', 'DOM'], strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, skipLibCheck: false, rootDir: 'test', outDir: 'fixture' }, include: ['test/browser-fixture.ts'] }));
@@ -62,7 +62,7 @@ const runtimes = [node20, node24].map((runtime, index) => {
   return { ...proof, typedImports: true, ...hashes, sourceSHA: manifest.gitHead };
 });
 cpSync(resolve(repository, '.github/scripts/ovdb-browser-smoke.mjs'), resolve(destination, 'browser-smoke.mjs'));
-run('npm', ['ls', '@dalgo/core', '@dal-go/dalgo2ovdb', '--all']);
+run('npm', ['ls', '@dalgo/core', '@dalgo/ovdb', '--all']);
 run(process.execPath, ['node_modules/playwright/cli.js', 'install', 'chromium']);
 const browser = JSON.parse(run(process.execPath, ['browser-smoke.mjs']).trim());
 assert.equal(browser.synthetic, true);

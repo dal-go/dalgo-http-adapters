@@ -9,7 +9,7 @@ const [mode, directoryArg, sourceSHA, version, consumerReceiptArg] = process.arg
 if (!["pack", "verify"].includes(mode) || !directoryArg || !/^[0-9a-f]{40}$/.test(sourceSHA ?? "") || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version ?? "")) throw new Error("mode, artifact directory, exact source SHA and version required");
 const directory = resolve(directoryArg);
 const receiptPath = resolve(directory, "packed-artifact.json");
-const identity = { name: "@dal-go/dalgo2ovdb", version, gitHead: sourceSHA };
+const identity = { name: "@dalgo/ovdb", version, gitHead: sourceSHA };
 const digest = bytes => ({ sha256: createHash("sha256").update(bytes).digest("hex"), integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}` });
 const readJSON = path => JSON.parse(readFileSync(path, "utf8"));
 const failUnless = (condition, message) => { if (!condition) throw new Error(message); };
@@ -51,7 +51,7 @@ if (mode === "pack") {
   const output = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", directory], { cwd: staging, encoding: "utf8" });
   writeFileSync(resolve(directory, "npm-pack.json"), output);
   const packs = JSON.parse(output);
-  failUnless(packs.length === 1 && packs[0].filename === `dal-go-dalgo2ovdb-${version}.tgz`, "unexpected npm pack result");
+  failUnless(packs.length === 1 && packs[0].filename === `dalgo-ovdb-${version}.tgz`, "unexpected npm pack result");
   const tarball = resolve(directory, packs[0].filename);
   const hashes = digest(readFileSync(tarball));
   failUnless(packs[0].integrity === hashes.integrity, "npm pack integrity mismatch");
@@ -61,7 +61,7 @@ if (mode === "pack") {
 } else {
   failUnless(!!consumerReceiptArg, "consumer receipt required");
   const receipt = readJSON(receiptPath), consumer = readJSON(resolve(consumerReceiptArg));
-  failUnless(receipt.tarball === resolve(directory, `dal-go-dalgo2ovdb-${version}.tgz`) && receipt.sourceSHA === sourceSHA && Object.entries(identity).every(([key, value]) => receipt.package?.[key] === value), "wrong artifact receipt identity");
+  failUnless(receipt.tarball === resolve(directory, `dalgo-ovdb-${version}.tgz`) && receipt.sourceSHA === sourceSHA && Object.entries(identity).every(([key, value]) => receipt.package?.[key] === value), "wrong artifact receipt identity");
   const hashes = digest(readFileSync(receipt.tarball));
   failUnless(hashes.sha256 === receipt.sha256 && hashes.integrity === receipt.integrity && consumer.tarball === receipt.tarball && consumer.sha256 === hashes.sha256 && consumer.integrity === hashes.integrity, "tested artifact bytes mismatch");
   failUnless(consumer.sourceSHA === sourceSHA && Object.entries(identity).every(([key, value]) => consumer.package?.[key] === value), "wrong tested package/version/gitHead");
