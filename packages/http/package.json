@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/http",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Admitted ECB daily XML query adapter for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
