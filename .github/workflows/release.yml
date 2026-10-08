@@ -147,9 +147,11 @@ jobs:
           node-version: '20.0.0'
       - name: Record the Node 20 runtime path
         run: |
-          echo "BIGQUERY_NODE20=$(command -v node)" >> "$GITHUB_ENV"
-          echo "HTTP_NODE20=$(command -v node)" >> "$GITHUB_ENV"
-          echo "OVDB_NODE20=$(command -v node)" >> "$GITHUB_ENV"
+          {
+            echo "BIGQUERY_NODE20=$(command -v node)"
+            echo "HTTP_NODE20=$(command -v node)"
+            echo "OVDB_NODE20=$(command -v node)"
+          } >> "$GITHUB_ENV"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
