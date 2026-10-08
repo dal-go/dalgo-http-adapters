@@ -160,14 +160,12 @@ describe("BigQueryDatabase", () => {
 // A native browser Fetch cannot be invoked with a database instance receiver.
 describe("global Fetch receiver", () => {
   it("preserves custom injected Fetch receiver behavior", async () => {
-    let receiver: unknown;
-    const fetcher = vi.fn<typeof fetch>(function (this: unknown) {
-      receiver = this;
+    const fetcher = vi.fn<typeof fetch>(function () {
       return Promise.resolve(response({ jobComplete: true, schema, rows: [firstRow] }));
     });
     const db = database([], [], { fetch: fetcher });
     await db.query(collection("items").query().limit(1).build());
-    expect(receiver).toBe(db);
+    expect(fetcher.mock.contexts[0]).toBe(db);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it.each(["default", "explicit"])("binds %s global Fetch while retaining the consumer core", async mode => {
