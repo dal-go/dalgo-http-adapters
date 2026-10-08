@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Key, UnsupportedError, executeSourceComposedJoinedDTQLQuery, parseDTQL } from '@dalgo/core';
-import { ECBQueryExecutor } from '@dal-go/dalgo2http';
+import { ECBQueryExecutor } from '@dalgo/http';
 import { ImmutableDescriptors, descriptors, syntheticPlan } from './fixture/browser-fixture.js';
 
 const core = JSON.parse(await readFile(new URL('./node_modules/@dalgo/core/package.json', import.meta.url), 'utf8'));
-const manifest = JSON.parse(await readFile(new URL('./node_modules/@dal-go/dalgo2http/package.json', import.meta.url), 'utf8'));
+const manifest = JSON.parse(await readFile(new URL('./node_modules/@dalgo/http/package.json', import.meta.url), 'utf8'));
 assert.equal(core.version, '0.6.0');
 let requests = 0;
 const executor = new ECBQueryExecutor({ collectionName: 'daily', executorId: 'synthetic-browser', providerReadPlan: await syntheticPlan(), fetch: async () => { requests++; throw new Error('unexpected provider request'); } });
