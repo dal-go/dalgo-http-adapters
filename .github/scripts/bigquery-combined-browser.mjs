@@ -18,9 +18,9 @@ try {
   });
   await page.route('**/*', async route => {
     const request = route.request(), url = request.url();
-    if (url === 'https://consumer.example/') return route.fulfill({ contentType: 'text/html', body: '<!doctype html><script type="module">import {runCombinedConsumer} from "./browser.js"; window.proof=runCombinedConsumer(window.prepareResponse);</script>' });
-    if (url === 'https://consumer.example/browser.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('browser.js', 'utf8') });
-    const headers = { 'Access-Control-Allow-Origin': 'https://consumer.example', 'Access-Control-Allow-Methods': 'POST, GET', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, OVDB-Execution-ID', 'Cache-Control': 'no-store' };
+    if (url === 'https://directory.example/') return route.fulfill({ contentType: 'text/html', body: '<!doctype html><script type="module">import {runCombinedConsumer} from "./browser.js"; window.proof=runCombinedConsumer(window.prepareResponse);</script>' });
+    if (url === 'https://directory.example/browser.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('browser.js', 'utf8') });
+    const headers = { 'Access-Control-Allow-Origin': 'https://directory.example', 'Access-Control-Allow-Methods': 'POST, GET', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, OVDB-Execution-ID', 'Cache-Control': 'no-store' };
     if (url === 'https://bigquery.googleapis.com/bigquery/v2/projects/synthetic-project/queries') {
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       assert.equal(request.method(), 'POST'); assert.equal(request.headers().authorization, 'Bearer synthetic-token');
@@ -42,7 +42,7 @@ try {
     }
     blocked.push(url); await route.abort();
   });
-  await page.goto('https://consumer.example/');
+  await page.goto('https://directory.example/');
   const proof = await page.evaluate(() => window.proof);
   assert.equal(bigqueryPosts, 2); assert.equal(httpGets, 1); assert.deepEqual(ovdbPosts, { default: 2, explicit: 2 });
   assert.equal(proof.bigqueryRows, 2); assert.equal(proof.httpRows, 1); assert.equal(proof.ovdbDefaultRows, 2); assert.equal(proof.ovdbExplicitRows, 2); assert.equal(proof.sharedKeyIdentity, true);
