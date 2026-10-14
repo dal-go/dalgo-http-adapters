@@ -34,14 +34,23 @@ async function wipe(context: BrowserContext): Promise<void> {
   await page.close();
 }
 
-// Each test gets a fresh persistent profile, like a normal browser window.
-// WebKit refuses OPFS in Playwright's default ephemeral contexts (see the
-// "ephemeral context" test below). Playwright's WebKit keeps OPFS data
-// outside the profile directory, so every test also starts and ends by
-// wiping the origin's OPFS.
+// Each test gets a fresh browser context. Chromium and Firefox get an
+// ephemeral one, which has its own empty OPFS. WebKit refuses OPFS in
+// ephemeral contexts (see the "ephemeral context" test below), so it gets a
+// fresh persistent profile; Playwright's WebKit keeps OPFS data outside the
+// profile directory, so those tests also start and end by wiping the
+// origin's OPFS. (Persistent Firefox and WebKit contexts cannot open new
+// pages on Linux CI runners, which is why the others stay ephemeral.)
 const test = base.extend({
-  context: async ({ browserName, playwright, baseURL }, use, testInfo) => {
-    const context = await playwright[browserName].launchPersistentContext(testInfo.outputPath("profile"), baseURL === undefined ? {} : { baseURL });
+  context: async ({ browser, browserName, playwright, baseURL }, use, testInfo) => {
+    const options = baseURL === undefined ? {} : { baseURL };
+    if (browserName !== "webkit") {
+      const context = await browser.newContext(options);
+      await use(context);
+      await context.close();
+      return;
+    }
+    const context = await playwright.webkit.launchPersistentContext(testInfo.outputPath("profile"), options);
     await wipe(context);
     await use(context);
     for (const page of context.pages()) await page.close();

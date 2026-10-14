@@ -382,7 +382,7 @@ a request in flight when the leader changes is answered with `failure(...)`
 
 The Playwright suite in `test/browser` runs the real Chinook file (served
 without COOP/COEP; it asserts `crossOriginIsolated === false`) in a fresh
-persistent profile per test:
+browser context per test:
 
 | Check | Chromium 156 | Firefox 157 | WebKit 27.2 |
 | --- | --- | --- | --- |
@@ -414,10 +414,14 @@ pnpm exec playwright install chromium firefox webkit
 CHINOOK_SQLITE=/path/to/demo-db/chinook/artifacts/data/chinook.sqlite pnpm test:browser
 ```
 
-CI runs the suite (job `sqlite-wasm-browsers`) whenever `sqlite-wasm`,
-`sqlite-sql`, the lockfile or the workflow changes, with the pinned
-`chinook.sqlite` downloaded from chinook.demodb.dev and checked against its
-SHA-256.
+CI runs the suite in Chromium and Firefox (job `sqlite-wasm-browsers`)
+whenever `sqlite-wasm`, `sqlite-sql`, the lockfile or the workflow changes,
+with the pinned `chinook.sqlite` downloaded from chinook.demodb.dev and
+checked against its SHA-256. WebKit runs locally only: it needs a persistent
+profile for OPFS, and on Linux runners a persistent WebKit context aborts
+MiniBrowser ("automation is not allowed in the context") when the suite opens
+a second page. Chromium and Firefox run in ephemeral contexts, WebKit in a
+fresh persistent profile per test.
 
 ### Bundle size
 
