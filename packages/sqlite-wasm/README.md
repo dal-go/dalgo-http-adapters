@@ -302,6 +302,50 @@ a request in flight when the leader changes is answered with `failure(...)`
 (a `LeaderChangedError`) instead of hanging. Transfer lists are ignored:
 `BroadcastChannel` copies the data.
 
+### Browser support (verified)
+
+The Playwright suite in `test/browser` runs the real Chinook file (served
+without COOP/COEP; it asserts `crossOriginIsolated === false`) in a fresh
+persistent profile per test:
+
+| Check | Chromium 156 | Firefox 157 | WebKit 27.2 |
+| --- | --- | --- | --- |
+| OPFS sahpool in a worker, edit survives reload | yes | yes | yes |
+| delete survives reload, reset restores the pin | yes | yes | yes |
+| changed pin replaces the old version | yes | yes | yes |
+| gzip parts verified and opened | yes | yes | yes |
+| hidden `getDirectory` falls back to memory | yes | yes | yes |
+| two tabs read and write through one leader | yes | yes | yes |
+| leader tab closes, the other takes over, no data lost | yes | yes | yes |
+| fast reloads | yes | yes | yes |
+| pool locked by a terminating worker is waited for | yes (`NoModificationAllowedError`) | yes (`NoModificationAllowedError`) | yes (`InvalidStateError`) |
+| Playwright's ephemeral (private-like) context | OPFS | OPFS | memory fallback: `getDirectory()` rejects with `UnknownError` |
+
+Not verified: real Safari, iOS, Android and in-app webviews, the
+back/forward cache path in a browser (covered by unit tests only), and
+opening `adventureworks` in a browser: the browser suite runs the gzip-parts
+path on a gzip of Chinook split in two, and the real `adventureworks` parts
+(two parts, 126,820,352 decoded bytes) were verified by `fetchCanonical`
+under Node only. Playwright's WebKit keeps OPFS data outside the
+profile directory, so the suite wipes the origin's OPFS before and after each
+test.
+
+```sh
+pnpm exec playwright install chromium firefox webkit
+CHINOOK_SQLITE=/path/to/demo-db/chinook/artifacts/data/chinook.sqlite pnpm test:browser
+```
+
+### Bundle size
+
+Measured with `node test/browser/bundle-size.ts` (esbuild, minified, ES2022;
+the main-thread entry keeps every export):
+
+| Asset | Raw (minified) | gzip -9 | brotli 11 |
+| --- | --- | --- | --- |
+| `/opfs` main-thread entry (`@dalgo/core` external) | 27.1 KiB | 9.4 KiB | 8.4 KiB |
+| dataset worker (`/opfs/worker` + sqlite-wasm JS) | 221.3 KiB | 68.1 KiB | 60.1 KiB |
+| `sqlite3.wasm` | 848.5 KiB | 392.6 KiB | 340.6 KiB |
+
 `@sqlite.org/sqlite-wasm` is needed by the worker only: install it and let
 the bundler emit `sqlite3.wasm` next to the worker (sqlite-wasm loads it from
 `new URL("sqlite3.wasm", import.meta.url)`).
