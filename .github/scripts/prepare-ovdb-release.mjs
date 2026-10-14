@@ -55,7 +55,9 @@ if (mode === "pack") {
     ...manifest,
     exports: publishedExports,
     files: manifest.files.filter(file => file !== "dist"),
-    peerDependencies: { ...manifest.peerDependencies, "@dalgo/core": ">=0.6.0 <0.7.0" },
+    peerDependencies: manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.9.0"
+      ? { ...manifest.peerDependencies, "@dalgo/core": ">=0.6.0 <0.7.0" }
+      : manifest.peerDependencies,
     gitHead: sourceSHA,
   };
   writeFileSync(resolve(staging, "package.json"), JSON.stringify(published, null, 2) + "\n");
