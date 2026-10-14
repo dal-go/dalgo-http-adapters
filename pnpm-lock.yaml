@@ -831,10 +831,10 @@ importers:
       '@dalgo/core':
         specifier: github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42
         version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42
+    devDependencies:
       '@dalgo/sqlite-sql':
         specifier: workspace:^
         version: link:../sqlite-sql
-    devDependencies:
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
