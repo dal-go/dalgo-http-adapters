@@ -426,8 +426,8 @@ the main-thread entry keeps every export):
 
 | Asset | Raw (minified) | gzip -9 | brotli 11 |
 | --- | --- | --- | --- |
-| `/opfs` main-thread entry (`@dalgo/core` external) | 27.1 KiB | 9.4 KiB | 8.4 KiB |
-| dataset worker (`/opfs/worker` + sqlite-wasm JS) | 221.3 KiB | 68.1 KiB | 60.1 KiB |
+| `/opfs` main-thread entry (`@dalgo/core` external) | 28.2 KiB | 9.8 KiB | 8.8 KiB |
+| dataset worker (`/opfs/worker` + sqlite-wasm JS) | 222.3 KiB | 68.5 KiB | 60.4 KiB |
 | `sqlite3.wasm` | 848.5 KiB | 392.6 KiB | 340.6 KiB |
 
 `@sqlite.org/sqlite-wasm` is needed by the worker only: install it and let
