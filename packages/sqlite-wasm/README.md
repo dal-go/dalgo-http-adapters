@@ -42,8 +42,8 @@ const page = await db.query({
 });
 ```
 
-An OPFS-backed binding will be published from the `@dalgo/sqlite-wasm/opfs`
-subpath; it reuses `fromOo1Db` and `createSqliteDatabase` from this root export.
+The root export uses no browser API and runs under Node. Browsers persist
+edits with the [`/opfs` subpath](#editable-demo-datasets-in-the-browser-opfs).
 
 ## Drivers
 
@@ -137,3 +137,171 @@ await db.reset();
 `reset()` exists only when `onReset` is given, so `isResettable(db)` from
 `@dalgo/core` reflects it. It waits for queued work, then calls `onReset` and
 forgets the cached schema.
+
+## Editable demo datasets in the browser (`/opfs`)
+
+`@dalgo/sqlite-wasm/opfs` keeps an editable copy of a pinned SQLite dataset in
+the [origin private file system](https://developer.mozilla.org/docs/Web/API/File_System_API/Origin_private_file_system),
+shared by every tab of the origin. It uses sqlite-wasm's `opfs-sahpool` VFS in
+a dedicated worker, which needs **no COOP/COEP headers**: the page does not
+have to be cross-origin isolated.
+
+```ts
+// demodb.worker.ts: the dataset worker
+import { serveDemoDbWorker } from "@dalgo/sqlite-wasm/opfs/worker";
+serveDemoDbWorker();
+```
+
+```ts
+// in the page
+import { Key } from "@dalgo/core";
+import { LeaderChangedError, openDemoDb } from "@dalgo/sqlite-wasm/opfs";
+
+const session = openDemoDb({
+  pin: {
+    dataset: "chinook",
+    url: "/data/chinook.sqlite",
+    sha256: "7651ba378ac2fcd0dfc3c66fb101f7a7eed3ba39a612ec642b96e20702061f15",
+    bytes: 1007616,
+  },
+  createWorker: () => new Worker(new URL("./demodb.worker.ts", import.meta.url), { type: "module" }),
+  serve: {
+    // Runs in the leader tab for requests from every tab.
+    request: async (payload, { database }) => (await database.get(new Key("Artist", payload as number))).data,
+  },
+});
+const report = await session.ready();
+if (report.replacedPreviousVersion) showNotice("The demo data was updated; your edits to the old version were discarded.");
+if (!report.persistent) showNotice("Edits are kept in memory only and are lost on reload.");
+const artist = await session.request(1);
+await session.reset(); // back to the pristine dataset: { canonical: { sha256 } }
+```
+
+### Pins and storage
+
+A pin names the pristine file: `{ dataset, url, sha256, bytes }`, where
+`sha256` and `bytes` describe the decoded SQLite file. Large files can be
+served gzip-compressed in parts, as the demo-db `adventureworks` artifacts are:
+
+```ts
+const pin: CanonicalPin = {
+  dataset: "adventureworks",
+  url: "/data/",                 // the parts resolve against it
+  sha256: decodedSha256,         // of the decoded .sqlite file
+  bytes: 126820352,              // decoded size
+  compression: "gzip",
+  parts: [
+    { url: "adventureworks.sqlite.gz.part-0001", sha256: part1Sha256, bytes: part1Bytes },
+    { url: "adventureworks.sqlite.gz.part-0002", sha256: part2Sha256, bytes: part2Bytes },
+  ],
+};
+```
+
+Every part is checked (size and SHA-256) before the parts are joined and
+decoded with `DecompressionStream`, then the decoded file is checked. A file
+must be a SQLite database in rollback-journal mode (header bytes 18 and 19 set
+to 1), because the pool rewrites WAL headers on import and the stored copy
+would no longer match its pin.
+
+Each dataset has its own pool (VFS `demodb-<dataset>`, OPFS directory
+`.demodb/<dataset>`) holding two files per version:
+`/demodb/<dataset>/<sha256>.sqlite` (the working copy) and
+`/demodb/<dataset>/<sha256>.canonical` (the pristine copy). Opening:
+
+1. If both files of the pinned version exist, open the working copy.
+2. Otherwise download and verify the pin, import the pristine copy, then the
+   working copy.
+3. Run `PRAGMA quick_check`; a working copy that fails it (for example after a
+   crash during an import) is downloaded and imported again. Then
+   `PRAGMA foreign_keys = ON`.
+4. Delete the files of every other version of the dataset. If a working copy
+   was among them, the report says `replacedPreviousVersion: true`: the edits
+   to the old version are gone, and the app should say so once. There is no
+   migration of edits between versions.
+
+The first write transaction asks for persistent storage
+(`navigator.storage.persist()`); `session.persistence()` reports `"granted"`,
+`"denied"` or `"unavailable"`. Firefox shows the user a prompt, so the promise
+can stay pending.
+
+`reset()` closes the connection, overwrites the working copy with the pristine
+copy (downloading it again if it no longer matches the pin), drops the
+journal, reopens it and checks that it is byte-identical to the pin. It
+returns `{ canonical: { sha256 } }`; the database's `reset()` (DALgo
+`Resettable`) does the same. The database reports
+`capabilities()` with `reset: true` and `persistent: true`.
+
+### Without OPFS
+
+When the pool cannot be used (no OPFS or sync access handles, for example in a
+Firefox private window or a webview, OPFS refused, quota exhausted, or files
+still locked after every retry), the dataset is downloaded, verified and
+loaded into memory with `sqlite3_deserialize`. Reads, writes and reset work;
+edits are lost on reload. The report has `persistent: false` and a typed
+`fallback: { kind: "memory", reason, message }` with `reason` one of
+`"missing-api" | "security" | "sync-handles-unavailable" | "locked" | "quota" | "other"`.
+
+### Tabs: one leader
+
+An exclusive Web Lock (`navigator.locks`, named `demodb:<dataset>`) picks one
+leader tab per dataset. The leader starts the worker, opens the dataset and
+answers every tab, itself included, over a `BroadcastChannel` of the same
+name. Other tabs are followers: `session.request(payload)` and
+`session.reset()` go to the leader, which runs `serve.request(payload,
+{ database, report })`. `session.role` is `connecting`, `leader`,
+`follower`, `suspended`, `failed` or `closed`; `session.subscribe` reports
+role changes, `opened` and errors.
+
+When the leader tab closes, crashes or navigates away, the browser releases
+its lock and a waiting tab becomes the leader and reopens the same OPFS files,
+so every committed write is kept. A request that was in flight to the old
+leader fails with `LeaderChangedError` (`retriable: true`); retry it. Requests
+made while no leader is known wait for the next one. A crashed worker (an
+`error` event) is replaced up to `maxWorkerRestarts` times (default 3).
+
+- `pagehide` stops the worker and releases the lock at once (so the next tab
+  or the reloaded page takes over quickly); `pageshow` from the back/forward
+  cache rejoins.
+- When the page becomes visible while no leader is known, the tab asks for one
+  again.
+- A reload can find the pool's files still locked by the worker of the page
+  being unloaded (`NoModificationAllowedError` in Chromium and Firefox, a bare
+  `InvalidStateError` in WebKit). Before installing the pool the worker probes
+  every pool file and waits with exponential backoff (50 ms doubling to 1 s,
+  10 attempts) until the handles are free. Probing first matters:
+  `installOpfsSAHPoolVfs` reacts to a lock failure by calling `removeVfs()`,
+  which deletes the pool's directory.
+
+Without Web Locks every tab leads its own worker; the pool still allows only
+one of them to hold the files, so the others wait and then fall back to
+memory (by design; not exercised by the browser suite). Two tabs pinned to different versions of a dataset share one leader:
+the follower is served the leader's version (its `report.canonical.sha256`
+says which).
+
+### Ports for OVDB
+
+`session.connect(protocol?)` returns a `MessagePort`-shaped endpoint, the
+`FetchPort` contract of `@openvaultdb/inprocess`, routed to whichever tab
+leads. The leader serves each endpoint with `serve.port(port, context)`. This
+package does not depend on OVDB; wiring it looks like this:
+
+```ts
+const session = openDemoDb({
+  pin, createWorker,
+  serve: { port: (port, { database }) => serveFetchOverPort(createOvdbFetch(/* over database */), port) },
+});
+const fetch = fetchOverPort(session.connect({
+  requestId: (m) => (m as { type?: string }).type === "openvaultdb/fetch-request" ? (m as { id: number }).id : undefined,
+  responseId: (m) => (m as { type?: string }).type === "openvaultdb/fetch-response" ? (m as { id: number }).id : undefined,
+  failure: (m, error) => ({ type: "openvaultdb/fetch-response", id: (m as { id: number }).id, ok: false, name: error.name, message: error.message }),
+}));
+```
+
+The `protocol` tells the endpoint which messages are requests and answers, so
+a request in flight when the leader changes is answered with `failure(...)`
+(a `LeaderChangedError`) instead of hanging. Transfer lists are ignored:
+`BroadcastChannel` copies the data.
+
+`@sqlite.org/sqlite-wasm` is needed by the worker only: install it and let
+the bundler emit `sqlite3.wasm` next to the worker (sqlite-wasm loads it from
+`new URL("sqlite3.wasm", import.meta.url)`).

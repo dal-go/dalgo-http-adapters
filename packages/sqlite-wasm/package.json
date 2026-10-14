@@ -1,7 +1,7 @@
 {
   "name": "@dalgo/sqlite-wasm",
   "version": "0.0.0",
-  "description": "Read-write DALgo database over SQLite for browsers (sqlite-wasm) and Node",
+  "description": "Read-write DALgo database over SQLite for browsers (sqlite-wasm, OPFS) and Node",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "sideEffects": false,
@@ -9,6 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./opfs": {
+      "types": "./dist/opfs/index.d.ts",
+      "import": "./dist/opfs/index.js"
+    },
+    "./opfs/worker": {
+      "types": "./dist/opfs/worker.d.ts",
+      "import": "./dist/opfs/worker.js"
     }
   },
   "files": [

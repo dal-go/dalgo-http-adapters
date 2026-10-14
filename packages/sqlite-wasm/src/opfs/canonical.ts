@@ -1,0 +1,281 @@
+import { enableForeignKeys, type SqliteDriver } from "../driver.js";
+import { fromOo1Db, type Oo1DatabaseLike } from "../oo1.js";
+
+/** One byte range of a split canonical file, verified before it is joined. */
+export interface CanonicalPart {
+  /** Resolved against the pin's `url`. */
+  readonly url: string;
+  /** Lowercase hex SHA-256 of the part's bytes as served. */
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+/**
+ * Identifies the pristine copy of a demo dataset. `sha256` and `bytes` describe
+ * the decoded SQLite file; a changed `sha256` is a new version of the dataset.
+ */
+export interface CanonicalPin {
+  /** Dataset name: letters, digits, `_` and `-` (it names storage paths and locks). */
+  readonly dataset: string;
+  /** The file to fetch, or the base the `parts` URLs resolve against. */
+  readonly url: string;
+  /** Lowercase hex SHA-256 of the decoded SQLite file. */
+  readonly sha256: string;
+  /** Byte length of the decoded SQLite file. */
+  readonly bytes: number;
+  /** How the served bytes are encoded. Default: none. */
+  readonly compression?: "gzip";
+  /** The served bytes split into parts, joined in order before decoding. */
+  readonly parts?: readonly CanonicalPart[];
+}
+
+/** The fetched canonical bytes do not match their pin. Never retried silently. */
+export class CanonicalIntegrityError extends Error {
+  public readonly code = "canonical_integrity" as const;
+
+  public constructor(message: string) {
+    super(message);
+    this.name = "CanonicalIntegrityError";
+  }
+}
+
+/** The canonical file (or one of its parts) could not be downloaded. */
+export class CanonicalFetchError extends Error {
+  public readonly code = "canonical_fetch" as const;
+  public readonly status: number | undefined;
+
+  public constructor(message: string, status?: number, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CanonicalFetchError";
+    this.status = status;
+  }
+}
+
+const sha256Pattern = /^[0-9a-f]{64}$/u;
+const datasetPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
+
+function validSize(bytes: number): boolean {
+  return Number.isSafeInteger(bytes) && bytes > 0;
+}
+
+/** Throws a `TypeError` describing the first problem of a malformed pin. */
+export function validatePin(pin: CanonicalPin): void {
+  if (!datasetPattern.test(pin.dataset)) throw new TypeError(`invalid dataset name: ${JSON.stringify(pin.dataset)}`);
+  if (typeof pin.url !== "string" || pin.url === "") throw new TypeError("pin.url must be a non-empty string");
+  if (!sha256Pattern.test(pin.sha256)) throw new TypeError("pin.sha256 must be 64 lowercase hex characters");
+  if (!validSize(pin.bytes)) throw new TypeError("pin.bytes must be a positive safe integer");
+  const compression: unknown = pin.compression;
+  if (compression !== undefined && compression !== "gzip") throw new TypeError(`unsupported compression: ${JSON.stringify(compression)}`);
+  if (pin.parts === undefined) return;
+  if (pin.parts.length === 0) throw new TypeError("pin.parts must not be empty");
+  pin.parts.forEach((part, index) => {
+    if (typeof part.url !== "string" || part.url === "") throw new TypeError(`pin.parts[${String(index)}].url must be a non-empty string`);
+    if (!sha256Pattern.test(part.sha256)) throw new TypeError(`pin.parts[${String(index)}].sha256 must be 64 lowercase hex characters`);
+    if (!validSize(part.bytes)) throw new TypeError(`pin.parts[${String(index)}].bytes must be a positive safe integer`);
+  });
+}
+
+/** The storage directory of a dataset: `/demodb/<dataset>/`. */
+export function datasetDirectory(dataset: string): string {
+  return `/demodb/${dataset}/`;
+}
+
+/** The editable working copy: `/demodb/<dataset>/<sha256>.sqlite`. */
+export function workingPath(pin: Pick<CanonicalPin, "dataset" | "sha256">): string {
+  return `${datasetDirectory(pin.dataset)}${pin.sha256}.sqlite`;
+}
+
+/** The pristine copy used by reset: `/demodb/<dataset>/<sha256>.canonical`. */
+export function canonicalPath(pin: Pick<CanonicalPin, "dataset" | "sha256">): string {
+  return `${datasetDirectory(pin.dataset)}${pin.sha256}.canonical`;
+}
+
+/** SQLite's rollback journal of the working copy. */
+export function journalPath(pin: Pick<CanonicalPin, "dataset" | "sha256">): string {
+  return `${workingPath(pin)}-journal`;
+}
+
+/** Lowercase hex SHA-256 of the bytes (Web Crypto). */
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Decodes a gzip stream with the platform's `DecompressionStream`. */
+export async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([bytes as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new DecompressionStream("gzip"));
+  try {
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch (error) {
+    // DecompressionStream fails with a TypeError.
+    throw new CanonicalIntegrityError(`canonical gzip stream is corrupt: ${(error as Error).message}`);
+  }
+}
+
+type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+async function download(fetchFn: Fetch, url: string): Promise<Uint8Array> {
+  let response: Response;
+  try {
+    response = await fetchFn(url);
+  } catch (error) {
+    throw new CanonicalFetchError(`failed to fetch ${url}`, undefined, { cause: error });
+  }
+  if (!response.ok) throw new CanonicalFetchError(`failed to fetch ${url}: HTTP ${String(response.status)}`, response.status);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function verify(bytes: Uint8Array, expected: { readonly sha256: string; readonly bytes: number }, label: string): Promise<void> {
+  if (bytes.byteLength !== expected.bytes) {
+    throw new CanonicalIntegrityError(`${label} is ${String(bytes.byteLength)} bytes, expected ${String(expected.bytes)}`);
+  }
+  const actual = await sha256Hex(bytes);
+  if (actual !== expected.sha256) throw new CanonicalIntegrityError(`${label} has SHA-256 ${actual}, expected ${expected.sha256}`);
+}
+
+function concat(chunks: readonly Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+const sqliteMagic = "SQLite format 3\u0000";
+
+/**
+ * A canonical file must be a SQLite database in rollback-journal mode: the
+ * OPFS pool rewrites WAL headers on import, which would make the stored copy
+ * differ from its pin.
+ */
+function checkSqliteHeader(bytes: Uint8Array, label: string): void {
+  const magic = String.fromCharCode(...bytes.subarray(0, 16));
+  if (magic !== sqliteMagic) throw new CanonicalIntegrityError(`${label} is not a SQLite database`);
+  if (bytes[18] !== 1 || bytes[19] !== 1) throw new CanonicalIntegrityError(`${label} is in WAL mode; publish it in rollback-journal mode`);
+}
+
+function resolveUrl(url: string, base: string | undefined): string {
+  return new URL(url, base).href;
+}
+
+/**
+ * Downloads and verifies a pinned canonical file: each part's size and SHA-256,
+ * the gzip stream, and the decoded size and SHA-256. Relative URLs resolve
+ * against `globalThis.location`.
+ */
+export async function fetchCanonical(pin: CanonicalPin, fetchFn: Fetch = globalThis.fetch.bind(globalThis)): Promise<Uint8Array> {
+  validatePin(pin);
+  const location = (globalThis as { readonly location?: { readonly href: string } }).location;
+  const base = resolveUrl(pin.url, location?.href);
+  let served: Uint8Array;
+  if (pin.parts === undefined) {
+    served = await download(fetchFn, base);
+  } else {
+    const parts = await Promise.all(pin.parts.map(async (part, index) => {
+      const bytes = await download(fetchFn, resolveUrl(part.url, base));
+      await verify(bytes, part, `${pin.dataset} part ${String(index + 1)}`);
+      return bytes;
+    }));
+    served = concat(parts);
+  }
+  const decoded = pin.compression === "gzip" ? await gunzip(served) : served;
+  await verify(decoded, pin, `${pin.dataset} canonical file`);
+  checkSqliteHeader(decoded, `${pin.dataset} canonical file`);
+  return decoded;
+}
+
+/** An oo1 database that can be closed. */
+export interface ClosableOo1Db extends Oo1DatabaseLike {
+  close(): void;
+}
+
+/** The operations of the OPFS SAH pool (`SAHPoolUtil`) the dataset store uses. */
+export interface DatasetPool {
+  getFileNames(): string[];
+  importDb(name: string, bytes: Uint8Array): Promise<number>;
+  exportFile(name: string): Uint8Array;
+  unlink(name: string): boolean;
+  /** Opens (creating if needed) a database file of the pool. */
+  open(name: string): ClosableOo1Db;
+}
+
+/** An open working copy. */
+export interface OpenedDatabase {
+  readonly db: ClosableOo1Db;
+  readonly driver: SqliteDriver;
+}
+
+/** The outcome of {@link openCanonical}. */
+export interface OpenedCanonical extends OpenedDatabase {
+  /** True when files of another pinned version were deleted (the user's edits to it are gone). */
+  readonly replacedPreviousVersion: boolean;
+  /** True when the canonical file was downloaded and imported during this open. */
+  readonly imported: boolean;
+}
+
+/** Thrown when an opened file fails `PRAGMA quick_check`. */
+export class CorruptDatabaseError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "CorruptDatabaseError";
+  }
+}
+
+/** Checks the file's structure and turns foreign keys on. */
+export async function prepareConnection(db: ClosableOo1Db): Promise<OpenedDatabase> {
+  const driver = fromOo1Db(db);
+  const { rows } = await driver.exec("PRAGMA quick_check");
+  const verdict = rows.map((row) => String(row.quick_check)).join("; ");
+  if (verdict !== "ok") throw new CorruptDatabaseError(`quick_check failed: ${verdict}`);
+  await enableForeignKeys(driver);
+  return { db, driver };
+}
+
+async function tryOpen(pool: DatasetPool, path: string): Promise<OpenedDatabase | Error> {
+  let db: ClosableOo1Db | undefined;
+  try {
+    db = pool.open(path);
+    return await prepareConnection(db);
+  } catch (error) {
+    db?.close();
+    return error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+/** Writes the pristine and the working copy (pristine first, so a working copy always has one). */
+export async function importCanonical(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array): Promise<void> {
+  await pool.importDb(canonicalPath(pin), bytes);
+  pool.unlink(journalPath(pin));
+  await pool.importDb(workingPath(pin), bytes);
+}
+
+/**
+ * Opens the working copy of the pinned version, importing it first when it is
+ * missing or fails `PRAGMA quick_check` (for example after a crash during an
+ * import). Files of other versions of the dataset are deleted once the pinned
+ * version is open.
+ */
+export async function openCanonical(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>): Promise<OpenedCanonical> {
+  validatePin(pin);
+  const working = workingPath(pin);
+  const names = pool.getFileNames();
+  let imported = false;
+  if (!names.includes(working) || !names.includes(canonicalPath(pin))) {
+    await importCanonical(pool, pin, await download());
+    imported = true;
+  }
+  let opened = await tryOpen(pool, working);
+  if (opened instanceof Error && !imported) {
+    await importCanonical(pool, pin, await download());
+    imported = true;
+    opened = await tryOpen(pool, working);
+  }
+  if (opened instanceof Error) throw opened;
+  const directory = datasetDirectory(pin.dataset);
+  const current = `${directory}${pin.sha256}.`;
+  const stale = names.filter((name) => name.startsWith(directory) && !name.startsWith(current));
+  for (const name of stale) pool.unlink(name);
+  return { ...opened, imported, replacedPreviousVersion: stale.some((name) => name.endsWith(".sqlite")) };
+}
