@@ -20,6 +20,7 @@ const inspect = tarball => {
   const manifest = JSON.parse(contents("package.json"));
   failUnless(Object.entries(identity).every(([key, value]) => manifest[key] === value), "wrong packed package/version/gitHead");
   failUnless(manifest.publishConfig?.access === "public" && manifest.publishConfig?.registry === "https://registry.npmjs.org", "public registry access required");
+  failUnless(manifest.dependencies?.["@dalgo/core"] === undefined && manifest.optionalDependencies?.["@dalgo/core"] === undefined && manifest.peerDependenciesMeta?.["@dalgo/core"] === undefined, "@dalgo/core must be a required peer only");
   failUnless(!manifest.private && manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.7.0" && !manifest.peerDependencies?.["@dal-go/dalgo"], "wrong packed core peer");
   for (const section of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     failUnless(Object.entries(manifest[section] ?? {}).every(([name, value]) => name !== "@dal-go/dalgo" && !/^(file:|link:|workspace:|git[+:]|github:|https?:)/.test(value)), "repository-only or legacy dependency");
@@ -54,8 +55,10 @@ if (mode === "pack") {
   const published = {
     ...manifest,
     exports: publishedExports,
+    // Staging copies no "dist", so npm packs none; dropping it from "files" keeps the
+    // published manifest honest (kept deliberately, not for filtering).
     files: manifest.files.filter(file => file !== "dist"),
-    peerDependencies: manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.9.0"
+    peerDependencies: manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.8.0"
       ? { ...manifest.peerDependencies, "@dalgo/core": ">=0.6.0 <0.7.0" }
       : manifest.peerDependencies,
     gitHead: sourceSHA,

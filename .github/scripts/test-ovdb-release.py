@@ -20,11 +20,15 @@ with tempfile.TemporaryDirectory(prefix='ovdb-artifact-guards-') as directory:
     for name in ['README.md', 'LICENSE']:
         shutil.copyfile(repo/'packages/ovdb'/name, package/name)
     env = dict(os.environ, NPM_CONFIG_CACHE=str(root/'npm-cache'))
-    for case in ['valid', 'private', 'wrong_access', 'git_peer', 'wrong_name', 'missing_license', 'legacy_output', 'extra_export']:
+    for case in ['valid', 'old_peer', 'near_widened_peer', 'core_dependency', 'core_optional_peer', 'private', 'wrong_access', 'git_peer', 'wrong_name', 'missing_license', 'legacy_output', 'extra_export']:
         changed = json.loads(json.dumps(manifest))
         if case == 'private': changed['private'] = True
         if case == 'wrong_access': changed['publishConfig']['access'] = 'restricted'
         if case == 'git_peer': changed['peerDependencies']['@dalgo/core'] = 'github:dal-go/dalgo-js#main'
+        if case == 'near_widened_peer': changed['peerDependencies']['@dalgo/core'] = '>=0.6.0 <0.9.0'
+        if case == 'old_peer': changed['peerDependencies']['@dalgo/core'] = '>=0.6.0 <0.7.0'
+        if case == 'core_dependency': changed['dependencies']['@dalgo/core'] = '^0.6.0'
+        if case == 'core_optional_peer': changed['peerDependenciesMeta'] = {'@dalgo/core': {'optional': True}}
         if case == 'wrong_name': changed['name'] = '@dal-go/dalgo2ovdb'
         if case == 'legacy_output': (package/'dist-dtql/legacy.js').write_text('export class OpenVaultDbClient {}')
         if case == 'extra_export': changed['exports']['./legacy'] = changed['exports']['.']
@@ -32,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix='ovdb-artifact-guards-') as directory:
         if case == 'missing_license': (package/'LICENSE').unlink()
         artifact = root/case
         result = subprocess.run([node, str(helper), 'pack', str(artifact), 'a'*40, manifest['version']], env=env, capture_output=True, text=True)
-        assert (result.returncode == 0) == (case == 'valid'), (case, result.stderr)
+        assert (result.returncode == 0) == (case in ('valid', 'old_peer')), (case, result.stderr)
         if case == 'legacy_output': (package/'dist-dtql/legacy.js').unlink()
         print('PASS OVDB pack', case)
     artifact = root/'valid'
