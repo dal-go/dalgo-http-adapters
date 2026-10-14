@@ -1,7 +1,7 @@
 import { DemoDbEngine, type EngineOptions, type Sqlite3Like } from "./engine.js";
 import { serializeError, type WorkerRequest, type WorkerResponse } from "./protocol.js";
 
-export type { EngineOptions, FallbackSignal, OpenReport, Sqlite3Like } from "./engine.js";
+export type { EngineOptions, FallbackReason, FallbackSignal, OpenOptions, OpenReport, Sqlite3Like } from "./engine.js";
 
 /** The worker global the server listens on (`self` in a dedicated worker). */
 export interface WorkerScopeLike {
@@ -48,7 +48,7 @@ export function serveDemoDbWorker(options: ServeDemoDbWorkerOptions = {}): void 
   const run = async (request: WorkerRequest): Promise<unknown> => {
     const current = await getEngine();
     switch (request.op) {
-      case "open": return current.open(request.pin);
+      case "open": return current.open(request.pin, request.options);
       case "exec": return current.exec(request.sql, request.binds);
       case "reset": return current.reset();
       case "close": current.close(); return undefined;

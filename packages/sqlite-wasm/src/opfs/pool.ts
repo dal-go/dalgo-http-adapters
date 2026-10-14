@@ -112,7 +112,7 @@ export interface InstallPoolOptions {
   readonly install: InstallSahPool | undefined;
   /** `navigator.storage.getDirectory`, or undefined when OPFS is missing. */
   readonly getDirectory: (() => Promise<ProbeDirectoryHandle>) | undefined;
-  /** Attempts while the pool's files are locked. Default 10. */
+  /** Attempts while the pool's files are locked. Default 20 (about 16 s with the default delays). */
   readonly attempts?: number;
   /** First retry delay in ms, doubled per attempt up to `maxDelayMs`. Default 50. */
   readonly baseDelayMs?: number;
@@ -156,7 +156,7 @@ export async function installPool(options: PoolOptions, setup: InstallPoolOption
   if (getDirectory === undefined) throw new PoolUnavailableError("missing-api", "navigator.storage.getDirectory is missing");
   const fileHandle = (globalThis as { readonly FileSystemFileHandle?: { readonly prototype: object } }).FileSystemFileHandle;
   if (fileHandle !== undefined && !("createSyncAccessHandle" in fileHandle.prototype)) throw new PoolUnavailableError("missing-api", noSyncHandles);
-  const attempts = setup.attempts ?? 10;
+  const attempts = setup.attempts ?? 20;
   const maxDelay = setup.maxDelayMs ?? 1000;
   const sleep = setup.sleep ?? defaultSleep;
   let delay = setup.baseDelayMs ?? 50;

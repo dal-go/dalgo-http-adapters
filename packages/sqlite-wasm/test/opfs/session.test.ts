@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Key } from "@dalgo/core";
 import type { Sqlite3Like } from "../../src/opfs/engine.js";
 import { LeaderChangedError } from "../../src/opfs/tab-bridge.js";
-import { DemoDbSession, openDemoDb, type DemoDbEvent, type DemoDbHandlers, type LeaderContext, type OpenDemoDbOptions } from "../../src/opfs/index.js";
+import { DemoDbConfigError, DemoDbSession, openDemoDb, type DemoDbEvent, type DemoDbHandlers, type LeaderContext, type OpenDemoDbOptions } from "../../src/opfs/index.js";
 import { ChannelHub, FakeLocks, FakePool, InProcessWorker, emptyDirectory, pinFor, sampleBytes, serve, settle, sqliteLike } from "./helpers.js";
 
 const sample = sampleBytes();
@@ -37,8 +37,13 @@ class Origin {
   public fetchFn = serve({ [pin.url]: sample });
 
   public worker = (): InProcessWorker => {
-    const sqlite3: Sqlite3Like = { ...sqliteLike, installOpfsSAHPoolVfs: () => Promise.resolve(this.pool) };
-    const worker = new InProcessWorker({ sqlite3: () => Promise.resolve(sqlite3), fetch: this.fetchFn, getDirectory: () => Promise.resolve(emptyDirectory) });
+    const sqlite3: Sqlite3Like = {
+      ...sqliteLike,
+      installOpfsSAHPoolVfs: () => (this.pool.failInstall === undefined ? Promise.resolve(this.pool) : Promise.reject(this.pool.failInstall)),
+    };
+    const worker = new InProcessWorker({
+      sqlite3: () => Promise.resolve(sqlite3), fetch: this.fetchFn, getDirectory: () => Promise.resolve(emptyDirectory), pool: { attempts: 2, baseDelayMs: 1 },
+    });
     this.workers.push(worker);
     return worker;
   };
@@ -236,11 +241,17 @@ describe("DemoDbSession", () => {
     window.dispatchEvent(pageEvent("pagehide", true));
     expect(session.role).toBe("suspended");
     session.close();
-    const unmanaged = new DemoDbSession({ pin: { ...pin, dataset: "unmanaged" }, createWorker: origin.worker, serve: handlers, locks: null, lifecycle: null, requestPersistence: null });
-    await unmanaged.ready();
+    const unmanaged = new DemoDbSession({
+      pin: { ...pin, dataset: "unmanaged" }, createWorker: origin.worker, serve: handlers, locks: null, storage: "memory", lifecycle: null, requestPersistence: null,
+    });
+    expect(await unmanaged.ready()).toMatchObject({ persistent: false, fallback: { reason: "requested" } });
     await rename(unmanaged, 1, "x");
-    expect(await unmanaged.persistence()).toBe("unavailable");
+    expect(unmanaged.persistence()).toBeUndefined();
     unmanaged.close();
+    vi.stubGlobal("navigator", {});
+    const noLocks = new DemoDbSession({ pin: { ...pin, dataset: "nolocks" }, createWorker: origin.worker, serve: handlers, channel: origin.hub.create(), lifecycle: null });
+    expect(await noLocks.ready()).toMatchObject({ persistent: false, fallback: { reason: "web-locks-unavailable" } });
+    noLocks.close();
   });
 
   it("stays quiet about failures after it was closed", async () => {
@@ -281,6 +292,36 @@ describe("DemoDbSession", () => {
     follower.window.dispatchEvent(pageEvent("pageshow", true));
     expect(follower.events.map((event) => event.type === "role" ? event.role : event.type)).toEqual(["follower"]);
     for (const tab of [third, follower, leader]) tab.session.close();
+  });
+
+  it("refuses to run without leader election on OPFS", () => {
+    const error = (() => { try { return new DemoDbSession({ pin, createWorker: () => { throw new Error("unused"); }, locks: null }); } catch (caught) { return caught; } })();
+    expect(error).toBeInstanceOf(DemoDbConfigError);
+    expect(error).toMatchObject({ code: "demodb_config" });
+  });
+
+  it("fails with a retriable error when the pool stays locked, or opens in memory when asked", async () => {
+    const origin = new Origin();
+    origin.pool.failInstall = Object.assign(new Error("locked"), { name: "NoModificationAllowedError" });
+    const strict = origin.tab();
+    await expect(strict.session.ready()).rejects.toMatchObject({ reason: "locked", retriable: true });
+    expect(strict.session.role).toBe("failed");
+    strict.session.close();
+    const lenient = origin.tab({ memoryFallbackWhenLocked: true });
+    expect(await lenient.session.ready()).toMatchObject({ persistent: false, fallback: { reason: "locked" } });
+    lenient.session.close();
+  });
+
+  it("forgives crashes of a worker that ran for a while", async () => {
+    const origin = new Origin();
+    const { session } = origin.tab({ maxWorkerRestarts: 1, restartWindowMs: 0 });
+    await session.ready();
+    for (let crash = 0; crash < 3; crash += 1) {
+      origin.workers.at(-1)?.crash();
+      await vi.waitFor(() => { expect(origin.workers).toHaveLength(crash + 2); });
+      await vi.waitFor(() => { expect(session.role).toBe("leader"); });
+    }
+    session.close();
   });
 
   it("validates the pin", () => {

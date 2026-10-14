@@ -2,7 +2,7 @@ import type { Resettable } from "@dalgo/core";
 import type { SqliteDatabase } from "../database.js";
 import { validatePin, type CanonicalPin } from "./canonical.js";
 import { WorkerClient, openLeaderDatabase, type LeaderDatabase, type PersistenceResult, type RequestPersistence, type WorkerLike } from "./client.js";
-import type { OpenReport } from "./engine.js";
+import type { OpenOptions, OpenReport } from "./engine.js";
 import { LeaderElection, defaultLocks, type LockManagerLike } from "./leader.js";
 import type { ResetResult } from "./reset.js";
 import { TabBridge, type BridgePort, type BroadcastChannelLike, type PortProtocol } from "./tab-bridge.js";
@@ -45,8 +45,33 @@ export interface OpenDemoDbOptions {
   /** `navigator.storage.persist` by default; `null` never asks. */
   readonly requestPersistence?: RequestPersistence | null;
   readonly tabId?: string;
-  /** How many times a crashed worker is replaced. Default 3. */
+  /** How many times in a row a crashed worker is replaced. Default 3. */
   readonly maxWorkerRestarts?: number;
+  /** A worker that ran this long (ms) before crashing resets the restart count. Default 60000. */
+  readonly restartWindowMs?: number;
+  /**
+   * `"memory"` keeps the dataset in memory only (edits are lost on reload).
+   * Default `"opfs"`. Without Web Locks in the browser the session uses
+   * memory, reported as fallback reason `"web-locks-unavailable"`.
+   */
+  readonly storage?: "opfs" | "memory";
+  /**
+   * Open in memory when the OPFS files stay locked by another context
+   * (reported as fallback reason `"locked"`). Default `false`: the session
+   * fails with a retriable `PoolUnavailableError` and the stored edits stay
+   * safe for a later attempt.
+   */
+  readonly memoryFallbackWhenLocked?: boolean;
+}
+
+/** An `openDemoDb` option combination that could damage the stored dataset. */
+export class DemoDbConfigError extends TypeError {
+  public readonly code = "demodb_config" as const;
+
+  public constructor(message: string) {
+    super(message);
+    this.name = "DemoDbConfigError";
+  }
 }
 
 /**
@@ -79,6 +104,8 @@ export class DemoDbSession {
   #role: DemoDbRole = "connecting";
   #leading: { readonly client: WorkerClient; readonly opened: LeaderDatabase } | undefined;
   #restarts = 0;
+  #ledSince = 0;
+  readonly #open: OpenOptions;
   readonly #ready: Promise<OpenReport>;
   #settleReady: { resolve(report: OpenReport): void; reject(error: unknown): void } | undefined;
   readonly #onPageHide = (): void => { this.#suspend(); };
@@ -90,7 +117,18 @@ export class DemoDbSession {
 
   public constructor(options: OpenDemoDbOptions) {
     validatePin(options.pin);
+    if (options.locks === null && options.storage !== "memory") {
+      // Every tab would install the pool at once; a failed install makes
+      // sqlite-wasm delete the pool directory (removeVfs).
+      throw new DemoDbConfigError("locks: null requires storage: \"memory\": without leader election, tabs would race for the OPFS pool");
+    }
     this.#options = options;
+    const locks = options.locks === null ? undefined : options.locks ?? defaultLocks();
+    this.#open = options.storage === "memory"
+      ? { storage: "memory" }
+      : locks === undefined
+        ? { storage: "memory", memoryReason: "web-locks-unavailable" }
+        : { memoryWhenLocked: options.memoryFallbackWhenLocked ?? false };
     const name = options.lockName ?? `demodb:${options.pin.dataset}`;
     this.#bridge = new TabBridge(options.channel ?? new BroadcastChannel(name), options.tabId ?? crypto.randomUUID());
     this.#bridge.onLeaderChange = (leader) => {
@@ -100,7 +138,7 @@ export class DemoDbSession {
     };
     this.#ready = new Promise((resolve, reject) => { this.#settleReady = { resolve, reject }; });
     this.#ready.then(() => { this.#settleReady = undefined; }, () => { this.#settleReady = undefined; });
-    this.#election = new LeaderElection(options.locks === null ? undefined : options.locks ?? defaultLocks(), name, {
+    this.#election = new LeaderElection(locks, name, {
       onAcquired: () => this.#lead(),
       onReleased: () => { this.#stopLeading(); },
       onError: (error) => { this.#fail(error); },
@@ -171,7 +209,7 @@ export class DemoDbSession {
     const client = new WorkerClient(this.#options.createWorker());
     let opened: LeaderDatabase;
     try {
-      opened = await openLeaderDatabase(client, this.#options.pin, { requestPersistence: this.#options.requestPersistence });
+      opened = await openLeaderDatabase(client, this.#options.pin, { requestPersistence: this.#options.requestPersistence, open: this.#open });
     } catch (error) {
       client.terminate();
       throw error;
@@ -181,6 +219,7 @@ export class DemoDbSession {
       return;
     }
     this.#leading = { client, opened };
+    this.#ledSince = Date.now();
     client.onFailure = (error) => { this.#workerFailed(client, error); };
     const context: LeaderContext = { database: opened.database, report: opened.report };
     const handlers = this.#options.serve ?? {};
@@ -205,6 +244,7 @@ export class DemoDbSession {
     if (this.#leading?.client !== client) return;
     this.#emit({ type: "error", error });
     this.#election.release();
+    if (Date.now() - this.#ledSince >= (this.#options.restartWindowMs ?? 60_000)) this.#restarts = 0;
     if (this.#restarts >= (this.#options.maxWorkerRestarts ?? 3)) {
       this.#fail(error);
       return;

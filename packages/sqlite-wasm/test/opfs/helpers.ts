@@ -77,6 +77,8 @@ export class FakePool implements DatasetPool, SahPoolUtilLike {
   public readonly calls: string[] = [];
   /** Errors the next `open` calls of a path throw, in order. */
   public readonly failOpen = new Map<string, unknown[]>();
+  /** Makes installing the pool fail with this error. */
+  public failInstall: Error | undefined;
   /** An error the next `importDb` of a path throws before the path is linked (a crash or a full disk). */
   public readonly failImport = new Map<string, unknown>();
   public readonly OpfsSAHPoolDb: new (filename: string) => ClosableOo1Db;

@@ -1,9 +1,10 @@
 import type { SqliteBindValue } from "../driver.js";
 import type { CanonicalPin } from "./canonical.js";
+import type { OpenOptions } from "./engine.js";
 
 /** A request from the leader tab to its dataset worker. */
 export type WorkerRequest = { readonly id: number } & (
-  | { readonly op: "open"; readonly pin: CanonicalPin }
+  | { readonly op: "open"; readonly pin: CanonicalPin; readonly options?: OpenOptions }
   | { readonly op: "exec"; readonly sql: string; readonly binds?: readonly SqliteBindValue[] }
   | { readonly op: "reset" }
   | { readonly op: "close" }

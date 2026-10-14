@@ -37,8 +37,32 @@ export interface Sqlite3Like {
 /** The dataset is served from memory because OPFS could not be used; edits are lost on reload. */
 export interface FallbackSignal {
   readonly kind: "memory";
-  readonly reason: PoolUnavailableReason;
+  /**
+   * Why: OPFS is unsupported or refused here (a {@link PoolUnavailableReason}
+   * other than `"locked"`), the pool stayed locked and the caller opted in to
+   * memory (`"locked"`), memory was asked for (`"requested"`), or the browser
+   * has no Web Locks, so tabs cannot share the OPFS files safely
+   * (`"web-locks-unavailable"`).
+   */
+  readonly reason: FallbackReason;
   readonly message: string;
+}
+
+export type FallbackReason = PoolUnavailableReason | "requested" | "web-locks-unavailable";
+
+/** How to open a dataset. */
+export interface OpenOptions {
+  /** `"memory"` skips OPFS. Default `"opfs"`. */
+  readonly storage?: "opfs" | "memory";
+  /** The fallback reason reported for `storage: "memory"`. Default `"requested"`. */
+  readonly memoryReason?: "requested" | "web-locks-unavailable";
+  /**
+   * When the pool's files stay locked by another context after every retry,
+   * open in memory instead of failing. Default `false`: a locked pool fails
+   * with a retriable {@link PoolUnavailableError}, because edits made in
+   * memory would be lost on reload.
+   */
+  readonly memoryWhenLocked?: boolean;
 }
 
 /** The outcome of opening a dataset. */
@@ -111,10 +135,30 @@ export class DemoDbEngine {
 
   #memory = { open: this.#openMemory, export: (db: ClosableOo1Db) => this.#sqlite3.capi.sqlite3_js_db_export(db) };
 
-  /** Opens the pinned dataset, falling back to memory when OPFS cannot be used. */
-  public async open(pin: CanonicalPin): Promise<OpenReport> {
+  async #openInMemory(pin: CanonicalPin, reason: FallbackReason, message: string): Promise<OpenReport> {
+    const pristine = await this.#download(pin)();
+    const current = await prepareConnection(this.#openMemory(pristine));
+    this.#state = { pin, mode: { kind: "memory", pristine }, current };
+    return {
+      dataset: pin.dataset, canonical: { sha256: pin.sha256 }, persistent: false, replacedPreviousVersion: false, imported: true,
+      fallback: { kind: "memory", reason, message },
+    };
+  }
+
+  /**
+   * Opens the pinned dataset in OPFS. Falls back to memory when OPFS is
+   * unsupported or refused; a pool that stays locked fails with a retriable
+   * {@link PoolUnavailableError} unless `memoryWhenLocked` is set.
+   */
+  public async open(pin: CanonicalPin, options: OpenOptions = {}): Promise<OpenReport> {
     validatePin(pin);
     if (this.#state !== undefined) throw new Error("the dataset is already open");
+    if (options.storage === "memory") {
+      const reason = options.memoryReason ?? "requested";
+      return this.#openInMemory(pin, reason, reason === "requested"
+        ? "memory storage was requested"
+        : "this browser has no Web Locks, so tabs cannot share the OPFS files safely");
+    }
     const download = this.#download(pin);
     let util: SahPoolUtilLike;
     try {
@@ -126,13 +170,8 @@ export class DemoDbEngine {
       });
     } catch (error) {
       const unavailable = error as PoolUnavailableError;
-      const pristine = await download();
-      const current = await prepareConnection(this.#openMemory(pristine));
-      this.#state = { pin, mode: { kind: "memory", pristine }, current };
-      return {
-        dataset: pin.dataset, canonical: { sha256: pin.sha256 }, persistent: false, replacedPreviousVersion: false, imported: true,
-        fallback: { kind: "memory", reason: unavailable.reason, message: unavailable.message },
-      };
+      if (unavailable.reason === "locked" && options.memoryWhenLocked !== true) throw unavailable;
+      return this.#openInMemory(pin, unavailable.reason, unavailable.message);
     }
     try {
       const opened = await openCanonical(datasetPool(util), pin, download);

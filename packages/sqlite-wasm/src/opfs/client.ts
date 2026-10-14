@@ -2,7 +2,7 @@ import type { Resettable } from "@dalgo/core";
 import { createSqliteDatabase, type SqliteDatabase } from "../database.js";
 import type { SqliteDriver, SqliteExecResult } from "../driver.js";
 import type { CanonicalPin } from "./canonical.js";
-import type { OpenReport } from "./engine.js";
+import type { OpenOptions, OpenReport } from "./engine.js";
 import { reviveError, type WorkerRequest, type WorkerResponse } from "./protocol.js";
 import type { ResetResult } from "./reset.js";
 
@@ -103,6 +103,8 @@ export function defaultRequestPersistence(): RequestPersistence | undefined {
 export interface OpenLeaderDatabaseOptions {
   /** Asks for persistent storage on the first write. Default: `navigator.storage.persist`; `null` never asks. */
   readonly requestPersistence?: RequestPersistence | null | undefined;
+  /** How the worker opens the dataset. */
+  readonly open?: OpenOptions | undefined;
 }
 
 /**
@@ -112,7 +114,7 @@ export interface OpenLeaderDatabaseOptions {
  */
 export async function openLeaderDatabase(client: WorkerClient, pin: CanonicalPin, options: OpenLeaderDatabaseOptions = {}): Promise<LeaderDatabase> {
   const requestPersistence = options.requestPersistence === null ? undefined : options.requestPersistence ?? defaultRequestPersistence();
-  const report = await client.call("open", { pin }) as OpenReport;
+  const report = await client.call("open", options.open === undefined ? { pin } : { pin, options: options.open }) as OpenReport;
   let persistence: Promise<PersistenceResult> | undefined;
   const driver: SqliteDriver = {
     exec(sql, binds) {

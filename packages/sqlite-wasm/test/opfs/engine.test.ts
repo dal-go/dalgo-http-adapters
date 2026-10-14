@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { workingPath } from "../../src/opfs/canonical.js";
 import { DemoDbEngine, type Sqlite3Like } from "../../src/opfs/engine.js";
+import type { ProbeDirectoryHandle, ProbeFileHandle } from "../../src/opfs/pool.js";
 import { FakePool, emptyDirectory, notADatabase, pinFor, sampleBytes, serve, sqliteLike } from "./helpers.js";
 
 const sample = sampleBytes();
@@ -64,6 +65,47 @@ describe("DemoDbEngine with OPFS", () => {
     expect(await engine.open(pin)).toMatchObject({ persistent: true });
     expect(storage.getDirectory).toHaveBeenCalled();
     engine.close();
+  });
+});
+
+function lockedDirectory(): ProbeDirectoryHandle {
+  const locked: ProbeFileHandle = {
+    kind: "file",
+    name: "slot",
+    createSyncAccessHandle: () => Promise.reject(Object.assign(new Error("locked"), { name: "NoModificationAllowedError" })),
+  };
+  const handle: ProbeDirectoryHandle = {
+    getDirectoryHandle: () => Promise.resolve(handle),
+    values: () => ({ [Symbol.asyncIterator]: () => { let done = false; return { next: () => { const result = done ? { done: true as const, value: undefined } : { done: false as const, value: locked }; done = true; return Promise.resolve(result); } }; } }),
+  };
+  return handle;
+}
+
+describe("DemoDbEngine with a locked pool", () => {
+  const options = { fetch: fetchFn, getDirectory: () => Promise.resolve(lockedDirectory()), pool: { attempts: 2, baseDelayMs: 1 } };
+
+  it("fails with a retriable error instead of dropping to memory", async () => {
+    const engine = new DemoDbEngine(withPool(new FakePool()), options);
+    await expect(engine.open(pin)).rejects.toMatchObject({ name: "PoolUnavailableError", reason: "locked", retriable: true });
+    await expect(engine.exec("SELECT 1")).rejects.toThrow("not open");
+  });
+
+  it("opens in memory only when the caller opts in", async () => {
+    const engine = new DemoDbEngine(withPool(new FakePool()), options);
+    expect(await engine.open(pin, { memoryWhenLocked: true })).toMatchObject({ persistent: false, fallback: { kind: "memory", reason: "locked" } });
+    engine.close();
+  });
+});
+
+describe("DemoDbEngine in memory on request", () => {
+  it("skips OPFS and says why", async () => {
+    const pool = new FakePool();
+    const engine = new DemoDbEngine(withPool(pool), { fetch: fetchFn, getDirectory: () => Promise.resolve(emptyDirectory) });
+    expect(await engine.open(pin, { storage: "memory" })).toMatchObject({ persistent: false, fallback: { reason: "requested", message: "memory storage was requested" } });
+    engine.close();
+    const noLocks = new DemoDbEngine(withPool(pool), { fetch: fetchFn });
+    expect(await noLocks.open(pin, { storage: "memory", memoryReason: "web-locks-unavailable" })).toMatchObject({ fallback: { reason: "web-locks-unavailable" } });
+    expect(pool.files.size).toBe(0);
   });
 });
 
