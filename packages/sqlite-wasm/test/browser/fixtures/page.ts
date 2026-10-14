@@ -133,6 +133,25 @@ const harness = {
     second.terminate();
     return { report, name: rows[0]?.Name, waitedMs };
   },
+  /**
+   * Holds the pool open in one worker and opens it in a second worker with
+   * two short attempts: the second must fail as locked, or open in memory
+   * when `memoryWhenLocked` is set.
+   */
+  async stuckPool(pin: CanonicalPin, memoryWhenLocked: boolean): Promise<unknown> {
+    const first = new WorkerClient(new Worker("/worker.js", { type: "module" }));
+    await first.call("open", { pin });
+    const second = new WorkerClient(new Worker("/worker.js?attempts=2", { type: "module" }));
+    try {
+      return await second.call("open", { pin, options: { memoryWhenLocked } });
+    } catch (error) {
+      const failure = error as Error & { reason?: unknown; retriable?: unknown };
+      return { error: failure.name, reason: failure.reason, retriable: failure.retriable };
+    } finally {
+      first.terminate();
+      second.terminate();
+    }
+  },
   async reset(): Promise<unknown> { return current().reset(); },
   /** Firefox asks the user before granting persistence, so an unanswered prompt reads as "pending". */
   persistence: async (): Promise<string | undefined> => {

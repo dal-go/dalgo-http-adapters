@@ -13,6 +13,7 @@ interface Harness {
   request(payload: unknown): Promise<unknown>;
   requestRetrying(payload: unknown): Promise<unknown>;
   portRequest(payload: unknown): Promise<unknown>;
+  stuckPool(pin: CanonicalPin, memoryWhenLocked: boolean): Promise<unknown>;
   lockedPool(pin: CanonicalPin, holdMs: number): Promise<{ readonly report: OpenReport; readonly name: unknown; readonly waitedMs: number }>;
   reset(): Promise<unknown>;
   persistence(): Promise<string | undefined>;
@@ -245,4 +246,44 @@ test("a pool still locked by a terminating worker is waited for, not wiped", asy
   expect(logs.length).toBeGreaterThan(0);
   expect(logs.every((line) => line.includes(": locked ("))).toBe(true);
   test.info().annotations.push({ type: "pool retries", description: JSON.stringify(logs) });
+});
+
+test("reset works after the working copy grew past the pristine size, and again later", async ({ page }) => {
+  const pins = await load(page);
+  await open(page, pins.chinook);
+  await request(page, rename(1, "x".repeat(2_000_000)));
+  expect(await page.evaluate(() => harness.reset())).toEqual({ canonical: { sha256: pins.chinook.sha256 } });
+  expect(await request(page, artist(1))).toEqual({ ArtistId: 1, Name: "AC/DC" });
+  await request(page, rename(2, "y".repeat(3_000_000)));
+  expect(await page.evaluate(() => harness.reset())).toEqual({ canonical: { sha256: pins.chinook.sha256 } });
+  expect(await request(page, artist(2))).toEqual({ ArtistId: 2, Name: "Accept" });
+  await page.reload();
+  await page.waitForFunction(() => typeof globalThis.harness === "object");
+  expect(await open(page, pins.chinook)).toMatchObject({ imported: false, persistent: true });
+  expect(await request(page, artist(1))).toEqual({ ArtistId: 1, Name: "AC/DC" });
+  expect(await page.evaluate(() => harness.reset())).toEqual({ canonical: { sha256: pins.chinook.sha256 } });
+});
+
+test("a pool that stays locked fails as retriable instead of dropping edits to memory", async ({ page }) => {
+  const pins = await load(page);
+  expect(await page.evaluate((pin) => harness.stuckPool(pin, false), pins.chinook)).toEqual({ error: "PoolUnavailableError", reason: "locked", retriable: true });
+  expect(await page.evaluate((pin) => harness.stuckPool(pin, true), pins.chinook)).toMatchObject({ persistent: false, fallback: { kind: "memory", reason: "locked" } });
+});
+
+test("two tabs opening at the same moment keep the stored edits", async ({ context }) => {
+  const writer = await context.newPage();
+  const pins = await load(writer);
+  await open(writer, pins.chinook);
+  await request(writer, rename(9, "written before"));
+  await writer.close();
+  const first = await context.newPage();
+  const second = await context.newPage();
+  await load(first);
+  await load(second);
+  const reports = await Promise.all([open(first, pins.chinook), open(second, pins.chinook)]);
+  expect(reports.map((report) => report.persistent)).toEqual([true, true]);
+  expect(reports.map((report) => report.imported)).toEqual([false, false]);
+  expect((await Promise.all([first, second].map((page) => page.evaluate(() => harness.role())))).sort()).toEqual(["follower", "leader"]);
+  expect(await request(first, artist(9))).toEqual({ ArtistId: 9, Name: "written before" });
+  expect(await request(second, artist(9))).toEqual({ ArtistId: 9, Name: "written before" });
 });
