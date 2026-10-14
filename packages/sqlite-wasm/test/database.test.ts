@@ -244,15 +244,15 @@ describe("writes", () => {
     expect((await db.query(q("Tag"))).records.map((record) => record.key.id)).toEqual(["jazz"]);
   });
 
-  it("maps UNIQUE and PRIMARY KEY conflicts to AlreadyExistsError", async () => {
+  it("maps PRIMARY KEY conflicts to AlreadyExistsError and other UNIQUE columns to ConstraintViolationError", async () => {
     const { db } = await open();
     const duplicateKey = db.runReadwriteTransaction((tx) => tx.insert(new Key("Artist", 1), { Name: "Other" }));
     await expect(duplicateKey).rejects.toBeInstanceOf(AlreadyExistsError);
     await expect(duplicateKey).rejects.toThrow("record already exists: Artist/1");
     const duplicateName = db.runReadwriteTransaction((tx) => tx.insert(new Key("Artist", 9), { Name: "Accept" }));
-    await expect(duplicateName).rejects.toBeInstanceOf(AlreadyExistsError);
+    await expect(duplicateName).rejects.toMatchObject({ name: "ConstraintViolationError", constraint: "unique", message: "constraint violation (unique) on Artist/9: UNIQUE constraint failed: Artist.Name" });
     const renamed = db.runReadwriteTransaction((tx) => tx.update(new Key("Artist", 1), { Name: "Accept" }));
-    await expect(renamed).rejects.toBeInstanceOf(AlreadyExistsError);
+    await expect(renamed).rejects.toMatchObject({ name: "ConstraintViolationError", constraint: "unique" });
   });
 
   it("maps NOT NULL, CHECK and FOREIGN KEY failures to ConstraintViolationError", async () => {

@@ -42,6 +42,20 @@ describe("mapSqliteError", () => {
     expect((mapped as AlreadyExistsError).cause).toBe(cause);
   });
 
+  it("tells primary key conflicts from other UNIQUE columns", () => {
+    expect(mapSqliteError(coded("UNIQUE constraint failed: Artist.ArtistId", { resultCode: 1555 }), key)).toBeInstanceOf(AlreadyExistsError);
+    expect(mapSqliteError(coded("UNIQUE constraint failed: Artist.Name", { resultCode: 2067 }), key)).toBeInstanceOf(ConstraintViolationError);
+    expect(mapSqliteError(coded("UNIQUE constraint failed: Artist.Name", { resultCode: 2067 }), key, ["ArtistId"])).toBeInstanceOf(ConstraintViolationError);
+    // Without an extended code, by the columns SQLite names.
+    expect(mapSqliteError(new Error("D1_ERROR: UNIQUE constraint failed: Artist.ArtistId"), key, ["ArtistId"])).toBeInstanceOf(AlreadyExistsError);
+    expect(mapSqliteError(new Error("UNIQUE constraint failed: Artist.Name"), key, ["ArtistId"])).toBeInstanceOf(ConstraintViolationError);
+    expect(mapSqliteError(new Error("UNIQUE constraint failed: T.a, T.b"), key, ["b", "a"])).toBeInstanceOf(AlreadyExistsError);
+    expect(mapSqliteError(new Error("UNIQUE constraint failed: T.a"), key, ["a", "b"])).toBeInstanceOf(ConstraintViolationError);
+    expect(mapSqliteError(coded("constraint failed", { resultCode: 2067 | 0 }), key, ["a"])).toBeInstanceOf(ConstraintViolationError);
+    expect(mapSqliteError({ resultCode: 1555 }, key, ["a"])).toBeInstanceOf(AlreadyExistsError);
+    expect(mapSqliteError(coded("UNIQUE constraint failed", { resultCode: 19 }), key, ["a"])).toBeInstanceOf(AlreadyExistsError);
+  });
+
   it("maps other constraints to ConstraintViolationError", () => {
     const keyless = mapSqliteError(new Error("UNIQUE constraint failed: Artist.Name")) as ConstraintViolationError;
     expect(keyless).toBeInstanceOf(ConstraintViolationError);

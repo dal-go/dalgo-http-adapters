@@ -56,15 +56,38 @@ export function sqliteConstraint(error: unknown): SqliteConstraint | undefined {
   return undefined;
 }
 
+const SQLITE_CONSTRAINT_PRIMARYKEY = 1555;
+const SQLITE_CONSTRAINT_UNIQUE = 2067;
+
 /**
- * Maps a SQLite constraint failure to a DALgo error: a UNIQUE or PRIMARY KEY
- * conflict while writing `key` becomes `AlreadyExistsError`; every other
- * constraint becomes {@link ConstraintViolationError}. Other errors are returned unchanged.
+ * Whether a UNIQUE failure is a conflict on the primary key. The extended
+ * result code decides when there is one; otherwise the columns SQLite names
+ * ("UNIQUE constraint failed: T.a, T.b") are compared with `primaryKey`, and
+ * without `primaryKey` the conflict is taken to be on the key.
  */
-export function mapSqliteError(error: unknown, key?: Key): unknown {
+function primaryKeyConflict(error: object, primaryKey: readonly string[] | undefined): boolean {
+  const code = resultCode(error);
+  if (code === SQLITE_CONSTRAINT_PRIMARYKEY) return true;
+  if (code === SQLITE_CONSTRAINT_UNIQUE || primaryKey === undefined) return code !== SQLITE_CONSTRAINT_UNIQUE;
+  // Only an Error's message can name a UNIQUE failure without an extended code.
+  const failed = /UNIQUE constraint failed: ([^\n]+)/u.exec((error as Error).message)?.[1];
+  if (failed === undefined) return true;
+  const columns = failed.split(", ").map((column) => column.slice(column.lastIndexOf(".") + 1).trim());
+  return columns.length === primaryKey.length && columns.every((column) => primaryKey.includes(column));
+}
+
+/**
+ * Maps a SQLite constraint failure to a DALgo error: a PRIMARY KEY conflict
+ * while writing `key` becomes `AlreadyExistsError`; every other constraint,
+ * including a UNIQUE column other than the key, becomes
+ * {@link ConstraintViolationError}. Pass the table's `primaryKey` so drivers
+ * without extended result codes are classified by the columns SQLite names.
+ * Other errors are returned unchanged.
+ */
+export function mapSqliteError(error: unknown, key?: Key, primaryKey?: readonly string[]): unknown {
   const constraint = sqliteConstraint(error);
   if (constraint === undefined) return error;
-  if (constraint === "unique" && key !== undefined) return new AlreadyExistsError(key, { cause: error });
+  if (constraint === "unique" && key !== undefined && primaryKeyConflict(error as object, primaryKey)) return new AlreadyExistsError(key, { cause: error });
   const message = error instanceof Error ? error.message : "";
   const detail = /[A-Z][A-Z ]* constraint failed.*$/u.exec(message)?.[0] ?? (message === "" ? "SQLite constraint failed" : message);
   return new ConstraintViolationError(constraint, detail, key, { cause: error });

@@ -169,18 +169,18 @@ class Engine {
     return { table, column, values };
   }
 
-  async #run(key: Key, sql: string, binds: readonly SqliteBindValue[]): Promise<number> {
+  async #run(key: Key, table: SqliteTableSchema, sql: string, binds: readonly SqliteBindValue[]): Promise<number> {
     try {
       return (await this.driver.exec(sql, binds)).changes;
     } catch (error) {
-      throw mapSqliteError(error, key);
+      throw mapSqliteError(error, key, table.primaryKey);
     }
   }
 
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const { table, values } = await this.#record(key, codecOr(codec).encode(data), false);
     const columns = [...values.keys()];
-    await this.#run(key,
+    await this.#run(key, table,
       `INSERT INTO ${quoteIdentifier(table.name, "table name")} (${columns.map((name) => quoteIdentifier(name, "column name")).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
       [...values.values()]);
   }
@@ -195,7 +195,7 @@ class Engine {
       return `${name} = ${item.defaultValue === null ? "NULL" : `(${item.defaultValue})`}`;
     });
     const conflict = assignments.length === 0 ? "DO NOTHING" : `DO UPDATE SET ${assignments.join(", ")}`;
-    await this.#run(key,
+    await this.#run(key, table,
       `INSERT INTO ${quoteIdentifier(table.name, "table name")} (${columns.map((name) => quoteIdentifier(name, "column name")).join(", ")}) VALUES (${columns.map(() => "?").join(", ")}) ON CONFLICT (${quoteIdentifier(column, "column name")}) ${conflict}`,
       [...values.values()]);
   }
@@ -206,7 +206,7 @@ class Engine {
     const tableName = quoteIdentifier(table.name, "table name");
     const changes = values.size === 0
       ? (await this.driver.exec(`SELECT 1 AS found FROM ${tableName} WHERE ${where}`, [writeValue(key.id)])).rows.length
-      : await this.#run(key,
+      : await this.#run(key, table,
         `UPDATE ${tableName} SET ${[...values.keys()].map((name) => `${quoteIdentifier(name, "column name")} = ?`).join(", ")} WHERE ${where}`,
         [...values.values(), writeValue(key.id)]);
     if (changes === 0) throw new NotFoundError(key);
@@ -215,7 +215,7 @@ class Engine {
   public async delete(key: Key): Promise<void> {
     const table = await this.table(key);
     const column = keyColumn(table);
-    const changes = await this.#run(key,
+    const changes = await this.#run(key, table,
       `DELETE FROM ${quoteIdentifier(table.name, "table name")} WHERE ${quoteIdentifier(column, "column name")} = ?`,
       [writeValue(key.id)]);
     if (changes === 0) throw new NotFoundError(key);
