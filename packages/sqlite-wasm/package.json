@@ -50,7 +50,7 @@
   },
   "peerDependencies": {
     "@dalgo/core": ">=0.7.4 <0.9.0",
-    "@dalgo/sqlite-sql": "workspace:^",
+    "@dalgo/sqlite-sql": ">=0.0.0 <1.0.0",
     "@sqlite.org/sqlite-wasm": ">=3.50.0"
   },
   "peerDependenciesMeta": {
