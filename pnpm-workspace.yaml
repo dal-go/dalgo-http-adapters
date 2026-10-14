@@ -7,16 +7,17 @@ overrides:
   "@dalgo/bigquery>@dalgo/core": "0.1.0"
   "@dalgo/core": "github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336"
   "@dalgo/ovdb>@dalgo/core": "0.6.0"
-  # DEV LINK (swap before landing): @dalgo/core 0.8 (capabilities.ts) is not
-  # published yet. Resolves the sibling dal-go/dalgo-js checkout (commit 426fac1,
-  # built dist). Replace with the released "0.8.x" (or a pushed
-  # github:dal-go/dalgo-js#<sha> plus an allowBuilds entry) and run pnpm install.
-  "@dalgo/sqlite-wasm>@dalgo/core": "link:../dalgo-js"
+  # @dalgo/core 0.8 (capabilities.ts) is not published yet: pinned to the
+  # dal-go/dalgo-js main commit that merged it (PR #32). Swap for the released
+  # "0.8.x" once it is published, and drop the allowBuilds entry.
+  "@dalgo/sqlite-wasm>@dalgo/core": "github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42"
 
 allowBuilds:
   "@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d": true
   "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336": true
+  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42": true
   "@firebase/util@1.15.3": false
+  "esbuild@0.28.2": false
   "protobufjs@7.6.6": false
 
 minimumReleaseAgeExclude:
