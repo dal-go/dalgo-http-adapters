@@ -7,6 +7,11 @@ overrides:
   "@dalgo/bigquery>@dalgo/core": "0.1.0"
   "@dalgo/core": "github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336"
   "@dalgo/ovdb>@dalgo/core": "0.6.0"
+  # DEV LINK (swap before landing): @dalgo/core 0.8 (capabilities.ts) is not
+  # published yet. Resolves the sibling dal-go/dalgo-js checkout (commit 426fac1,
+  # built dist). Replace with the released "0.8.x" (or a pushed
+  # github:dal-go/dalgo-js#<sha> plus an allowBuilds entry) and run pnpm install.
+  "@dalgo/sqlite-wasm>@dalgo/core": "link:../dalgo-js"
 
 allowBuilds:
   "@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d": true
