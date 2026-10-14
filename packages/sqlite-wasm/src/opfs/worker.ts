@@ -1,7 +1,11 @@
 import { DemoDbEngine, type EngineOptions, type Sqlite3Like } from "./engine.js";
-import { serializeError, type WorkerRequest, type WorkerResponse } from "./protocol.js";
+import type { DemoDbProgressEvent } from "./progress.js";
+import { serializeError, type WorkerProgress, type WorkerRequest, type WorkerResponse } from "./protocol.js";
 
+export type { StoragePolicy } from "./canonical.js";
 export type { EngineOptions, FallbackReason, FallbackSignal, OpenOptions, OpenReport, Sqlite3Like } from "./engine.js";
+export { throttleProgress } from "./progress.js";
+export type { DemoDbProgressEvent, DemoDbProgressListener, DemoDbProgressPhase, ProgressReporter, ThrottleOptions } from "./progress.js";
 
 /** The worker global the server listens on (`self` in a dedicated worker). */
 export interface WorkerScopeLike {
@@ -35,7 +39,9 @@ function isRequest(data: unknown): data is WorkerRequest {
  * serveDemoDbWorker();
  * ```
  *
- * Requests run one at a time, in arrival order.
+ * Requests run one at a time, in arrival order. An `open` or `reset`
+ * request with `progress: true` is answered with `{ id, progress }`
+ * messages (throttled) before its result.
  */
 export function serveDemoDbWorker(options: ServeDemoDbWorkerOptions = {}): void {
   const scope: WorkerScopeLike = options.scope ?? globalThis;
@@ -45,12 +51,16 @@ export function serveDemoDbWorker(options: ServeDemoDbWorkerOptions = {}): void 
     engine ??= (options.sqlite3 ?? loadSqlite3)().then((sqlite3) => new DemoDbEngine(sqlite3, options));
     return engine;
   };
+  const progressOf = (request: WorkerRequest & { readonly progress?: boolean }): ((event: DemoDbProgressEvent) => void) | undefined =>
+    request.progress === true
+      ? (event) => { scope.postMessage({ id: request.id, progress: event } satisfies WorkerProgress); }
+      : undefined;
   const run = async (request: WorkerRequest): Promise<unknown> => {
     const current = await getEngine();
     switch (request.op) {
-      case "open": return current.open(request.pin, request.options);
+      case "open": return current.open(request.pin, request.options, progressOf(request));
       case "exec": return current.exec(request.sql, request.binds);
-      case "reset": return current.reset();
+      case "reset": return current.reset(progressOf(request));
       case "close": current.close(); return undefined;
     }
   };

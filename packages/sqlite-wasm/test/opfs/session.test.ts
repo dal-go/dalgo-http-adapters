@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Key } from "@dalgo/core";
 import type { Sqlite3Like } from "../../src/opfs/engine.js";
 import { LeaderChangedError } from "../../src/opfs/tab-bridge.js";
+import { PoolUnavailableError, canonicalPath, workingPath, type DemoDbProgressEvent } from "../../src/opfs/index.js";
 import { DemoDbConfigError, DemoDbSession, openDemoDb, type DemoDbEvent, type DemoDbHandlers, type LeaderContext, type OpenDemoDbOptions } from "../../src/opfs/index.js";
 import { ChannelHub, FakeLocks, FakePool, InProcessWorker, emptyDirectory, pinFor, sampleBytes, serve, settle, sqliteLike } from "./helpers.js";
 
@@ -326,5 +327,83 @@ describe("DemoDbSession", () => {
 
   it("validates the pin", () => {
     expect(() => new DemoDbSession({ pin: { ...pin, sha256: "x" }, createWorker: () => { throw new Error("unused"); } })).toThrow("pin.sha256");
+  });
+});
+
+describe("DemoDbSession options", () => {
+  it("reports the leader's open and reset progress, and keeps a single copy", async () => {
+    const origin = new Origin();
+    const progress: DemoDbProgressEvent[] = [];
+    const leader = origin.tab({ onProgress: (event) => { progress.push(event); }, storagePolicy: "single-copy" });
+    await leader.session.ready();
+    expect(progress[0]).toMatchObject({ phase: "fetch", loaded: 0, total: pin.bytes });
+    expect(progress.at(-1)).toEqual({ phase: "open" });
+    expect(origin.pool.getFileNames()).toEqual([workingPath(pin)]);
+    const followerProgress = vi.fn();
+    const follower = origin.tab({ onProgress: followerProgress });
+    await follower.session.ready();
+    progress.length = 0;
+    await follower.session.reset();
+    expect(progress.map((event) => event.phase)).toContain("fetch");
+    expect(followerProgress).not.toHaveBeenCalled();
+    expect(origin.fetchFn.calls).toHaveLength(2);
+    expect(origin.pool.files.has(canonicalPath(pin))).toBe(false);
+    follower.session.close();
+    leader.session.close();
+  });
+
+  it("fails before downloading when memory is forbidden and OPFS is refused", async () => {
+    const origin = new Origin();
+    origin.pool.failInstall = Object.assign(new Error("denied"), { name: "SecurityError" });
+    const { session } = origin.tab({ memoryFallback: "forbid" });
+    const error = await session.ready().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PoolUnavailableError);
+    expect(error).toMatchObject({ reason: "security", code: "opfs_unavailable" });
+    expect(session.role).toBe("failed");
+    expect(origin.fetchFn.calls).toEqual([]);
+    session.close();
+  });
+
+  it("fails before downloading when memory is forbidden and the browser has no Web Locks", async () => {
+    const origin = new Origin();
+    vi.stubGlobal("navigator", {});
+    const session = new DemoDbSession({ pin, createWorker: origin.worker, serve: handlers, channel: origin.hub.create(), lifecycle: null, memoryFallback: "forbid" });
+    await expect(session.ready()).rejects.toMatchObject({ name: "PoolUnavailableError", reason: "missing-api" });
+    expect(origin.fetchFn.calls).toEqual([]);
+    session.close();
+  });
+
+  it("refuses contradictory or unknown options", () => {
+    const create = (options: Partial<OpenDemoDbOptions>): unknown => {
+      try {
+        return new DemoDbSession({ pin, createWorker: () => { throw new Error("unused"); }, ...options });
+      } catch (error) {
+        return error;
+      }
+    };
+    expect(create({ memoryFallback: "forbid", storage: "memory", locks: null })).toMatchObject({ name: "DemoDbConfigError", message: expect.stringContaining("storage: \"memory\"") as unknown });
+    expect(create({ memoryFallback: "forbid", memoryFallbackWhenLocked: true })).toBeInstanceOf(DemoDbConfigError);
+    expect(create({ memoryFallback: "never" as "forbid" })).toMatchObject({ message: "memoryFallback must be \"allow\" or \"forbid\", got \"never\"" });
+    expect(create({ storagePolicy: "none" as "single-copy" })).toBeInstanceOf(DemoDbConfigError);
+  });
+
+  it("closes connected ports when the session closes or fails", async () => {
+    const origin = new Origin();
+    const { session } = origin.tab();
+    await session.ready();
+    const port = session.connect();
+    const closed = vi.fn();
+    port.addEventListener("close", closed);
+    session.close();
+    expect(closed).toHaveBeenCalledTimes(1);
+    const failing = new Origin();
+    failing.fetchFn = serve({});
+    const broken = failing.tab();
+    const brokenPort = broken.session.connect();
+    const brokenClosed = vi.fn();
+    brokenPort.addEventListener("close", brokenClosed);
+    await expect(broken.session.ready()).rejects.toBeDefined();
+    expect(brokenClosed).toHaveBeenCalledTimes(1);
+    broken.session.close();
   });
 });

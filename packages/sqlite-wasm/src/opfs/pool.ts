@@ -15,6 +15,13 @@ export type PoolUnavailableReason =
   /** Any other failure while installing the pool. */
   | "other";
 
+const poolUnavailableReasons: ReadonlySet<unknown> = new Set<PoolUnavailableReason>(["missing-api", "security", "sync-handles-unavailable", "locked", "quota", "other"]);
+
+/** Whether a value is a {@link PoolUnavailableReason}. */
+export function isPoolUnavailableReason(value: unknown): value is PoolUnavailableReason {
+  return poolUnavailableReasons.has(value);
+}
+
 /** The OPFS SAH pool could not be installed. */
 export class PoolUnavailableError extends Error {
   public readonly code = "opfs_unavailable" as const;

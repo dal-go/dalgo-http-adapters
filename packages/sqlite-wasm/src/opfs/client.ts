@@ -3,7 +3,8 @@ import { createSqliteDatabase, type SqliteDatabase } from "../database.js";
 import type { SqliteDriver, SqliteExecResult } from "../driver.js";
 import type { CanonicalPin } from "./canonical.js";
 import type { OpenOptions, OpenReport } from "./engine.js";
-import { reviveError, type WorkerRequest, type WorkerResponse } from "./protocol.js";
+import type { DemoDbProgressListener } from "./progress.js";
+import { reviveError, type WorkerMessage, type WorkerRequest } from "./protocol.js";
 import type { ResetResult } from "./reset.js";
 
 /** The parts of a `Worker` the leader uses. */
@@ -30,7 +31,7 @@ type Payload<O extends Operation> = Omit<Extract<WorkerRequest, { readonly op: O
 /** Request/response calls to a dataset worker. A worker failure rejects every pending call. */
 export class WorkerClient {
   readonly #worker: WorkerLike;
-  readonly #pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  readonly #pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; progress: DemoDbProgressListener | undefined }>();
   #nextId = 0;
   #failure: Error | undefined;
   /** Called once when the worker fails or is terminated. */
@@ -39,9 +40,13 @@ export class WorkerClient {
   public constructor(worker: WorkerLike) {
     this.#worker = worker;
     worker.addEventListener("message", (event) => {
-      const response = (event as MessageEvent).data as WorkerResponse;
+      const response = (event as MessageEvent).data as WorkerMessage;
       const waiter = this.#pending.get(response.id);
       if (waiter === undefined) return;
+      if ("progress" in response) {
+        waiter.progress?.(response.progress);
+        return;
+      }
       this.#pending.delete(response.id);
       if (response.ok) waiter.resolve(response.value);
       else waiter.reject(reviveError(response.error));
@@ -63,12 +68,13 @@ export class WorkerClient {
     this.onFailure?.(error);
   }
 
-  public call<O extends Operation>(op: O, payload: Payload<O>): Promise<unknown> {
+  /** Sends one request; `progress` receives the request's progress messages (ask for them with `progress: true`). */
+  public call<O extends Operation>(op: O, payload: Payload<O>, progress?: DemoDbProgressListener): Promise<unknown> {
     if (this.#failure !== undefined) return Promise.reject(this.#failure);
     this.#nextId += 1;
     const id = this.#nextId;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      this.#pending.set(id, { resolve, reject, progress });
       this.#worker.postMessage({ ...payload, id, op });
     });
   }
@@ -105,6 +111,8 @@ export interface OpenLeaderDatabaseOptions {
   readonly requestPersistence?: RequestPersistence | null | undefined;
   /** How the worker opens the dataset. */
   readonly open?: OpenOptions | undefined;
+  /** Receives the progress of the open and of every reset, see `DemoDbProgressEvent`. */
+  readonly onProgress?: DemoDbProgressListener | undefined;
 }
 
 /**
@@ -114,7 +122,9 @@ export interface OpenLeaderDatabaseOptions {
  */
 export async function openLeaderDatabase(client: WorkerClient, pin: CanonicalPin, options: OpenLeaderDatabaseOptions = {}): Promise<LeaderDatabase> {
   const requestPersistence = options.requestPersistence === null ? undefined : options.requestPersistence ?? defaultRequestPersistence();
-  const report = await client.call("open", options.open === undefined ? { pin } : { pin, options: options.open }) as OpenReport;
+  const { onProgress } = options;
+  const progress = onProgress === undefined ? {} : { progress: true };
+  const report = await client.call("open", options.open === undefined ? { pin, ...progress } : { pin, options: options.open, ...progress }, onProgress) as OpenReport;
   let persistence: Promise<PersistenceResult> | undefined;
   const driver: SqliteDriver = {
     exec(sql, binds) {
@@ -130,7 +140,7 @@ export async function openLeaderDatabase(client: WorkerClient, pin: CanonicalPin
   const database = createSqliteDatabase(driver, {
     persistent: report.persistent,
     onReset: async () => {
-      lastReset = await client.call("reset", {}) as ResetResult;
+      lastReset = await client.call("reset", progress, onProgress) as ResetResult;
       return undefined;
     },
   });

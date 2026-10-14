@@ -7,6 +7,7 @@ import {
   type CanonicalPin,
   type ClosableOo1Db,
   type OpenedDatabase,
+  type StoragePolicy,
 } from "./canonical.js";
 import {
   PoolUnavailableError,
@@ -19,6 +20,7 @@ import {
   type ProbeDirectoryHandle,
   type SahPoolUtilLike,
 } from "./pool.js";
+import { throttleProgress, type DemoDbProgressEvent, type DemoDbProgressListener, type ProgressReporter } from "./progress.js";
 import { resetInMemory, resetWorkingCopy, type ResetResult } from "./reset.js";
 
 /** The members of an initialized `@sqlite.org/sqlite-wasm` module the engine uses. */
@@ -63,6 +65,16 @@ export interface OpenOptions {
    * memory would be lost on reload.
    */
   readonly memoryWhenLocked?: boolean;
+  /**
+   * `"forbid"` never serves the dataset from memory: where OPFS cannot be
+   * used, `open` fails with a {@link PoolUnavailableError} before anything
+   * is downloaded. It wins over `memoryWhenLocked`. `storage: "memory"`
+   * with `"forbid"` fails the same way (reason `"missing-api"` when the
+   * memory reason is `"web-locks-unavailable"`). Default `"allow"`.
+   */
+  readonly memoryFallback?: "allow" | "forbid";
+  /** How many copies of the pinned version OPFS keeps, see {@link StoragePolicy}. Default `"working-and-pristine"`. */
+  readonly storagePolicy?: StoragePolicy;
 }
 
 /** The outcome of opening a dataset. */
@@ -84,10 +96,16 @@ export interface EngineOptions {
   /** `navigator.storage.getDirectory` by default. */
   readonly getDirectory?: (() => Promise<ProbeDirectoryHandle>) | null;
   readonly pool?: Pick<InstallPoolOptions, "attempts" | "baseDelayMs" | "maxDelayMs" | "sleep" | "onRetry">;
+  /**
+   * Receives the progress of every open and reset run by this engine,
+   * throttled to one event per 100 ms within a phase (phase changes and the
+   * last `fetch` event always come through). See {@link DemoDbProgressEvent}.
+   */
+  readonly onProgress?: DemoDbProgressListener;
 }
 
 type Mode =
-  | { readonly kind: "pool"; readonly util: SahPoolUtilLike }
+  | { readonly kind: "pool"; readonly util: SahPoolUtilLike; readonly storagePolicy: StoragePolicy }
   | { readonly kind: "memory"; readonly pristine: Uint8Array };
 
 interface OpenState {
@@ -116,8 +134,15 @@ export class DemoDbEngine {
     this.#options = options;
   }
 
-  #download(pin: CanonicalPin): () => Promise<Uint8Array> {
-    return () => fetchCanonical(pin, this.#options.fetch);
+  #download(pin: CanonicalPin, progress: ProgressReporter | undefined): () => Promise<Uint8Array> {
+    return () => fetchCanonical(pin, this.#options.fetch, progress);
+  }
+
+  /** One throttled reporter for the engine's listener and the caller's, or undefined when nobody listens. */
+  #progress(listener: DemoDbProgressListener | undefined): ProgressReporter | undefined {
+    const listeners = [this.#options.onProgress, listener].filter((entry) => entry !== undefined);
+    if (listeners.length === 0) return undefined;
+    return throttleProgress((event: DemoDbProgressEvent) => { for (const each of listeners) each(event); });
   }
 
   #openMemory = (bytes: Uint8Array): ClosableOo1Db => {
@@ -135,8 +160,9 @@ export class DemoDbEngine {
 
   #memory = { open: this.#openMemory, export: (db: ClosableOo1Db) => this.#sqlite3.capi.sqlite3_js_db_export(db) };
 
-  async #openInMemory(pin: CanonicalPin, reason: FallbackReason, message: string): Promise<OpenReport> {
-    const pristine = await this.#download(pin)();
+  async #openInMemory(pin: CanonicalPin, reason: FallbackReason, message: string, progress: ProgressReporter | undefined): Promise<OpenReport> {
+    const pristine = await this.#download(pin, progress)();
+    progress?.({ phase: "open" });
     const current = await prepareConnection(this.#openMemory(pristine));
     this.#state = { pin, mode: { kind: "memory", pristine }, current };
     return {
@@ -147,19 +173,27 @@ export class DemoDbEngine {
 
   /**
    * Opens the pinned dataset in OPFS. Falls back to memory when OPFS is
-   * unsupported or refused; a pool that stays locked fails with a retriable
-   * {@link PoolUnavailableError} unless `memoryWhenLocked` is set.
+   * unsupported or refused, unless `memoryFallback` is `"forbid"`; a pool
+   * that stays locked fails with a retriable {@link PoolUnavailableError}
+   * unless `memoryWhenLocked` is set. `onProgress` receives this open's
+   * progress (throttled).
    */
-  public async open(pin: CanonicalPin, options: OpenOptions = {}): Promise<OpenReport> {
+  public async open(pin: CanonicalPin, options: OpenOptions = {}, onProgress?: DemoDbProgressListener): Promise<OpenReport> {
     validatePin(pin);
     if (this.#state !== undefined) throw new Error("the dataset is already open");
+    const forbid = options.memoryFallback === "forbid";
+    const progress = this.#progress(onProgress);
     if (options.storage === "memory") {
       const reason = options.memoryReason ?? "requested";
+      if (forbid) {
+        throw new PoolUnavailableError(reason === "requested" ? "other" : "missing-api", reason === "requested"
+          ? "memory storage was requested, but memoryFallback is \"forbid\""
+          : "this browser has no Web Locks, so tabs cannot share the OPFS files safely, and memoryFallback is \"forbid\"");
+      }
       return this.#openInMemory(pin, reason, reason === "requested"
         ? "memory storage was requested"
-        : "this browser has no Web Locks, so tabs cannot share the OPFS files safely");
+        : "this browser has no Web Locks, so tabs cannot share the OPFS files safely", progress);
     }
-    const download = this.#download(pin);
     let util: SahPoolUtilLike;
     try {
       const getDirectory = this.#options.getDirectory === null ? undefined : this.#options.getDirectory ?? defaultGetDirectory();
@@ -170,12 +204,13 @@ export class DemoDbEngine {
       });
     } catch (error) {
       const unavailable = error as PoolUnavailableError;
-      if (unavailable.reason === "locked" && options.memoryWhenLocked !== true) throw unavailable;
-      return this.#openInMemory(pin, unavailable.reason, unavailable.message);
+      if (forbid || (unavailable.reason === "locked" && options.memoryWhenLocked !== true)) throw unavailable;
+      return this.#openInMemory(pin, unavailable.reason, unavailable.message, progress);
     }
+    const storagePolicy = options.storagePolicy ?? "working-and-pristine";
     try {
-      const opened = await openCanonical(datasetPool(util), pin, download);
-      this.#state = { pin, mode: { kind: "pool", util }, current: { db: opened.db, driver: opened.driver } };
+      const opened = await openCanonical(datasetPool(util), pin, this.#download(pin, progress), { storagePolicy, progress });
+      this.#state = { pin, mode: { kind: "pool", util, storagePolicy }, current: { db: opened.db, driver: opened.driver } };
       return {
         dataset: pin.dataset, canonical: { sha256: pin.sha256 }, persistent: true,
         replacedPreviousVersion: opened.replacedPreviousVersion, imported: opened.imported,
@@ -198,14 +233,27 @@ export class DemoDbEngine {
     return this.#open().current.driver.exec(sql, binds);
   }
 
-  /** Restores the pristine dataset. The connection stays closed if it fails. */
-  public async reset(): Promise<ResetResult> {
+  /**
+   * Restores the pristine dataset. If it fails after the connection was
+   * closed, the connection stays closed; a single-copy reset whose download
+   * fails keeps the connection open and the working copy as it was.
+   * `onProgress` receives this reset's progress (throttled).
+   */
+  public async reset(onProgress?: DemoDbProgressListener): Promise<ResetResult> {
     const { state, current } = this.#open();
     const { pin, mode } = state;
+    const progress = this.#progress(onProgress);
+    let closed = false as boolean;
+    const connection = { close: (): void => { closed = true; current.db.close(); } };
     state.current = undefined;
-    state.current = mode.kind === "pool"
-      ? await resetWorkingCopy(datasetPool(mode.util), pin, current.db, this.#download(pin))
-      : await resetInMemory(current.db, mode.pristine, pin.sha256, this.#memory);
+    try {
+      state.current = mode.kind === "pool"
+        ? await resetWorkingCopy(datasetPool(mode.util), pin, connection, this.#download(pin, progress), { storagePolicy: mode.storagePolicy, progress })
+        : await resetInMemory(connection, mode.pristine, pin.sha256, this.#memory);
+    } catch (error) {
+      if (!closed) state.current = current;
+      throw error;
+    }
     return { canonical: { sha256: pin.sha256 } };
   }
 

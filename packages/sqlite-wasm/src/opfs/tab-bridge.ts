@@ -1,3 +1,5 @@
+import { reviveError, serializeError, type SerializedError } from "./protocol.js";
+
 /** The part of `BroadcastChannel` the bridge uses. */
 export interface BroadcastChannelLike {
   postMessage(message: unknown): void;
@@ -39,16 +41,39 @@ export interface PortProtocol {
   failure(request: unknown, error: LeaderChangedError): unknown;
 }
 
+/** The events a {@link BridgePort} dispatches, by type. */
+export interface BridgePortEventMap {
+  /** A message from the other side. */
+  readonly message: MessageEvent;
+  /** Never dispatched (data is copied, not deserialized); accepted so `MessagePort` code can listen for it. */
+  readonly messageerror: MessageEvent;
+  /** The port closed: see {@link BridgePort}. Dispatched once. */
+  readonly close: Event;
+}
+
 /**
  * A `MessagePort`-shaped endpoint (the `FetchPort` contract of
  * `@openvaultdb/inprocess`): messages posted on a tab's port reach the port
  * the leader serves for it, wherever the leader runs, and its answers come
  * back as `message` events. Transfer lists are ignored: data is copied.
+ *
+ * Listeners are kept per event type, as on an `EventTarget` (options such as
+ * `once` and `signal` work). `close` is dispatched once, when:
+ *
+ * - a tab's port: `close()` is called on it, or its session closes or fails
+ *   (`TabBridge.close()`). A leader change does not close it: requests in
+ *   flight to the previous leader are answered with the protocol's
+ *   `failure` (see {@link PortProtocol}) and later messages go to the new
+ *   leader.
+ * - a served port (in the leader): the tab's port closed, that tab left, or
+ *   this tab stopped leading.
+ *
+ * After `close` no `message` event is dispatched and `postMessage` does nothing.
  */
 export interface BridgePort {
   postMessage(message: unknown, transfer?: Transferable[]): void;
-  addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
-  removeEventListener(type: "message", listener: (event: MessageEvent) => void): void;
+  addEventListener<K extends keyof BridgePortEventMap>(type: K, listener: (event: BridgePortEventMap[K]) => void, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener<K extends keyof BridgePortEventMap>(type: K, listener: (event: BridgePortEventMap[K]) => void, options?: boolean | EventListenerOptions): void;
   start(): void;
   close(): void;
 }
@@ -65,12 +90,28 @@ export interface BridgeHost {
 
 const ns = "demodb-bridge/1";
 
+/** The dataset errors a follower gets back as their own class; anything else is a {@link RemoteRequestError}. */
+const typedRemoteErrors = new Set(["CanonicalFetchError", "CanonicalIntegrityError", "CorruptDatabaseError", "DatasetStorageError", "PoolUnavailableError", "DemoDbConfigError"]);
+
+function remoteError(error: SerializedError): Error {
+  if (error.name === "LeaderChangedError") return new LeaderChangedError(error.message);
+  if (typedRemoteErrors.has(error.name)) return reviveError(error);
+  const remote = new RemoteRequestError(error.name, error.message, error.retriable === true);
+  const fields = remote as unknown as Record<string, unknown>;
+  if (error.code !== undefined) fields.code = error.code;
+  if (error.reason !== undefined) fields.reason = error.reason;
+  if (error.operation !== undefined) fields.operation = error.operation;
+  if (error.status !== undefined) fields.status = error.status;
+  if (error.resultCode !== undefined) fields.resultCode = error.resultCode;
+  return remote;
+}
+
 type Envelope = { readonly ns: typeof ns; readonly from: string } & (
   | { readonly k: "hello" }
   | { readonly k: "leader"; readonly info: unknown }
   | { readonly k: "bye" }
   | { readonly k: "req"; readonly to: string; readonly id: number; readonly op: "request" | "reset"; readonly payload?: unknown }
-  | { readonly k: "res"; readonly to: string; readonly id: number; readonly ok: boolean; readonly payload?: unknown; readonly error?: { readonly name: string; readonly message: string; readonly retriable: boolean } }
+  | ({ readonly k: "res"; readonly to: string; readonly id: number } & ({ readonly ok: true; readonly payload: unknown } | { readonly ok: false; readonly error: SerializedError }))
   | { readonly k: "port"; readonly to: string; readonly port: number; readonly data: unknown }
   | { readonly k: "port-close"; readonly to: string; readonly port: number }
 );
@@ -81,8 +122,33 @@ function isEnvelope(data: unknown): data is Envelope {
   return typeof data === "object" && data !== null && (data as { ns?: unknown }).ns === ns;
 }
 
-function messageEvent(data: unknown): MessageEvent {
-  return new MessageEvent("message", { data });
+/** Event listeners per type, and the one-time `close`. */
+abstract class PortEvents {
+  readonly #target = new EventTarget();
+  public closed = false;
+
+  public addEventListener<K extends keyof BridgePortEventMap>(type: K, listener: (event: BridgePortEventMap[K]) => void, options?: boolean | AddEventListenerOptions): void {
+    this.#target.addEventListener(type, listener as EventListener, options);
+  }
+
+  public removeEventListener<K extends keyof BridgePortEventMap>(type: K, listener: (event: BridgePortEventMap[K]) => void, options?: boolean | EventListenerOptions): void {
+    this.#target.removeEventListener(type, listener as EventListener, options);
+  }
+
+  public start(): void { /* messages flow from the first postMessage */ }
+
+  protected dispatchMessage(data: unknown): void {
+    if (!this.closed) this.#target.dispatchEvent(new MessageEvent("message", { data }));
+  }
+
+  /** Marks the port closed; true the first time. */
+  protected markClosed(): boolean {
+    if (this.closed) return false;
+    this.closed = true;
+    return true;
+  }
+
+  protected dispatchClose(): void { this.#target.dispatchEvent(new Event("close")); }
 }
 
 interface Pending {
@@ -94,18 +160,17 @@ interface Pending {
   sentTo: string | undefined;
 }
 
-class Endpoint implements BridgePort {
+class Endpoint extends PortEvents implements BridgePort {
   readonly #bridge: TabBridge;
   public readonly id: number;
   readonly #protocol: PortProtocol | undefined;
-  readonly #listeners = new Set<(event: MessageEvent) => void>();
   /** Requests sent to a leader and not answered yet, by request id. */
   readonly inFlight = new Map<unknown, unknown>();
   /** Messages posted while no leader was known. */
   readonly queued: unknown[] = [];
-  public closed = false;
 
   public constructor(bridge: TabBridge, id: number, protocol: PortProtocol | undefined) {
+    super();
     this.#bridge = bridge;
     this.id = id;
     this.#protocol = protocol;
@@ -124,8 +189,7 @@ class Endpoint implements BridgePort {
   public deliver(data: unknown): void {
     const id = this.#protocol?.responseId(data);
     if (id !== undefined) this.inFlight.delete(id);
-    const event = messageEvent(data);
-    for (const listener of this.#listeners) listener(event);
+    this.dispatchMessage(data);
   }
 
   /** Answers every in-flight request with the protocol's failure message. */
@@ -137,44 +201,30 @@ class Endpoint implements BridgePort {
     for (const request of requests) this.deliver(protocol.failure(request, new LeaderChangedError()));
   }
 
-  public addEventListener(_type: "message", listener: (event: MessageEvent) => void): void { this.#listeners.add(listener); }
-
-  public removeEventListener(_type: "message", listener: (event: MessageEvent) => void): void { this.#listeners.delete(listener); }
-
-  public start(): void { /* messages flow from the first postMessage */ }
-
   public close(): void {
-    if (this.closed) return;
-    this.closed = true;
+    if (!this.markClosed()) return;
     this.#bridge.closePort(this);
+    this.dispatchClose();
   }
 }
 
-class ServedPort implements BridgePort {
+class ServedPort extends PortEvents implements BridgePort {
   readonly #send: (data: unknown) => void;
-  readonly #listeners = new Set<(event: MessageEvent) => void>();
   public stop: (() => void) | undefined;
-  public closed = false;
 
-  public constructor(send: (data: unknown) => void) { this.#send = send; }
+  public constructor(send: (data: unknown) => void) {
+    super();
+    this.#send = send;
+  }
 
   public postMessage(message: unknown): void { if (!this.closed) this.#send(message); }
 
-  public receive(data: unknown): void {
-    const event = messageEvent(data);
-    for (const listener of this.#listeners) listener(event);
-  }
-
-  public addEventListener(_type: "message", listener: (event: MessageEvent) => void): void { this.#listeners.add(listener); }
-
-  public removeEventListener(_type: "message", listener: (event: MessageEvent) => void): void { this.#listeners.delete(listener); }
-
-  public start(): void { /* already flowing */ }
+  public receive(data: unknown): void { this.dispatchMessage(data); }
 
   public close(): void {
-    if (this.closed) return;
-    this.closed = true;
+    if (!this.markClosed()) return;
     this.stop?.();
+    this.dispatchClose();
   }
 }
 
@@ -256,7 +306,7 @@ export class TabBridge {
     if (this.#leader !== undefined) this.#setLeader(undefined);
   }
 
-  /** Leaves for good: also rejects waiting requests and closes the channel. */
+  /** Leaves for good: also rejects waiting requests, closes every port (they dispatch `close`) and the channel. */
   public close(): void {
     if (this.#closed) return;
     this.leave();
@@ -265,6 +315,7 @@ export class TabBridge {
     this.#channel.close();
     for (const pending of this.#pending.values()) pending.reject(new LeaderChangedError("the dataset session was closed"));
     this.#pending.clear();
+    for (const endpoint of [...this.#endpoints]) endpoint.close();
   }
 
   /** Sends a generic request to the leader's host and resolves with its answer. */
@@ -301,11 +352,12 @@ export class TabBridge {
     return op === "reset" ? host.reset() : host.request(payload);
   }
 
-  /** Opens a port to the leader's `host.port`, see {@link BridgePort}. */
+  /** Opens a port to the leader's `host.port`, see {@link BridgePort}. After `close()` the port closes right away (in a microtask, so listeners added now see `close`). */
   public connect(protocol?: PortProtocol): BridgePort {
     this.#nextPort += 1;
     const endpoint = new Endpoint(this, this.#nextPort, protocol);
-    this.#endpoints.add(endpoint);
+    if (this.#closed) queueMicrotask(() => { endpoint.close(); });
+    else this.#endpoints.add(endpoint);
     return endpoint;
   }
 
@@ -418,11 +470,7 @@ export class TabBridge {
   #answer(from: string, id: number, op: "request" | "reset", payload: unknown): void {
     this.#serve(op, payload).then(
       (result) => { this.#post({ k: "res", to: from, id, ok: true, payload: result }); },
-      (error: unknown) => {
-        const failure = error instanceof Error ? error : new Error(String(error));
-        const retriable = (failure as { readonly retriable?: unknown }).retriable === true;
-        this.#post({ k: "res", to: from, id, ok: false, error: { name: failure.name, message: failure.message, retriable } });
-      },
+      (error: unknown) => { this.#post({ k: "res", to: from, id, ok: false, error: serializeError(error) }); },
     );
   }
 
@@ -434,7 +482,6 @@ export class TabBridge {
       pending.resolve(response.payload);
       return;
     }
-    const error = response.error as { readonly name: string; readonly message: string; readonly retriable: boolean };
-    pending.reject(error.name === "LeaderChangedError" ? new LeaderChangedError(error.message) : new RemoteRequestError(error.name, error.message, error.retriable));
+    pending.reject(remoteError(response.error));
   }
 }
