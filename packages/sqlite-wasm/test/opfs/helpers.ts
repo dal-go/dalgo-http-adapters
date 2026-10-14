@@ -75,8 +75,10 @@ export class FakePool implements DatasetPool, SahPoolUtilLike {
   public readonly opened = new Map<string, ClosableOo1Db>();
   public paused = false;
   public readonly calls: string[] = [];
-  /** Makes the next `open` calls of these paths throw. */
-  public readonly failOpen = new Map<string, number>();
+  /** Errors the next `open` calls of a path throw, in order. */
+  public readonly failOpen = new Map<string, unknown[]>();
+  /** An error the next `importDb` of a path throws before the path is linked (a crash or a full disk). */
+  public readonly failImport = new Map<string, unknown>();
   public readonly OpfsSAHPoolDb: new (filename: string) => ClosableOo1Db;
 
   public constructor() {
@@ -87,9 +89,19 @@ export class FakePool implements DatasetPool, SahPoolUtilLike {
 
   public getFileNames(): string[] { return [...this.files.keys()]; }
 
+  /** Like sqlite-wasm 3.53: an existing file is overwritten in place and keeps any longer tail. */
   public importDb(name: string, bytes: Uint8Array): Promise<number> {
     this.calls.push(`import ${name}`);
-    this.files.set(name, bytes.slice());
+    const failure = this.failImport.get(name);
+    if (failure !== undefined) {
+      this.failImport.delete(name);
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- tests inject non-Error failures too
+      return Promise.reject(failure);
+    }
+    const existing = this.files.get(name);
+    const result = existing !== undefined && existing.length > bytes.length ? existing.slice() : new Uint8Array(bytes.length);
+    result.set(bytes);
+    this.files.set(name, result);
     return Promise.resolve(bytes.length);
   }
 
@@ -107,11 +119,9 @@ export class FakePool implements DatasetPool, SahPoolUtilLike {
   }
 
   public open(name: string): ClosableOo1Db {
-    const failures = this.failOpen.get(name) ?? 0;
-    if (failures > 0) {
-      this.failOpen.set(name, failures - 1);
-      throw new Error(`file is not a database: ${name}`);
-    }
+    const failure = this.failOpen.get(name)?.shift();
+    // eslint-disable-next-line @typescript-eslint/only-throw-error -- tests inject non-Error failures too
+    if (failure !== undefined) throw failure;
     // Like OPFS, another context sees the writes of a connection that is still open.
     const live = this.opened.get(name);
     const db = memoryDb(live === undefined ? this.files.get(name) : exportDb(live));
@@ -281,3 +291,11 @@ export class InProcessWorker implements WorkerLike {
     this.#outbox.dispatchEvent(Object.assign(new Event("error"), message === undefined ? {} : { message }));
   }
 }
+
+/** An oo1-style SQLite error with an extended result code. */
+export function sqliteError(message: string, resultCode: number): Error {
+  return Object.assign(new Error(message), { name: "SQLite3Error", resultCode });
+}
+
+/** SQLITE_NOTADB, as opening a damaged file reports it. */
+export const notADatabase = (): Error => sqliteError("file is not a database", 26);

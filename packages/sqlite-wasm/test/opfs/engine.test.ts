@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { workingPath } from "../../src/opfs/canonical.js";
 import { DemoDbEngine, type Sqlite3Like } from "../../src/opfs/engine.js";
-import { FakePool, emptyDirectory, pinFor, sampleBytes, serve, sqliteLike } from "./helpers.js";
+import { FakePool, emptyDirectory, notADatabase, pinFor, sampleBytes, serve, sqliteLike } from "./helpers.js";
 
 const sample = sampleBytes();
 const pin = pinFor(sample);
@@ -49,7 +49,7 @@ describe("DemoDbEngine with OPFS", () => {
     const pool = new FakePool();
     const engine = new DemoDbEngine(withPool(pool), { fetch: fetchFn, getDirectory: () => Promise.resolve(emptyDirectory) });
     await engine.open(pin);
-    pool.failOpen.set(workingPath(pin), 1);
+    pool.failOpen.set(workingPath(pin), [notADatabase()]);
     await expect(engine.reset()).rejects.toThrow("file is not a database");
     await expect(engine.exec("SELECT 1")).rejects.toThrow("not open");
     engine.close();

@@ -3,10 +3,12 @@ import {
   CanonicalFetchError,
   CanonicalIntegrityError,
   CorruptDatabaseError,
+  DatasetStorageError,
   canonicalPath,
   datasetDirectory,
   fetchCanonical,
   gunzip,
+  isCorruption,
   journalPath,
   openCanonical,
   prepareConnection,
@@ -16,7 +18,7 @@ import {
   type CanonicalPin,
   type ClosableOo1Db,
 } from "../../src/opfs/canonical.js";
-import { FakePool, gzip, pinFor, sampleBytes, serve, sha256 } from "./helpers.js";
+import { FakePool, gzip, notADatabase, pinFor, sampleBytes, serve, sha256, sqliteError } from "./helpers.js";
 
 const sample = sampleBytes();
 const pin = pinFor(sample);
@@ -137,49 +139,145 @@ describe("prepareConnection", () => {
   });
 });
 
+describe("isCorruption", () => {
+  it("accepts only damage, never other failures", () => {
+    expect(isCorruption(new CorruptDatabaseError("bad"))).toBe(true);
+    expect(isCorruption(notADatabase())).toBe(true);
+    expect(isCorruption(sqliteError("database disk image is malformed", 11))).toBe(true);
+    expect(isCorruption(sqliteError("malformed (extended)", 11 | (1 << 8)))).toBe(true);
+    expect(isCorruption(sqliteError("disk I/O error", 10))).toBe(false);
+    expect(isCorruption(sqliteError("database or disk is full", 13))).toBe(false);
+    expect(isCorruption(new Error("quota"))).toBe(false);
+    expect(isCorruption(null)).toBe(false);
+  });
+});
+
+async function editAndClose(pool: FakePool, sql: string): Promise<void> {
+  const opened = await openCanonical(pool, pin, () => Promise.resolve(sample));
+  await opened.driver.exec(sql);
+  opened.db.close();
+}
+
+const name1 = "SELECT Name FROM Artist WHERE ArtistId = 1";
+
 describe("openCanonical", () => {
   it("imports both copies on first open and reuses them later", async () => {
     const pool = new FakePool();
     const download = vi.fn(() => Promise.resolve(sample));
     const first = await openCanonical(pool, pin, download);
     expect(first).toMatchObject({ imported: true, replacedPreviousVersion: false });
-    expect(pool.calls).toEqual([`import ${canonicalPath(pin)}`, `unlink ${journalPath(pin)}`, `import ${workingPath(pin)}`]);
+    expect(pool.calls).toEqual([
+      `unlink ${canonicalPath(pin)}`, `import ${canonicalPath(pin)}`,
+      `unlink ${journalPath(pin)}`, `unlink ${workingPath(pin)}`, `import ${workingPath(pin)}`,
+    ]);
     expect((await first.driver.exec("PRAGMA foreign_keys")).rows).toEqual([{ foreign_keys: 1 }]);
     await first.driver.exec("UPDATE Artist SET Name = 'edited' WHERE ArtistId = 1");
     first.db.close();
     const second = await openCanonical(pool, pin, download);
     expect(second).toMatchObject({ imported: false, replacedPreviousVersion: false });
-    expect((await second.driver.exec("SELECT Name FROM Artist WHERE ArtistId = 1")).rows).toEqual([{ Name: "edited" }]);
+    expect((await second.driver.exec(name1)).rows).toEqual([{ Name: "edited" }]);
     expect(download).toHaveBeenCalledTimes(1);
   });
 
-  it("re-imports a working copy that is missing its pristine copy or fails to open", async () => {
+  it("restores a missing working copy from the stored pristine copy without downloading", async () => {
     const pool = new FakePool();
-    await pool.importDb(workingPath(pin), sample);
-    expect(await openCanonical(pool, pin, () => Promise.resolve(sample))).toMatchObject({ imported: true });
-    pool.opened.get(workingPath(pin))?.close();
-    pool.opened.clear();
-    pool.failOpen.set(workingPath(pin), 1);
-    expect(await openCanonical(pool, pin, () => Promise.resolve(sample))).toMatchObject({ imported: true });
+    await editAndClose(pool, "UPDATE Artist SET Name = 'edited' WHERE ArtistId = 1");
+    pool.unlink(workingPath(pin));
+    const download = vi.fn(() => Promise.resolve(sample));
+    const opened = await openCanonical(pool, pin, download);
+    expect(opened.imported).toBe(false);
+    expect(download).not.toHaveBeenCalled();
+    expect((await opened.driver.exec(name1)).rows).toEqual([{ Name: "AC/DC" }]);
+  });
+
+  it("recovers from a crash between unlinking and re-importing the working copy", async () => {
+    const pool = new FakePool();
+    await editAndClose(pool, "UPDATE Artist SET Name = 'edited' WHERE ArtistId = 1");
+    await pool.importDb(journalPath(pin), sample);
+    pool.failOpen.set(workingPath(pin), [notADatabase()]);
+    pool.failImport.set(workingPath(pin), new Error("the tab crashed"));
+    await expect(openCanonical(pool, pin, () => Promise.resolve(sample))).rejects.toMatchObject({ name: "DatasetStorageError", operation: "import" });
+    // The name is gone (not half-written) and so is the old journal.
+    expect(pool.getFileNames().sort()).toEqual([canonicalPath(pin)]);
+    const opened = await openCanonical(pool, pin, () => Promise.resolve(sample));
+    expect((await opened.driver.exec(name1)).rows).toEqual([{ Name: "AC/DC" }]);
+    expect(sha256(pool.exportFile(workingPath(pin)))).toBe(pin.sha256);
+  });
+
+  it("restores only a missing pristine copy and keeps the edited working copy", async () => {
+    const pool = new FakePool();
+    await editAndClose(pool, "UPDATE Artist SET Name = 'kept' WHERE ArtistId = 1");
+    pool.unlink(canonicalPath(pin));
+    pool.calls.length = 0;
+    const opened = await openCanonical(pool, pin, () => Promise.resolve(sample));
+    expect(opened.imported).toBe(true);
+    expect(pool.calls).toEqual([`unlink ${canonicalPath(pin)}`, `import ${canonicalPath(pin)}`]);
+    expect((await opened.driver.exec(name1)).rows).toEqual([{ Name: "kept" }]);
+  });
+
+  it("rewrites a damaged working copy from the pristine copy, once", async () => {
+    const pool = new FakePool();
+    await editAndClose(pool, "UPDATE Artist SET Name = 'edited' WHERE ArtistId = 1");
+    pool.failOpen.set(workingPath(pin), [notADatabase()]);
+    const download = vi.fn(() => Promise.resolve(sample));
+    const opened = await openCanonical(pool, pin, download);
+    expect((await opened.driver.exec(name1)).rows).toEqual([{ Name: "AC/DC" }]);
+    expect(download).not.toHaveBeenCalled();
+    opened.db.close();
+    pool.failOpen.set(workingPath(pin), [notADatabase(), notADatabase()]);
+    await expect(openCanonical(pool, pin, download)).rejects.toBeInstanceOf(CorruptDatabaseError);
+  });
+
+  it("downloads the pristine copy again when the stored one no longer matches the pin", async () => {
+    const pool = new FakePool();
+    await editAndClose(pool, "SELECT 1");
+    await pool.importDb(canonicalPath(pin), sampleBytes("INSERT INTO Artist VALUES (9, 'tampered');"));
+    pool.failOpen.set(workingPath(pin), [notADatabase()]);
+    const download = vi.fn(() => Promise.resolve(sample));
+    const opened = await openCanonical(pool, pin, download);
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(opened.imported).toBe(true);
+    expect(sha256(pool.exportFile(canonicalPath(pin)))).toBe(pin.sha256);
   });
 
   it("re-imports a working copy that fails quick_check", async () => {
     const pool = new FakePool();
-    await openCanonical(pool, pin, () => Promise.resolve(sample));
+    await editAndClose(pool, "SELECT 1");
     const corrupt = { ...fakeDb([{ quick_check: "bad" }]) };
     const open = pool.open.bind(pool);
     let calls = 0;
     pool.open = (name) => (++calls === 1 ? corrupt : open(name));
-    expect(await openCanonical(pool, pin, () => Promise.resolve(sample))).toMatchObject({ imported: true });
+    expect(await openCanonical(pool, pin, () => Promise.resolve(sample))).toMatchObject({ imported: false });
     expect(corrupt.closed).toBe(true);
   });
 
-  it("fails when a fresh import still cannot be opened", async () => {
+  it("never replaces the working copy for failures other than damage", async () => {
+    for (const failure of [sqliteError("disk I/O error", 10), new Error("SQLite foreign key enforcement could not be enabled"), "not an Error"]) {
+      const pool = new FakePool();
+      await editAndClose(pool, "UPDATE Artist SET Name = 'kept' WHERE ArtistId = 1");
+      pool.failOpen.set(workingPath(pin), [failure]);
+      pool.calls.length = 0;
+      const error = await openCanonical(pool, pin, () => Promise.resolve(sample)).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(DatasetStorageError);
+      expect(error).toMatchObject({ operation: "open", code: "dataset_storage", cause: failure });
+      expect(pool.calls).toEqual([]);
+      const opened = await openCanonical(pool, pin, () => Promise.resolve(sample));
+      expect((await opened.driver.exec(name1)).rows).toEqual([{ Name: "kept" }]);
+    }
+  });
+
+  it("gives up when a freshly imported working copy is damaged", async () => {
     const pool = new FakePool();
-    pool.failOpen.set(workingPath(pin), 2);
-    await expect(openCanonical(pool, pin, () => Promise.resolve(sample))).rejects.toThrow("file is not a database");
-    pool.open = () => { throw "not an Error" as unknown as Error; };
-    await expect(openCanonical(pool, pin, () => Promise.resolve(sample))).rejects.toThrow("not an Error");
+    pool.failOpen.set(workingPath(pin), [notADatabase()]);
+    await expect(openCanonical(pool, pin, () => Promise.resolve(sample))).rejects.toBeInstanceOf(CorruptDatabaseError);
+  });
+
+  it("reports a full pool as a storage error", async () => {
+    const pool = new FakePool();
+    pool.failImport.set(canonicalPath(pin), new Error("No available handles to import to."));
+    await expect(openCanonical(pool, pin, () => Promise.resolve(sample))).rejects.toMatchObject({ name: "DatasetStorageError", operation: "import" });
+    pool.failImport.set(canonicalPath(pin), "text");
+    await expect(openCanonical(pool, pin, () => Promise.resolve(sample))).rejects.toThrow("could not write");
   });
 
   it("deletes the files of other versions and reports a replaced version", async () => {

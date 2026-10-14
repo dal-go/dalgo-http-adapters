@@ -1,8 +1,8 @@
 import {
   CanonicalIntegrityError,
-  canonicalPath,
-  journalPath,
+  importWorking,
   prepareConnection,
+  pristineBytes,
   sha256Hex,
   workingPath,
   type CanonicalPin,
@@ -31,9 +31,9 @@ async function openVerified(open: () => ClosableOo1Db, exportBytes: (db: Closabl
 
 /**
  * Restores the OPFS working copy from the pristine copy: closes the
- * connection, overwrites the working file, drops its journal, reopens it and
- * checks that it is byte-identical to the pin. A pristine copy that no longer
- * matches its pin is downloaded again.
+ * connection, replaces the working file (dropping its journal), reopens it
+ * and checks that it is byte-identical to the pin. A pristine copy that no
+ * longer matches its pin is downloaded again.
  */
 export async function resetWorkingCopy(
   pool: DatasetPool,
@@ -42,15 +42,8 @@ export async function resetWorkingCopy(
   download: () => Promise<Uint8Array>,
 ): Promise<OpenedDatabase> {
   current.close();
-  const pristinePath = canonicalPath(pin);
-  let pristine = pool.getFileNames().includes(pristinePath) ? pool.exportFile(pristinePath) : undefined;
-  if (pristine === undefined || await sha256Hex(pristine) !== pin.sha256) {
-    pristine = await download();
-    await pool.importDb(pristinePath, pristine);
-  }
-  pool.unlink(journalPath(pin));
+  await importWorking(pool, pin, await pristineBytes(pool, pin, download));
   const working = workingPath(pin);
-  await pool.importDb(working, pristine);
   return openVerified(() => pool.open(working), () => pool.exportFile(working), pin.sha256);
 }
 

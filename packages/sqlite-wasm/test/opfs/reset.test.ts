@@ -26,6 +26,29 @@ describe("resetWorkingCopy", () => {
     expect(sha256(pool.exportFile(workingPath(pin)))).toBe(pin.sha256);
   });
 
+  it("restores a working copy that grew past the pristine size, and can do it again", async () => {
+    const pool = new FakePool();
+    const opened = await edited(pool);
+    await opened.driver.exec("UPDATE Artist SET Name = ? WHERE ArtistId = 1", ["x".repeat(200_000)]);
+    opened.db.close();
+    expect(pool.exportFile(workingPath(pin)).length).toBeGreaterThan(sample.length);
+    const reopened = await openCanonical(pool, pin, () => Promise.resolve(sample));
+    const reset = await resetWorkingCopy(pool, pin, reopened.db, () => Promise.resolve(sample));
+    expect(sha256(pool.exportFile(workingPath(pin)))).toBe(pin.sha256);
+    await reset.driver.exec("UPDATE Artist SET Name = ? WHERE ArtistId = 2", ["y".repeat(300_000)]);
+    const again = await resetWorkingCopy(pool, pin, reset.db, () => Promise.resolve(sample));
+    expect((await again.driver.exec("SELECT Name FROM Artist WHERE ArtistId = 2")).rows).toEqual([{ Name: "Accept" }]);
+  });
+
+  it("fails on a grown working copy if the old file is not unlinked first (the bug this guards)", async () => {
+    const pool = new FakePool();
+    const opened = await edited(pool);
+    await opened.driver.exec("UPDATE Artist SET Name = ? WHERE ArtistId = 1", ["x".repeat(200_000)]);
+    const unlink = pool.unlink.bind(pool);
+    pool.unlink = (name) => (name === workingPath(pin) ? false : unlink(name));
+    await expect(resetWorkingCopy(pool, pin, opened.db, () => Promise.resolve(sample))).rejects.toBeInstanceOf(CanonicalIntegrityError);
+  });
+
   it("downloads the pristine copy again when it is missing or altered", async () => {
     const pool = new FakePool();
     const opened = await edited(pool);

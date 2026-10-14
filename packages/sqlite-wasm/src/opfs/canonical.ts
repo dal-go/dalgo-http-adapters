@@ -215,11 +215,29 @@ export interface OpenedCanonical extends OpenedDatabase {
   readonly imported: boolean;
 }
 
-/** Thrown when an opened file fails `PRAGMA quick_check`. */
+/** The working copy is damaged: `PRAGMA quick_check` failed, or SQLite reported it corrupt or not a database. */
 export class CorruptDatabaseError extends Error {
-  public constructor(message: string) {
-    super(message);
+  public readonly code = "corrupt_database" as const;
+
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "CorruptDatabaseError";
+  }
+}
+
+/**
+ * A dataset file could not be written or opened for a reason other than
+ * corruption (quota, I/O, a full pool, foreign keys that cannot be enabled).
+ * The working copy is left as it is.
+ */
+export class DatasetStorageError extends Error {
+  public readonly code = "dataset_storage" as const;
+  public readonly operation: "import" | "open";
+
+  public constructor(operation: "import" | "open", message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DatasetStorageError";
+    this.operation = operation;
   }
 }
 
@@ -233,46 +251,115 @@ export async function prepareConnection(db: ClosableOo1Db): Promise<OpenedDataba
   return { db, driver };
 }
 
-async function tryOpen(pool: DatasetPool, path: string): Promise<OpenedDatabase | Error> {
+const SQLITE_CORRUPT = 11;
+const SQLITE_NOTADB = 26;
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Whether an open failure means the file itself is damaged (and only then may it be replaced). */
+export function isCorruption(error: unknown): boolean {
+  if (error instanceof CorruptDatabaseError) return true;
+  const code = (error as { readonly resultCode?: unknown } | null)?.resultCode;
+  return typeof code === "number" && ((code & 0xff) === SQLITE_CORRUPT || (code & 0xff) === SQLITE_NOTADB);
+}
+
+/**
+ * Opens and checks a pool file. A damaged file is returned as a
+ * {@link CorruptDatabaseError}; any other failure is thrown as a
+ * {@link DatasetStorageError}.
+ */
+async function tryOpen(pool: DatasetPool, path: string): Promise<OpenedDatabase | CorruptDatabaseError> {
   let db: ClosableOo1Db | undefined;
   try {
     db = pool.open(path);
     return await prepareConnection(db);
   } catch (error) {
     db?.close();
-    return error instanceof Error ? error : new Error(String(error));
+    if (error instanceof CorruptDatabaseError) return error;
+    if (isCorruption(error)) return new CorruptDatabaseError(`${path} is damaged: ${message(error)}`, { cause: error });
+    throw new DatasetStorageError("open", `could not open ${path}: ${message(error)}`, { cause: error });
   }
 }
 
-/** Writes the pristine and the working copy (pristine first, so a working copy always has one). */
-export async function importCanonical(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array): Promise<void> {
-  await pool.importDb(canonicalPath(pin), bytes);
+/**
+ * Replaces a pool file. The pool's `importDb` overwrites a file in place and
+ * never shrinks it, so the old file is unlinked first (the pool truncates its
+ * slot). The pool names a slot only after the whole file is written, so a
+ * crash during the import leaves the name missing rather than half-written.
+ */
+async function replaceFile(pool: DatasetPool, name: string, bytes: Uint8Array): Promise<void> {
+  pool.unlink(name);
+  try {
+    await pool.importDb(name, bytes);
+  } catch (error) {
+    throw new DatasetStorageError("import", `could not write ${name}: ${message(error)}`, { cause: error });
+  }
+}
+
+/** Writes the pristine copy. */
+export function importPristine(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array): Promise<void> {
+  return replaceFile(pool, canonicalPath(pin), bytes);
+}
+
+/** Overwrites the working copy (and drops its journal, which belongs to the old file). */
+export function importWorking(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array): Promise<void> {
   pool.unlink(journalPath(pin));
-  await pool.importDb(workingPath(pin), bytes);
+  return replaceFile(pool, workingPath(pin), bytes);
 }
 
 /**
- * Opens the working copy of the pinned version, importing it first when it is
- * missing or fails `PRAGMA quick_check` (for example after a crash during an
- * import). Files of other versions of the dataset are deleted once the pinned
- * version is open.
+ * The pinned bytes: the stored pristine copy when it matches the pin,
+ * otherwise downloaded and stored again as the pristine copy.
+ */
+export async function pristineBytes(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>): Promise<Uint8Array> {
+  const path = canonicalPath(pin);
+  if (pool.getFileNames().includes(path)) {
+    const stored = pool.exportFile(path);
+    if (stored.byteLength === pin.bytes && await sha256Hex(stored) === pin.sha256) return stored;
+  }
+  const bytes = await download();
+  await importPristine(pool, pin, bytes);
+  return bytes;
+}
+
+/**
+ * Opens the working copy of the pinned version.
+ *
+ * - No working copy (first open, or a crash during an import): write it from
+ *   the pristine copy, downloading that first when it is missing or altered.
+ * - A working copy without a pristine copy: download and write only the
+ *   pristine copy; the working copy and its edits are kept.
+ * - A damaged working copy (see {@link isCorruption}): write it again from
+ *   the pristine copy, once. Any other open failure is thrown as a
+ *   {@link DatasetStorageError} and the working copy is not touched.
+ *
+ * Files of other versions of the dataset are deleted once the pinned version
+ * is open.
  */
 export async function openCanonical(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>): Promise<OpenedCanonical> {
   validatePin(pin);
   const working = workingPath(pin);
   const names = pool.getFileNames();
   let imported = false;
-  if (!names.includes(working) || !names.includes(canonicalPath(pin))) {
-    await importCanonical(pool, pin, await download());
+  const fetchPin = (): Promise<Uint8Array> => {
     imported = true;
+    return download();
+  };
+  let fresh = false;
+  if (!names.includes(working)) {
+    await importWorking(pool, pin, await pristineBytes(pool, pin, fetchPin));
+    fresh = true;
+  } else if (!names.includes(canonicalPath(pin))) {
+    await importPristine(pool, pin, await fetchPin());
   }
   let opened = await tryOpen(pool, working);
-  if (opened instanceof Error && !imported) {
-    await importCanonical(pool, pin, await download());
-    imported = true;
+  if (opened instanceof CorruptDatabaseError && !fresh) {
+    await importWorking(pool, pin, await pristineBytes(pool, pin, fetchPin));
     opened = await tryOpen(pool, working);
   }
-  if (opened instanceof Error) throw opened;
+  if (opened instanceof CorruptDatabaseError) throw opened;
   const directory = datasetDirectory(pin.dataset);
   const current = `${directory}${pin.sha256}.`;
   const stale = names.filter((name) => name.startsWith(directory) && !name.startsWith(current));
