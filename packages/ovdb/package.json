@@ -14,9 +14,14 @@
     "./dtql": {
       "types": "./dist-dtql/index.d.ts",
       "import": "./dist-dtql/index.js"
+    },
+    "./client": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "files": [
+    "dist",
     "dist-dtql",
     "LICENSE",
     "README.md"
@@ -43,10 +48,10 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dalgo/core": ">=0.6.0 <0.7.0"
+    "@dalgo/core": ">=0.6.0 <0.9.0"
   },
   "devDependencies": {
-    "@dalgo/core": "0.6.0",
+    "@dalgo/core": "^0.7.4",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",

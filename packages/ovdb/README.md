@@ -1,6 +1,6 @@
 # OpenVaultDB DTQL executor
 
-`@dalgo/ovdb` exposes the query-only `OpenVaultDbDTQLQueryExecutor` at both the package root and `@dalgo/ovdb/dtql`. Requires Node >=20 or a browser with Fetch and Web Crypto, and the released `@dalgo/core` 0.6 family.
+`@dalgo/ovdb` exposes the query-only `OpenVaultDbDTQLQueryExecutor` at both the package root and `@dalgo/ovdb/dtql`. Requires Node >=20 or a browser with Fetch and Web Crypto, and `@dalgo/core` `>=0.6.0 <0.9.0`.
 
 The first native profile accepts one `daily` collection query, zero through ten flat string equality filters on `time`, `currency` and `rate`, and a limit of 1–50 (default 50). It preserves native lexical strings, validates one independently admitted source read and full immutable rights metadata, and returns `complete: true` only after bounded JSON reaches EOF and evidence passes. Completion describes a bounded query, not complete source inventory.
 
@@ -11,3 +11,32 @@ Create `createOpenVaultDbExecutionBudget()` **before** asynchronous admission, t
 One executor makes at most one POST. Fetch omits credentials and referrers, refuses redirects and uses no-store. The package has no bearer client, database, CRUD, direct provider fallback, history, cache or persistence API. A server-only attestation authenticates the deployed route; browser digest validation does not independently authenticate provider bytes or establish legal clearance. The browser relies on the route's duplicate-member JSON refusal before parsing its completed output.
 
 Development keeps legacy adapter tests workspace-private. Only `dist-dtql`, README and LICENSE are packed, and release gates test those exact immutable tarball bytes under Node 20.0.0, Node 24 and Chromium. First publication and npm namespace/trusted publisher setup are external release prerequisites; this source change does not publish or activate provider access.
+
+## CRUD client (`@dalgo/ovdb/client`)
+
+The subpath `@dalgo/ovdb/client` exports the CRUD `OpenVaultDbDatabase` (a DALgo `Database`) and `OpenVaultDbHttpError`; fetch is injectable via the `fetch` option. It ships from `dist/` and is independent of the DTQL executor, whose `.` and `./dtql` exports are unchanged.
+
+```ts
+import { OpenVaultDbDatabase, OpenVaultDbHttpError } from "@dalgo/ovdb/client";
+
+const db = new OpenVaultDbDatabase({ baseUrl, databaseId, accessToken, fetch });
+```
+
+### Installing from GitHub (before a release)
+
+Pin `@dalgo/core` and this package from GitHub in the consuming project (pnpm 11). `<sha>` is a dal-go/dalgo-http-adapters commit that contains the `./client` export:
+
+```jsonc
+// package.json
+"@dalgo/core": "github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42",
+"@dalgo/ovdb": "github:dal-go/dalgo-http-adapters#<sha>&path:/packages/ovdb"
+```
+
+```yaml
+# pnpm-workspace.yaml: the GitHub tarballs build themselves on install
+allowBuilds:
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42': true
+  '@dalgo/ovdb@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<sha>#path:/packages/ovdb': true
+```
+
+The package's `prepack` runs `npm run build`, which emits both `dist` and `dist-dtql`.

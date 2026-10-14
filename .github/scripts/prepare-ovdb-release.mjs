@@ -47,7 +47,20 @@ if (mode === "pack") {
   failUnless(manifest.name === identity.name && manifest.version === version, "source package identity mismatch");
   // npm tarball publication reads gitHead from the packed manifest. Explicitly
   // bind it to the authorized checkout without editing its tracked manifest.
-  writeFileSync(resolve(staging, "package.json"), JSON.stringify({ ...manifest, gitHead: sourceSHA }, null, 2) + "\n");
+  // The npm artifact stays query-only and tested against the released core 0.6
+  // family: the source manifest's GitHub-path-only "./client" export, "dist"
+  // file entry and wider core peer are not published until a release gate covers them.
+  const { "./client": _client, ...publishedExports } = manifest.exports;
+  const published = {
+    ...manifest,
+    exports: publishedExports,
+    files: manifest.files.filter(file => file !== "dist"),
+    peerDependencies: manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.9.0"
+      ? { ...manifest.peerDependencies, "@dalgo/core": ">=0.6.0 <0.7.0" }
+      : manifest.peerDependencies,
+    gitHead: sourceSHA,
+  };
+  writeFileSync(resolve(staging, "package.json"), JSON.stringify(published, null, 2) + "\n");
   const output = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", directory], { cwd: staging, encoding: "utf8" });
   writeFileSync(resolve(directory, "npm-pack.json"), output);
   const packs = JSON.parse(output);
