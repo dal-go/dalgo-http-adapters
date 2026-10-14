@@ -74,8 +74,17 @@ const types: Record<string, string> = {
   ".wasm": "application/wasm",
 };
 
+// How many times each path was requested, for tests that check what was downloaded.
+const requests = new Map<string, number>();
+
 createServer((request, response) => {
   const path = new URL(request.url ?? "/", "http://localhost").pathname;
+  if (path === "/__requests") {
+    response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    response.end(JSON.stringify(Object.fromEntries(requests)));
+    return;
+  }
+  requests.set(path, (requests.get(path) ?? 0) + 1);
   const file = join(out, path === "/" ? "index.html" : path);
   if (!file.startsWith(out)) {
     response.writeHead(403).end();

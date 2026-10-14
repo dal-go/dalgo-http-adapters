@@ -207,8 +207,11 @@ const session = openDemoDb({
     // Runs in the leader tab for requests from every tab.
     request: async (payload, { database }) => (await database.get(new Key("Artist", payload as number))).data,
   },
+  onProgress: ({ phase, loaded, total }) => showProgress(phase, loaded, total), // see Progress
+  // memoryFallback: "forbid",     // fail instead of keeping edits in memory only
+  // storagePolicy: "single-copy", // one OPFS copy; reset downloads again
 });
-const report = await session.ready();
+const report = await session.ready(); // rejects if the dataset cannot be opened
 if (report.replacedPreviousVersion) showNotice("The demo data was updated; your edits to the old version were discarded.");
 if (!report.persistent) showNotice("Edits are kept in memory only and are lost on reload.");
 const artist = await session.request(1);
@@ -244,7 +247,8 @@ would no longer match its pin.
 Each dataset has its own pool (VFS `demodb-<dataset>`, OPFS directory
 `.demodb/<dataset>`) holding two files per version:
 `/demodb/<dataset>/<sha256>.sqlite` (the working copy) and
-`/demodb/<dataset>/<sha256>.canonical` (the pristine copy). Opening:
+`/demodb/<dataset>/<sha256>.canonical` (the pristine copy; none with
+`storagePolicy: "single-copy"`, see [Storage policy](#storage-policy-one-copy-or-two)). Opening:
 
 1. If both files of the pinned version exist, open the working copy.
 2. No working copy (first open, or a crash during an import): write it from
@@ -281,6 +285,82 @@ returns `{ canonical: { sha256 } }`; the database's `reset()` (DALgo
 `Resettable`) does the same. The database reports
 `capabilities()` with `reset: true` and `persistent: true`.
 
+### Storage policy: one copy or two
+
+`openDemoDb({ storagePolicy })` chooses how many copies of the pinned
+version OPFS keeps:
+
+| | `"working-and-pristine"` (default) | `"single-copy"` |
+| --- | --- | --- |
+| OPFS files per version | working copy + pristine copy | working copy only (half the space) |
+| first open | download, write pristine, write working | download, write working |
+| `reset()` | from the pristine copy, offline | downloads and verifies the pin again (needs the network) |
+| damaged working copy | rewritten from the pristine copy | rewritten from a fresh download |
+| a failed reset download | n/a | throws; the connection and the edits are kept |
+
+In single-copy mode a missing pristine copy is expected, never an error. The
+reset downloads and verifies the file (size and SHA-256 from the pin) while
+the connection is still open, then closes it, unlinks the working copy and
+imports the new one, so a crash in between leaves no working copy and the
+next open writes it again; the reopened file is checked to be
+byte-identical to the pin. Switching a dataset to `"single-copy"` deletes
+its pristine copy at the next open (a still-valid one is used first if the
+working copy is missing); switching back downloads it again. Version changes
+work as described above under both policies. The leader tab's policy
+applies. Use single-copy for large datasets where storage matters more than
+an offline reset; a quota failure while writing a copy surfaces as
+`DatasetStorageError` with `operation: "import"` (see
+[Errors](#errors-across-the-worker-and-the-tabs)).
+
+### Progress
+
+`openDemoDb({ onProgress })` is called in the tab that leads while its
+worker opens or resets the dataset (followers do not open it and get no
+progress). Events are `{ phase, loaded?, total? }`, structured-clone safe,
+at most one every 100 ms within a phase plus every phase change:
+
+| Phase | When | `loaded` / `total` |
+| --- | --- | --- |
+| `fetch` | downloading the canonical file (first and last event always sent) | bytes read so far / bytes to read when known |
+| `verify` | sizes, SHA-256 and gzip decoding of the download, or the SHA-256 of a stored pristine copy | none |
+| `importPristine` | writing the pristine copy | `total`: its size |
+| `importWorking` | writing the working copy | `total`: its size |
+| `open` | opening the working copy and `PRAGMA quick_check` | none |
+
+Phases come in this order and are skipped when not needed: a first open is
+`fetch, verify, importPristine, importWorking, open`; a reopen is `open`; a
+reset is `verify, importWorking, open` (single-copy: `fetch, verify,
+importWorking, open`); the memory fallback is `fetch, verify, open`.
+
+During `fetch`, `loaded` counts response body bytes as the page receives
+them, after the browser has undone any HTTP `Content-Encoding`. `total` is
+the sum of the parts' `bytes` for a pin with `parts`; the pin's `bytes`
+(the decoded size) for a single uncompressed file; for a single
+`compression: "gzip"` file, the `Content-Length` when the response has no
+`Content-Encoding` header. A `Content-Length` that turns out smaller than
+the body (for example a cross-origin response whose `Content-Encoding` is
+not exposed) is dropped. Otherwise `total` is absent: show an indeterminate
+bar. A listener that throws is ignored. In a custom worker,
+`serveDemoDbWorker({ onProgress })` sees the same events for every open and
+reset.
+
+### Errors across the worker and the tabs
+
+Errors keep their class when they cross from the dataset worker to the
+leader tab, and from the leader tab to a follower: `DatasetStorageError`
+(with `operation: "import" | "open"`), `PoolUnavailableError` (`reason`,
+`retriable`), `CanonicalFetchError` (`status`), `CanonicalIntegrityError`,
+`CorruptDatabaseError` and `DemoDbConfigError` are rebuilt as instances of
+their class with `name`, `code` and their fields; the `cause` comes back as
+an `Error` with its name and message (stacks are never sent). So a quota
+failure is `error instanceof DatasetStorageError && error.operation ===
+"import"` with `error.cause.name === "QuotaExceededError"`, not a message
+to parse. Other errors from the worker are plain `Error`s with the
+serialized name and fields (`resultCode`, so `mapSqliteError` works); other
+errors a follower gets from the leader's handlers are
+`RemoteRequestError`s with the same fields. `serializeError` and
+`reviveError` are exported for custom transports.
+
 ### Without OPFS
 
 When OPFS is unsupported or refused here (no OPFS or sync access handles, for
@@ -296,6 +376,15 @@ or:
   share the OPFS files safely (see below);
 - `"requested"`: `openDemoDb({ storage: "memory" })`;
 - `"locked"`: only with `memoryFallbackWhenLocked: true`, see below.
+
+`openDemoDb({ memoryFallback: "forbid" })` refuses the memory fallback
+altogether: where OPFS cannot be used (any reason above, including a
+browser without Web Locks) the session fails with `PoolUnavailableError`
+(`ready()` rejects, `role` is `failed`) **before the canonical file is
+downloaded**, so a large dataset is never fetched only to be lost on
+reload. The default is `"allow"`. It contradicts `storage: "memory"` and
+`memoryFallbackWhenLocked: true`; both combinations throw
+`DemoDbConfigError`.
 
 A pool whose files are **locked** right now is different: the stored dataset
 is fine, just held by another context. The worker waits for it (20 attempts,
@@ -358,8 +447,26 @@ which).
 
 `session.connect(protocol?)` returns a `MessagePort`-shaped endpoint, the
 `FetchPort` contract of `@openvaultdb/inprocess`, routed to whichever tab
-leads. The leader serves each endpoint with `serve.port(port, context)`. This
-package does not depend on OVDB; wiring it looks like this:
+leads. The leader serves each endpoint with `serve.port(port, context)`.
+
+Both kinds of port (`BridgePort`) keep listeners per event type, like an
+`EventTarget` (`once` and `signal` work):
+
+- `message`: a message from the other side, and nothing else.
+- `close`: dispatched once. A tab's port closes when `port.close()` is
+  called or its session closes or fails; a port opened after the session
+  closed closes in a microtask. A served port (in the leader) closes when
+  the tab's port closed, that tab left, or the leader stepped down. After
+  `close` no messages are dispatched and `postMessage` does nothing.
+- `messageerror`: accepted, never dispatched (data is copied by
+  `BroadcastChannel`, not transferred).
+- `start()` and `close()` exist, as on `MessagePort`.
+
+A leader change does **not** close a tab's port: requests in flight to the
+old leader are answered with the protocol's `failure(...)` and later
+messages go to the new leader, so one `fetchOverPort(session.connect(...))`
+stays usable for the life of the session. This package does not depend on
+OVDB; wiring it looks like this:
 
 ```ts
 const session = openDemoDb({
@@ -398,6 +505,10 @@ browser context per test:
 | pool that stays locked fails as retriable; memory only when opted in | yes | yes | yes |
 | reset after the working copy grew by 2 MB and 3 MB, then reset again | yes | yes | yes |
 | two tabs opening at the same moment keep stored edits | yes | yes | yes |
+| 30 sequential requests over one follower port with `message` + `close` listeners | yes | yes | yes |
+| progress phases in order; `fetch` counted against the pin | yes | yes | yes |
+| `storagePolicy: "single-copy"`: reset downloads again, edits survive reload | yes | yes | yes |
+| `memoryFallback: "forbid"` fails before any download | yes | yes | yes |
 | Playwright's ephemeral (private-like) context | OPFS | OPFS | memory fallback: `getDirectory()` rejects with `UnknownError` |
 
 Not verified: real Safari, iOS, Android and in-app webviews, the
@@ -430,8 +541,8 @@ the main-thread entry keeps every export):
 
 | Asset | Raw (minified) | gzip -9 | brotli 11 |
 | --- | --- | --- | --- |
-| `/opfs` main-thread entry (`@dalgo/core` external) | 28.2 KiB | 9.8 KiB | 8.8 KiB |
-| dataset worker (`/opfs/worker` + sqlite-wasm JS) | 222.3 KiB | 68.5 KiB | 60.4 KiB |
+| `/opfs` main-thread entry (`@dalgo/core` external) | 32.2 KiB | 11.0 KiB | 9.9 KiB |
+| dataset worker (`/opfs/worker` + sqlite-wasm JS) | 225.0 KiB | 69.4 KiB | 61.3 KiB |
 | `sqlite3.wasm` | 848.5 KiB | 392.6 KiB | 340.6 KiB |
 
 `@sqlite.org/sqlite-wasm` is needed by the worker only: install it and let

@@ -1,9 +1,11 @@
 import type { Resettable } from "@dalgo/core";
 import type { SqliteDatabase } from "../database.js";
-import { validatePin, type CanonicalPin } from "./canonical.js";
+import { validatePin, type CanonicalPin, type StoragePolicy } from "./canonical.js";
 import { WorkerClient, openLeaderDatabase, type LeaderDatabase, type PersistenceResult, type RequestPersistence, type WorkerLike } from "./client.js";
+import { DemoDbConfigError } from "./config-error.js";
 import type { OpenOptions, OpenReport } from "./engine.js";
 import { LeaderElection, defaultLocks, type LockManagerLike } from "./leader.js";
+import type { DemoDbProgressListener } from "./progress.js";
 import type { ResetResult } from "./reset.js";
 import { TabBridge, type BridgePort, type BroadcastChannelLike, type PortProtocol } from "./tab-bridge.js";
 
@@ -62,15 +64,35 @@ export interface OpenDemoDbOptions {
    * safe for a later attempt.
    */
   readonly memoryFallbackWhenLocked?: boolean;
+  /**
+   * `"forbid"`: never serve the dataset from memory. Where OPFS cannot be
+   * used (unsupported, refused, quota, no Web Locks) the session fails with
+   * a `PoolUnavailableError` before the canonical file is downloaded, so
+   * large datasets are not fetched only to be lost on reload. Default
+   * `"allow"`. Contradicts `storage: "memory"` and
+   * `memoryFallbackWhenLocked: true` (both throw `DemoDbConfigError`).
+   */
+  readonly memoryFallback?: "allow" | "forbid";
+  /**
+   * `"single-copy"` keeps only the working copy in OPFS (half the space);
+   * reset downloads and verifies the pinned file again. Default
+   * `"working-and-pristine"`. The leader tab's policy applies.
+   */
+  readonly storagePolicy?: StoragePolicy;
+  /**
+   * Called in the tab that leads while its worker opens or resets the
+   * dataset: `{ phase, loaded?, total? }`, at most every 100 ms within a
+   * phase plus every phase change. Followers get no progress (they do not
+   * open the dataset).
+   */
+  readonly onProgress?: DemoDbProgressListener;
 }
 
-/** An `openDemoDb` option combination that could damage the stored dataset. */
-export class DemoDbConfigError extends TypeError {
-  public readonly code = "demodb_config" as const;
+export { DemoDbConfigError };
 
-  public constructor(message: string) {
-    super(message);
-    this.name = "DemoDbConfigError";
+function checkChoice(option: string, value: unknown, choices: readonly string[]): void {
+  if (value !== undefined && !choices.includes(value as string)) {
+    throw new DemoDbConfigError(`${option} must be ${choices.map((choice) => JSON.stringify(choice)).join(" or ")}, got ${JSON.stringify(value)}`);
   }
 }
 
@@ -122,13 +144,25 @@ export class DemoDbSession {
       // sqlite-wasm delete the pool directory (removeVfs).
       throw new DemoDbConfigError("locks: null requires storage: \"memory\": without leader election, tabs would race for the OPFS pool");
     }
+    checkChoice("memoryFallback", options.memoryFallback, ["allow", "forbid"]);
+    checkChoice("storagePolicy", options.storagePolicy, ["working-and-pristine", "single-copy"]);
+    if (options.memoryFallback === "forbid" && options.storage === "memory") {
+      throw new DemoDbConfigError("memoryFallback: \"forbid\" contradicts storage: \"memory\"");
+    }
+    if (options.memoryFallback === "forbid" && options.memoryFallbackWhenLocked === true) {
+      throw new DemoDbConfigError("memoryFallback: \"forbid\" contradicts memoryFallbackWhenLocked: true");
+    }
     this.#options = options;
     const locks = options.locks === null ? undefined : options.locks ?? defaultLocks();
+    const policy = {
+      ...(options.memoryFallback === undefined ? {} : { memoryFallback: options.memoryFallback }),
+      ...(options.storagePolicy === undefined ? {} : { storagePolicy: options.storagePolicy }),
+    };
     this.#open = options.storage === "memory"
       ? { storage: "memory" }
       : locks === undefined
-        ? { storage: "memory", memoryReason: "web-locks-unavailable" }
-        : { memoryWhenLocked: options.memoryFallbackWhenLocked ?? false };
+        ? { storage: "memory", memoryReason: "web-locks-unavailable", ...policy }
+        : { memoryWhenLocked: options.memoryFallbackWhenLocked ?? false, ...policy };
     const name = options.lockName ?? `demodb:${options.pin.dataset}`;
     this.#bridge = new TabBridge(options.channel ?? new BroadcastChannel(name), options.tabId ?? crypto.randomUUID());
     this.#bridge.onLeaderChange = (leader) => {
@@ -209,7 +243,9 @@ export class DemoDbSession {
     const client = new WorkerClient(this.#options.createWorker());
     let opened: LeaderDatabase;
     try {
-      opened = await openLeaderDatabase(client, this.#options.pin, { requestPersistence: this.#options.requestPersistence, open: this.#open });
+      opened = await openLeaderDatabase(client, this.#options.pin, {
+        requestPersistence: this.#options.requestPersistence, open: this.#open, onProgress: this.#options.onProgress,
+      });
     } catch (error) {
       client.terminate();
       throw error;

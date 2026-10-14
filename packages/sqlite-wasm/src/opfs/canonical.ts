@@ -1,5 +1,6 @@
 import { enableForeignKeys, type SqliteDriver } from "../driver.js";
 import { fromOo1Db, type Oo1DatabaseLike } from "../oo1.js";
+import type { ProgressReporter } from "./progress.js";
 
 /** One byte range of a split canonical file, verified before it is joined. */
 export interface CanonicalPart {
@@ -33,8 +34,8 @@ export interface CanonicalPin {
 export class CanonicalIntegrityError extends Error {
   public readonly code = "canonical_integrity" as const;
 
-  public constructor(message: string) {
-    super(message);
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "CanonicalIntegrityError";
   }
 }
@@ -114,7 +115,26 @@ export async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
-async function download(fetchFn: Fetch, url: string): Promise<Uint8Array> {
+async function readBody(response: Response, onChunk: ((bytes: number) => void) | undefined): Promise<Uint8Array> {
+  const body = response.body;
+  if (onChunk === undefined || body === null) return new Uint8Array(await response.arrayBuffer());
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    onChunk(value.byteLength);
+  }
+  return concat(chunks);
+}
+
+interface DownloadObserver {
+  readonly response?: (response: Response) => void;
+  readonly chunk: (bytes: number) => void;
+}
+
+async function download(fetchFn: Fetch, url: string, observer: DownloadObserver | undefined): Promise<Uint8Array> {
   let response: Response;
   try {
     response = await fetchFn(url);
@@ -122,7 +142,8 @@ async function download(fetchFn: Fetch, url: string): Promise<Uint8Array> {
     throw new CanonicalFetchError(`failed to fetch ${url}`, undefined, { cause: error });
   }
   if (!response.ok) throw new CanonicalFetchError(`failed to fetch ${url}: HTTP ${String(response.status)}`, response.status);
-  return new Uint8Array(await response.arrayBuffer());
+  observer?.response?.(response);
+  return readBody(response, observer?.chunk);
 }
 
 async function verify(bytes: Uint8Array, expected: { readonly sha256: string; readonly bytes: number }, label: string): Promise<void> {
@@ -160,25 +181,56 @@ function resolveUrl(url: string, base: string | undefined): string {
   return new URL(url, base).href;
 }
 
+/** A response's `Content-Length` when it is the length of the body as read (no `Content-Encoding`). */
+function bodyLength(response: Response): number | undefined {
+  if (response.headers.get("content-encoding") !== null) return undefined;
+  const length = Number(response.headers.get("content-length") ?? Number.NaN);
+  return Number.isSafeInteger(length) && length >= 0 ? length : undefined;
+}
+
+/** Counts the bytes of a download and reports them as `fetch` progress (see {@link DemoDbProgressEvent}). */
+function fetchProgress(pin: CanonicalPin, progress: ProgressReporter): DownloadObserver & { report(force: boolean): void } {
+  let loaded = 0;
+  let total: number | undefined = pin.parts !== undefined
+    ? pin.parts.reduce((sum, part) => sum + part.bytes, 0)
+    : pin.compression === undefined ? pin.bytes : undefined;
+  const report = (force: boolean): void => {
+    if (total !== undefined && loaded > total) total = undefined;
+    progress({ phase: "fetch", loaded, ...(total === undefined ? {} : { total }) }, force);
+  };
+  return {
+    report,
+    ...(total === undefined ? { response: (response: Response) => { total = bodyLength(response); } } : {}),
+    chunk: (bytes) => {
+      loaded += bytes;
+      report(false);
+    },
+  };
+}
+
 /**
  * Downloads and verifies a pinned canonical file: each part's size and SHA-256,
  * the gzip stream, and the decoded size and SHA-256. Relative URLs resolve
- * against `globalThis.location`.
+ * against `globalThis.location`. `progress` receives the `fetch` and `verify`
+ * phases.
  */
-export async function fetchCanonical(pin: CanonicalPin, fetchFn: Fetch = globalThis.fetch.bind(globalThis)): Promise<Uint8Array> {
+export async function fetchCanonical(pin: CanonicalPin, fetchFn: Fetch = globalThis.fetch.bind(globalThis), progress?: ProgressReporter): Promise<Uint8Array> {
   validatePin(pin);
   const location = (globalThis as { readonly location?: { readonly href: string } }).location;
   const base = resolveUrl(pin.url, location?.href);
+  const observer = progress === undefined ? undefined : fetchProgress(pin, progress);
+  observer?.report(true);
   let served: Uint8Array;
   if (pin.parts === undefined) {
-    served = await download(fetchFn, base);
+    served = await download(fetchFn, base, observer);
+    observer?.report(true);
+    progress?.({ phase: "verify" });
   } else {
-    const parts = await Promise.all(pin.parts.map(async (part, index) => {
-      const bytes = await download(fetchFn, resolveUrl(part.url, base));
-      await verify(bytes, part, `${pin.dataset} part ${String(index + 1)}`);
-      return bytes;
-    }));
-    served = concat(parts);
+    const parts = await Promise.all(pin.parts.map(async (part) => ({ part, bytes: await download(fetchFn, resolveUrl(part.url, base), observer) })));
+    observer?.report(true);
+    progress?.({ phase: "verify" });
+    for (const [index, { part, bytes }] of parts.entries()) await verify(bytes, part, `${pin.dataset} part ${String(index + 1)}`);
+    served = concat(parts.map(({ bytes }) => bytes));
   }
   const decoded = pin.compression === "gzip" ? await gunzip(served) : served;
   await verify(decoded, pin, `${pin.dataset} canonical file`);
@@ -299,29 +351,63 @@ async function replaceFile(pool: DatasetPool, name: string, bytes: Uint8Array): 
 }
 
 /** Writes the pristine copy. */
-export function importPristine(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array): Promise<void> {
+export function importPristine(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array, progress?: ProgressReporter): Promise<void> {
+  progress?.({ phase: "importPristine", total: bytes.byteLength });
   return replaceFile(pool, canonicalPath(pin), bytes);
 }
 
 /** Overwrites the working copy (and drops its journal, which belongs to the old file). */
-export function importWorking(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array): Promise<void> {
+export function importWorking(pool: DatasetPool, pin: CanonicalPin, bytes: Uint8Array, progress?: ProgressReporter): Promise<void> {
+  progress?.({ phase: "importWorking", total: bytes.byteLength });
   pool.unlink(journalPath(pin));
   return replaceFile(pool, workingPath(pin), bytes);
+}
+
+/** The stored pristine copy when it still matches the pin. */
+async function storedPristine(pool: DatasetPool, pin: CanonicalPin, progress: ProgressReporter | undefined): Promise<Uint8Array | undefined> {
+  const path = canonicalPath(pin);
+  if (!pool.getFileNames().includes(path)) return undefined;
+  progress?.({ phase: "verify" });
+  const stored = pool.exportFile(path);
+  return stored.byteLength === pin.bytes && await sha256Hex(stored) === pin.sha256 ? stored : undefined;
 }
 
 /**
  * The pinned bytes: the stored pristine copy when it matches the pin,
  * otherwise downloaded and stored again as the pristine copy.
  */
-export async function pristineBytes(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>): Promise<Uint8Array> {
-  const path = canonicalPath(pin);
-  if (pool.getFileNames().includes(path)) {
-    const stored = pool.exportFile(path);
-    if (stored.byteLength === pin.bytes && await sha256Hex(stored) === pin.sha256) return stored;
-  }
+export async function pristineBytes(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>, progress?: ProgressReporter): Promise<Uint8Array> {
+  const stored = await storedPristine(pool, pin, progress);
+  if (stored !== undefined) return stored;
   const bytes = await download();
-  await importPristine(pool, pin, bytes);
+  await importPristine(pool, pin, bytes, progress);
   return bytes;
+}
+
+/**
+ * How many copies of the pinned version are kept in OPFS:
+ *
+ * - `"working-and-pristine"` (default): the working copy and a pristine copy;
+ *   reset and repairs restore from the pristine copy without the network.
+ * - `"single-copy"`: only the working copy (half the space). Reset and
+ *   repairs download and verify the pinned file again.
+ */
+export type StoragePolicy = "working-and-pristine" | "single-copy";
+
+export interface OpenCanonicalOptions {
+  /** Default `"working-and-pristine"`. */
+  readonly storagePolicy?: StoragePolicy | undefined;
+  /** Receives the `importPristine`, `importWorking`, `verify` (of a stored pristine copy) and `open` phases. */
+  readonly progress?: ProgressReporter | undefined;
+}
+
+/**
+ * The bytes a working copy is written from in single-copy mode: a stored
+ * pristine copy left by the other policy while it still matches the pin,
+ * otherwise a download that is not stored.
+ */
+async function singleCopyBytes(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>, progress: ProgressReporter | undefined): Promise<Uint8Array> {
+  return await storedPristine(pool, pin, progress) ?? download();
 }
 
 /**
@@ -329,34 +415,43 @@ export async function pristineBytes(pool: DatasetPool, pin: CanonicalPin, downlo
  *
  * - No working copy (first open, or a crash during an import): write it from
  *   the pristine copy, downloading that first when it is missing or altered.
+ *   In single-copy mode the download is written as the working copy only.
  * - A working copy without a pristine copy: download and write only the
- *   pristine copy; the working copy and its edits are kept.
+ *   pristine copy; the working copy and its edits are kept. In single-copy
+ *   mode a missing pristine copy is expected and nothing is downloaded.
  * - A damaged working copy (see {@link isCorruption}): write it again from
- *   the pristine copy, once. Any other open failure is thrown as a
- *   {@link DatasetStorageError} and the working copy is not touched.
+ *   the pristine copy (single-copy: from a fresh download), once. Any other
+ *   open failure is thrown as a {@link DatasetStorageError} and the working
+ *   copy is not touched.
  *
  * Files of other versions of the dataset are deleted once the pinned version
- * is open.
+ * is open; in single-copy mode, so is a pristine copy of the pinned version.
  */
-export async function openCanonical(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>): Promise<OpenedCanonical> {
+export async function openCanonical(pool: DatasetPool, pin: CanonicalPin, download: () => Promise<Uint8Array>, options: OpenCanonicalOptions = {}): Promise<OpenedCanonical> {
   validatePin(pin);
+  const { progress } = options;
+  const single = options.storagePolicy === "single-copy";
   const working = workingPath(pin);
+  const pristine = canonicalPath(pin);
   const names = pool.getFileNames();
   let imported = false;
   const fetchPin = (): Promise<Uint8Array> => {
     imported = true;
     return download();
   };
+  const source = (): Promise<Uint8Array> => (single ? singleCopyBytes(pool, pin, fetchPin, progress) : pristineBytes(pool, pin, fetchPin, progress));
   let fresh = false;
   if (!names.includes(working)) {
-    await importWorking(pool, pin, await pristineBytes(pool, pin, fetchPin));
+    await importWorking(pool, pin, await source(), progress);
     fresh = true;
-  } else if (!names.includes(canonicalPath(pin))) {
-    await importPristine(pool, pin, await fetchPin());
+  } else if (!single && !names.includes(pristine)) {
+    await importPristine(pool, pin, await fetchPin(), progress);
   }
+  progress?.({ phase: "open" });
   let opened = await tryOpen(pool, working);
   if (opened instanceof CorruptDatabaseError && !fresh) {
-    await importWorking(pool, pin, await pristineBytes(pool, pin, fetchPin));
+    await importWorking(pool, pin, await source(), progress);
+    progress?.({ phase: "open" });
     opened = await tryOpen(pool, working);
   }
   if (opened instanceof CorruptDatabaseError) throw opened;
@@ -364,5 +459,6 @@ export async function openCanonical(pool: DatasetPool, pin: CanonicalPin, downlo
   const current = `${directory}${pin.sha256}.`;
   const stale = names.filter((name) => name.startsWith(directory) && !name.startsWith(current));
   for (const name of stale) pool.unlink(name);
+  if (single && pool.getFileNames().includes(pristine)) pool.unlink(pristine);
   return { ...opened, imported, replacedPreviousVersion: stale.some((name) => name.endsWith(".sqlite")) };
 }

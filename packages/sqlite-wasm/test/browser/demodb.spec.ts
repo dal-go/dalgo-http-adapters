@@ -1,11 +1,16 @@
 import { test as base, expect, type BrowserContext, type Page } from "@playwright/test";
-import type { CanonicalPin, OpenReport } from "../../src/opfs/index.js";
+import type { CanonicalPin, DemoDbProgressEvent, OpenReport } from "../../src/opfs/index.js";
+import type { OpenOptions } from "./fixtures/page.js";
 
 interface Harness {
   crossOriginIsolated(): boolean;
   wipe(): Promise<void>;
   pins(): Promise<Record<"chinook" | "chinookV2" | "chinookParts", CanonicalPin>>;
-  open(pin: CanonicalPin, options?: { readonly noOpfs?: boolean }): Promise<OpenReport>;
+  open(pin: CanonicalPin, options?: OpenOptions): Promise<OpenReport>;
+  openError(pin: CanonicalPin, options?: OpenOptions): Promise<unknown>;
+  portCalls(payloads: readonly unknown[]): Promise<{ readonly results: unknown[]; readonly disposed: boolean }>;
+  progress(): DemoDbProgressEvent[];
+  requests(): Promise<Record<string, number>>;
   role(): string;
   report(): OpenReport | undefined;
   events(): string[];
@@ -68,8 +73,17 @@ async function load(page: Page): Promise<Pins> {
   return page.evaluate(() => harness.pins());
 }
 
-function open(page: Page, pin: CanonicalPin, noOpfs = false): Promise<OpenReport> {
-  return page.evaluate(([p, n]) => harness.open(p, { noOpfs: n }), [pin, noOpfs] as const);
+function open(page: Page, pin: CanonicalPin, noOpfs = false, options: OpenOptions = {}): Promise<OpenReport> {
+  return page.evaluate(([p, o]) => harness.open(p, o), [pin, { ...options, noOpfs }] as const);
+}
+
+async function downloads(page: Page, path: string): Promise<number> {
+  return (await page.evaluate(() => harness.requests()))[path] ?? 0;
+}
+
+/** The phases in order, each run of the same phase counted once. */
+function phases(events: readonly DemoDbProgressEvent[]): string[] {
+  return events.map((event) => event.phase).filter((phase, index, all) => index === 0 || all[index - 1] !== phase);
 }
 
 function request(page: Page, payload: unknown, retrying = false): Promise<unknown> {
@@ -295,4 +309,68 @@ test("two tabs opening at the same moment keep the stored edits", async ({ conte
   expect((await Promise.all([first, second].map((page) => page.evaluate(() => harness.role())))).sort()).toEqual(["follower", "leader"]);
   expect(await request(first, artist(9))).toEqual({ ArtistId: 9, Name: "written before" });
   expect(await request(second, artist(9))).toEqual({ ArtistId: 9, Name: "written before" });
+});
+
+test("a follower makes many sequential requests over one port without the port closing itself", async ({ context }) => {
+  const first = await context.newPage();
+  const second = await context.newPage();
+  const pins = await load(first);
+  await load(second);
+  await open(first, pins.chinook);
+  await open(second, pins.chinook);
+  expect(await second.evaluate(() => harness.role())).toBe("follower");
+  const payloads = Array.from({ length: 30 }, (_, index) => artist(index + 1));
+  const follower = await second.evaluate((p) => harness.portCalls(p), payloads);
+  expect(follower.disposed).toBe(false);
+  expect(follower.results).toHaveLength(30);
+  expect(follower.results[0]).toEqual({ ArtistId: 1, Name: "AC/DC" });
+  expect(follower.results[29]).toMatchObject({ ArtistId: 30 });
+  const leader = await first.evaluate((p) => harness.portCalls(p), payloads.slice(0, 5));
+  expect(leader).toMatchObject({ disposed: false });
+  expect(leader.results).toHaveLength(5);
+});
+
+test("progress phases arrive in order, and the download is counted against the pin", async ({ page }) => {
+  const pins = await load(page);
+  await open(page, pins.chinook);
+  const events = await page.evaluate(() => harness.progress());
+  test.info().annotations.push({ type: "progress events", description: String(events.length) });
+  expect(phases(events)).toEqual(["fetch", "verify", "importPristine", "importWorking", "open"]);
+  const fetches = events.filter((event) => event.phase === "fetch");
+  expect(fetches[0]).toEqual({ phase: "fetch", loaded: 0, total: pins.chinook.bytes });
+  expect(fetches.at(-1)).toEqual({ phase: "fetch", loaded: pins.chinook.bytes, total: pins.chinook.bytes });
+  const loaded = fetches.map((event) => event.loaded ?? 0);
+  expect(loaded).toEqual([...loaded].sort((a, b) => a - b));
+  await page.reload();
+  await page.waitForFunction(() => typeof globalThis.harness === "object");
+  await open(page, pins.chinook);
+  expect(phases(await page.evaluate(() => harness.progress()))).toEqual(["open"]);
+});
+
+test("single-copy storage: reset downloads and verifies the pin again", async ({ page }) => {
+  const pins = await load(page);
+  const path = "/data/chinook.sqlite";
+  const before = await downloads(page, path);
+  expect(await open(page, pins.chinook, false, { storagePolicy: "single-copy" })).toMatchObject({ persistent: true, imported: true });
+  expect(phases(await page.evaluate(() => harness.progress()))).toEqual(["fetch", "verify", "importWorking", "open"]);
+  expect(await downloads(page, path)).toBe(before + 1);
+  await request(page, rename(1, "x".repeat(2_000_000)));
+  expect(await page.evaluate(() => harness.reset())).toEqual({ canonical: { sha256: pins.chinook.sha256 } });
+  expect(await downloads(page, path)).toBe(before + 2);
+  expect(await request(page, artist(1))).toEqual({ ArtistId: 1, Name: "AC/DC" });
+  await request(page, rename(2, "kept"));
+  await page.reload();
+  await page.waitForFunction(() => typeof globalThis.harness === "object");
+  expect(await open(page, pins.chinook, false, { storagePolicy: "single-copy" })).toMatchObject({ imported: false, persistent: true });
+  expect(await request(page, artist(2))).toEqual({ ArtistId: 2, Name: "kept" });
+  expect(await downloads(page, path)).toBe(before + 2);
+});
+
+test("memoryFallback: forbid fails with the typed OPFS error before downloading", async ({ page }) => {
+  const pins = await load(page);
+  const path = "/data/chinook.sqlite";
+  const before = await downloads(page, path);
+  const result = await page.evaluate((pin) => harness.openError(pin, { noOpfs: true, memoryFallback: "forbid" }), pins.chinook);
+  expect(result).toEqual({ name: "PoolUnavailableError", reason: "missing-api", code: "opfs_unavailable", role: "failed" });
+  expect(await downloads(page, path)).toBe(before);
 });

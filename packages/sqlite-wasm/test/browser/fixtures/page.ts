@@ -1,6 +1,13 @@
 // The page the Playwright suite drives. Bundled by test/browser/server.ts.
 import { Key } from "@dalgo/core";
-import { WorkerClient, openDemoDb, type CanonicalPin, type DemoDbSession, type LeaderContext, type OpenReport } from "../../../src/opfs/index.js";
+import { WorkerClient, openDemoDb, type CanonicalPin, type DemoDbProgressEvent, type DemoDbSession, type LeaderContext, type OpenReport, type StoragePolicy } from "../../../src/opfs/index.js";
+import { callOverPort, contractProtocol, serveOverPort } from "../../opfs/port-harness.js";
+
+export interface OpenOptions {
+  readonly noOpfs?: boolean;
+  readonly storagePolicy?: StoragePolicy;
+  readonly memoryFallback?: "allow" | "forbid";
+}
 
 type Operation =
   | { readonly op: "get"; readonly table: string; readonly id: number }
@@ -28,6 +35,7 @@ async function handle(payload: unknown, { database }: LeaderContext): Promise<un
 
 let session: DemoDbSession | undefined;
 const events: string[] = [];
+const progress: DemoDbProgressEvent[] = [];
 // Worker log lines, kept across reloads of this tab.
 const logs = JSON.parse(sessionStorage.getItem("demodb-test-log") ?? "[]") as string[];
 new BroadcastChannel("demodb-test-log").addEventListener("message", (event) => {
@@ -58,24 +66,16 @@ const harness = {
   async pins(): Promise<Record<string, CanonicalPin>> {
     return await (await fetch("/pins.json")).json() as Record<string, CanonicalPin>;
   },
-  async open(pin: CanonicalPin, options: { readonly noOpfs?: boolean } = {}): Promise<OpenReport> {
+  async open(pin: CanonicalPin, options: OpenOptions = {}): Promise<OpenReport> {
+    progress.length = 0;
     session = openDemoDb({
       pin,
       createWorker: () => new Worker(`/worker.js${options.noOpfs === true ? "?noopfs=1" : ""}`, { type: "module" }),
-      serve: {
-        request: handle,
-        port: (port, context) => {
-          const listener = (event: MessageEvent): void => {
-            const message = event.data as { readonly id: number; readonly payload: unknown };
-            void handle(message.payload, context).then(
-              (result) => { port.postMessage({ id: message.id, ok: true, result }); },
-              (error: unknown) => { port.postMessage({ id: message.id, ok: false, error: String(error) }); },
-            );
-          };
-          port.addEventListener("message", listener);
-          return () => { port.removeEventListener("message", listener); };
-        },
-      },
+      // The ports are served the way @openvaultdb/inprocess serves them: message and close listeners.
+      serve: { request: handle, port: (port, context) => serveOverPort((payload) => handle(payload, context), port) },
+      onProgress: (event) => { progress.push(event); },
+      ...(options.storagePolicy === undefined ? {} : { storagePolicy: options.storagePolicy }),
+      ...(options.memoryFallback === undefined ? {} : { memoryFallback: options.memoryFallback }),
     });
     session.subscribe((event) => { events.push(event.type === "role" ? `role:${event.role}` : event.type); });
     return session.ready();
@@ -96,22 +96,40 @@ const harness = {
       }
     }
   },
-  /** One request over a bridge port, answered by the leader's port handler. */
-  portRequest(payload: Operation): Promise<unknown> {
-    const port = current().connect({
-      requestId: (message) => (message as { readonly id: number }).id,
-      responseId: (message) => (message as { readonly id: number }).id,
-      failure: (request, error) => ({ id: (request as { readonly id: number }).id, ok: false, error: error.name }),
-    });
-    return new Promise((resolve, reject) => {
-      port.addEventListener("message", (event) => {
-        const answer = event.data as { readonly ok: boolean; readonly result?: unknown; readonly error?: string };
-        port.close();
-        if (answer.ok) resolve(answer.result);
-        else reject(new Error(answer.error));
-      });
-      port.postMessage({ id: 1, payload });
-    });
+  /** One request over a fresh bridge port, answered by the leader's port handler. */
+  async portRequest(payload: Operation): Promise<unknown> {
+    const port = current().connect(contractProtocol);
+    try {
+      return await callOverPort(port).call(payload);
+    } finally {
+      port.close();
+    }
+  },
+  /**
+   * Many sequential requests over ONE port whose client listens for `message`
+   * and `close` (like @openvaultdb/inprocess `fetchOverPort`): a port that
+   * dispatched `close` on every message would dispose the client after the first.
+   */
+  async portCalls(payloads: readonly Operation[]): Promise<{ readonly results: unknown[]; readonly disposed: boolean }> {
+    const client = callOverPort(current().connect(contractProtocol));
+    const results: unknown[] = [];
+    for (const payload of payloads) results.push(await client.call(payload));
+    return { results, disposed: client.disposed };
+  },
+  /** The progress events of the last open and the resets since. */
+  progress: (): DemoDbProgressEvent[] => progress,
+  /** The open's error as plain data. */
+  async openError(pin: CanonicalPin, options: OpenOptions = {}): Promise<unknown> {
+    try {
+      return { report: await this.open(pin, options) };
+    } catch (error) {
+      const failure = error as Error & { readonly reason?: unknown; readonly code?: unknown };
+      return { name: failure.name, reason: failure.reason, code: failure.code, role: current().role };
+    }
+  },
+  /** How many times the test server served each path. */
+  async requests(): Promise<Record<string, number>> {
+    return await (await fetch("/__requests")).json() as Record<string, number>;
   },
   /**
    * Opens the dataset in a worker that keeps its sync access handles, then
