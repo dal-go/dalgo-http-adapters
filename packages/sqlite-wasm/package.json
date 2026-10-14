@@ -28,7 +28,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "eslint . && tsc -p tsconfig.json --noEmit && vitest run --coverage && tsc -p tsconfig.build.json",
     "lint": "eslint .",
-    "prepack": "npm run build",
+    "prepack": "npm --prefix ../sqlite-sql run build && npm run build",
     "test": "vitest run",
     "test:browser": "playwright test"
   },
@@ -49,7 +49,7 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dalgo/core": ">=0.8.0 <0.9.0",
+    "@dalgo/core": ">=0.7.4 <0.9.0",
     "@sqlite.org/sqlite-wasm": ">=3.50.0"
   },
   "peerDependenciesMeta": {
