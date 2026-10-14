@@ -30,6 +30,7 @@
   "publishConfig": { "access": "public" },
   "engines": { "node": ">=20" },
   "peerDependencies": { "@dalgo/core": "^0.2.0" },
+  "dependencies": { "@dalgo/sqlite-sql": "workspace:^" },
   "devDependencies": {
     "@dalgo/core": "^0.2.0",
     "@types/node": "26.6.2",
