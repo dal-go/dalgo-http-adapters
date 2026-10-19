@@ -12,6 +12,7 @@ export interface OpenOptions {
 type Operation =
   | { readonly op: "get"; readonly table: string; readonly id: number }
   | { readonly op: "update"; readonly table: string; readonly id: number; readonly data: Record<string, unknown> }
+  | { readonly op: "insert"; readonly table: string; readonly id: number; readonly data: Record<string, unknown> }
   | { readonly op: "delete"; readonly table: string; readonly id: number }
   | { readonly op: "count"; readonly table: string };
 
@@ -24,6 +25,9 @@ async function handle(payload: unknown, { database }: LeaderContext): Promise<un
     }
     case "update":
       await database.runReadwriteTransaction((tx) => tx.update(new Key(operation.table, operation.id), operation.data));
+      return true;
+    case "insert":
+      await database.runReadwriteTransaction((tx) => tx.insert(new Key(operation.table, operation.id), operation.data));
       return true;
     case "delete":
       await database.runReadwriteTransaction((tx) => tx.delete(new Key(operation.table, operation.id)));
@@ -171,6 +175,7 @@ const harness = {
     }
   },
   async reset(): Promise<unknown> { return current().reset(); },
+  export: (): Promise<Uint8Array> => current().export(),
   /** Firefox asks the user before granting persistence, so an unanswered prompt reads as "pending". */
   persistence: async (): Promise<string | undefined> => {
     const result = current().persistence();

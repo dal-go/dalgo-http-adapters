@@ -127,19 +127,17 @@ export class FakePool implements DatasetPool, SahPoolUtilLike {
     // Like OPFS, another context sees the writes of a connection that is still open.
     const live = this.opened.get(name);
     const db = memoryDb(live === undefined ? this.files.get(name) : exportDb(live));
-    const wrapper: ClosableOo1Db = {
-      exec: (options) => db.exec(options),
-      changes: () => db.changes(),
-      close: () => {
-        if (this.opened.get(name) === db) {
-          this.files.set(name, exportDb(db));
-          this.opened.delete(name);
-        }
-        db.close();
-      },
+    // Keep the real oo1 identity/pointer for native serialization, while persisting on close.
+    const close = db.close.bind(db);
+    db.close = () => {
+      if (this.opened.get(name) === db) {
+        this.files.set(name, exportDb(db));
+        this.opened.delete(name);
+      }
+      close();
     };
     this.opened.set(name, db);
-    return wrapper;
+    return db;
   }
 
   public reserveMinimumCapacity(minCapacity: number): Promise<number> { return Promise.resolve(minCapacity); }
@@ -260,15 +258,17 @@ export class InProcessWorker implements WorkerLike {
   readonly #outbox = new EventTarget();
   public terminated = false;
   public readonly posted: unknown[] = [];
+  public readonly transferredBytes: number[] = [];
 
   public constructor(options: ServeDemoDbWorkerOptions) {
     serveDemoDbWorker({
       ...options,
       scope: {
         addEventListener: (type, listener) => { this.#inbox.addEventListener(type, listener as EventListener); },
-        postMessage: (message) => {
+        postMessage: (message, transfer) => {
           if (this.terminated) return;
-          const data = structuredClone(message);
+          if (transfer) for (const buffer of transfer) this.transferredBytes.push((buffer as ArrayBuffer).byteLength);
+          const data = transfer === undefined ? structuredClone(message) : structuredClone(message, { transfer });
           setTimeout(() => { if (!this.terminated) this.#outbox.dispatchEvent(new MessageEvent("message", { data })); }, 0);
         },
       },

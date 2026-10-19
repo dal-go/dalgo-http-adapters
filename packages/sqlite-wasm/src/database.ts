@@ -19,6 +19,7 @@ import { compileSqlQuery, quoteIdentifier, sqlValue, type SqlDialect, type SqlTa
 import type { SqliteBindValue, SqliteDriver } from "./driver.js";
 import { mapSqliteError } from "./errors.js";
 import { readSqliteSchema, type SqliteSchema, type SqliteTableSchema } from "./schema.js";
+import type { SqliteExportOptions } from "./export.js";
 
 /**
  * Restores the database to its initial state. It may replace the connection
@@ -27,6 +28,8 @@ import { readSqliteSchema, type SqliteSchema, type SqliteTableSchema } from "./s
 export type SqliteResetHandler = (driver: SqliteDriver) => SqliteDriver | undefined | Promise<SqliteDriver | undefined>;
 
 export interface SqliteDatabaseOptions {
+  /** Serializes the current connection as SQLite bytes, invoked after queued transactions complete. */
+  readonly onExport?: (options: SqliteExportOptions) => Promise<Uint8Array>;
   /** Allow insert, set and update. Default `true`. */
   readonly write?: boolean;
   /** Allow delete. Default: the `write` value. Requires `write`. */
@@ -257,8 +260,10 @@ export class SqliteDatabase implements Database, CapabilityAware {
   readonly #engine: Engine;
   readonly #capabilities: DatabaseCapabilities;
   #queue: Promise<unknown> = Promise.resolve();
+  readonly #onExport: SqliteDatabaseOptions["onExport"];
 
   public constructor(driver: SqliteDriver, options: SqliteDatabaseOptions = {}) {
+    this.#onExport = options.onExport;
     const write = options.write ?? true;
     const remove = options.delete ?? write;
     if (remove && !write) throw new TypeError("SQLite delete capability requires write");
@@ -276,6 +281,13 @@ export class SqliteDatabase implements Database, CapabilityAware {
   }
 
   public capabilities(): DatabaseCapabilities { return this.#capabilities; }
+
+  /** Snapshots committed data after earlier queued work; unavailable without an export provider. */
+  public export(options: SqliteExportOptions = {}): Promise<Uint8Array> {
+    return this.exclusive(() => this.#onExport === undefined
+      ? Promise.reject(new Error("This SQLite connection does not provide database export."))
+      : this.#onExport(options));
+  }
 
   /** The database's tables, columns with declared types, primary keys and foreign keys. Cached until `reset()`. */
   public schema(): Promise<SqliteSchema> { return this.exclusive(() => this.#engine.schema()); }

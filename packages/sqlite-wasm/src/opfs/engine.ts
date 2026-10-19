@@ -1,4 +1,5 @@
 import type { SqliteBindValue, SqliteExecResult } from "../driver.js";
+import { SqliteExportError, sqliteExportLimit, type SqliteExportOptions } from "../export.js";
 import {
   fetchCanonical,
   openCanonical,
@@ -231,6 +232,21 @@ export class DemoDbEngine {
   /** Runs one statement on the open connection. */
   public async exec(sql: string, binds?: readonly SqliteBindValue[]): Promise<SqliteExecResult> {
     return this.#open().current.driver.exec(sql, binds);
+  }
+
+  /** Serializes the active connection, never the pristine file or a fresh download. */
+  public async export(options: SqliteExportOptions = {}): Promise<Uint8Array> {
+    const maximum = sqliteExportLimit(options);
+    const { current } = this.#open();
+    const pages = Number((await current.driver.exec("PRAGMA page_count")).rows[0]?.page_count);
+    const pageSize = Number((await current.driver.exec("PRAGMA page_size")).rows[0]?.page_size);
+    const bytesNeeded = pages * pageSize;
+    if (!Number.isSafeInteger(bytesNeeded) || bytesNeeded < 1 || bytesNeeded > maximum)
+      throw new SqliteExportError("sqlite_export_too_large", `This SQLite database exceeds the export limit of ${String(maximum)} bytes. Export a smaller database or reduce its size before trying again.`);
+    const bytes = this.#sqlite3.capi.sqlite3_js_db_export(current.db);
+    if (bytes.byteLength > maximum)
+      throw new SqliteExportError("sqlite_export_too_large", `The SQLite snapshot exceeds the export limit of ${String(maximum)} bytes. Reduce its size before trying again.`);
+    return bytes;
   }
 
   /**

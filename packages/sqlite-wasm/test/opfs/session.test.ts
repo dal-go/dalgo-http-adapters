@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Key } from "@dalgo/core";
+import { fromOo1Db } from "../../src/oo1.js";
 import type { Sqlite3Like } from "../../src/opfs/engine.js";
 import { LeaderChangedError } from "../../src/opfs/tab-bridge.js";
 import { PoolUnavailableError, canonicalPath, workingPath, type DemoDbProgressEvent } from "../../src/opfs/index.js";
 import { DemoDbConfigError, DemoDbSession, openDemoDb, type DemoDbEvent, type DemoDbHandlers, type LeaderContext, type OpenDemoDbOptions } from "../../src/opfs/index.js";
-import { ChannelHub, FakeLocks, FakePool, InProcessWorker, emptyDirectory, pinFor, sampleBytes, serve, settle, sqliteLike } from "./helpers.js";
+import { ChannelHub, FakeLocks, FakePool, InProcessWorker, emptyDirectory, memoryDb, pinFor, sampleBytes, serve, settle, sqliteLike } from "./helpers.js";
 
 const sample = sampleBytes();
 const pin = pinFor(sample);
@@ -69,6 +70,64 @@ function pageEvent(type: string, persisted: boolean): Event {
 }
 
 describe("DemoDbSession", () => {
+  it("exports committed edits from a follower without consumer request handlers and preserves size errors", async () => {
+    const origin = new Origin();
+    const leader = origin.tab({ serve: {} }).session;
+    await leader.ready();
+    const follower = origin.tab({ serve: {} }).session;
+    await follower.ready();
+    const currentDatabase = leader.database;
+    if (currentDatabase === undefined) throw new Error("leader database missing");
+    await currentDatabase.runReadwriteTransaction(async (tx) => {
+      await tx.update(new Key("Artist", 1), { Name: "Downloaded edit" });
+      await tx.delete(new Key("Artist", 3));
+    });
+    await expect(follower.export({ maxBytes: sample.length - 1 })).rejects.toMatchObject({ code: "sqlite_export_too_large", message: expect.stringContaining("smaller database") as unknown });
+    const bytes = await follower.export();
+    const database = memoryDb(bytes);
+    try {
+      const driver = fromOo1Db(database);
+      expect((await driver.exec("PRAGMA integrity_check")).rows).toEqual([{ integrity_check: "ok" }]);
+      expect((await driver.exec("SELECT ArtistId, Name FROM Artist ORDER BY ArtistId")).rows).toEqual([{ ArtistId: 1, Name: "Downloaded edit" }, { ArtistId: 2, Name: "Accept" }]);
+      expect(origin.fetchFn.calls).toEqual([pin.url]);
+    } finally {
+      database.close();
+      follower.close();
+      leader.close();
+    }
+  });
+
+  it.each([false, true])("rejects pending export on leader loss (follower=%s), with actionable busy and retry errors", async (remote) => {
+    const origin = new Origin();
+    const leader = origin.tab().session;
+    await leader.ready();
+    const follower = origin.tab().session;
+    await follower.ready();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const entered = new Promise<void>((resolve) => { reached = resolve; });
+    const currentDatabase = leader.database;
+    if (currentDatabase === undefined) throw new Error("leader database missing");
+    const transaction = currentDatabase.runReadwriteTransaction(async (tx) => {
+      await tx.update(new Key("Artist", 1), { Name: "Uncommitted" });
+      reached();
+      await blocked;
+    }).catch((error: unknown) => error);
+    await entered;
+    const requester = remote ? follower : leader;
+    const pending = requester.export().catch((error: unknown) => error);
+    await settle();
+    await expect(follower.export()).rejects.toMatchObject({ code: "sqlite_export_busy", message: expect.stringContaining("Wait for it to finish") as unknown });
+    leader.close();
+    expect(await pending).toMatchObject({ code: "leader_changed", retriable: true, message: expect.stringContaining("retry") as unknown });
+    release();
+    await transaction;
+    await settle();
+    follower.close();
+    await expect(requester.export()).rejects.toMatchObject({ code: "leader_changed", message: expect.stringContaining("closed") as unknown });
+  });
+
   it("leads alone: opens the dataset, serves requests, ports and reset", async () => {
     const origin = new Origin();
     const { session, events } = origin.tab({ tabId: "solo" });

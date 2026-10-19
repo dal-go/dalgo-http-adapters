@@ -1,6 +1,7 @@
 import type { Resettable } from "@dalgo/core";
 import { createSqliteDatabase, type SqliteDatabase } from "../database.js";
 import type { SqliteDriver, SqliteExecResult } from "../driver.js";
+import { SqliteExportError, sqliteExportLimit, type SqliteExportOptions } from "../export.js";
 import type { CanonicalPin } from "./canonical.js";
 import type { OpenOptions, OpenReport } from "./engine.js";
 import type { DemoDbProgressListener } from "./progress.js";
@@ -94,6 +95,8 @@ export interface LeaderDatabase {
   readonly report: OpenReport;
   /** Resets the dataset and reports the restored canonical version. */
   reset(): Promise<ResetResult>;
+  /** A bounded snapshot of committed edits; concurrent exports fail with sqlite_export_busy. */
+  export(options?: SqliteExportOptions): Promise<Uint8Array>;
   /** Settles after the first write transaction asked for persistent storage; undefined before it. */
   persistence(): Promise<PersistenceResult> | undefined;
 }
@@ -139,14 +142,27 @@ export async function openLeaderDatabase(client: WorkerClient, pin: CanonicalPin
   let lastReset: ResetResult = { canonical: report.canonical };
   const database = createSqliteDatabase(driver, {
     persistent: report.persistent,
+    onExport: (exportOptions) => client.call("export", { options: exportOptions }) as Promise<Uint8Array>,
     onReset: async () => {
       lastReset = await client.call("reset", progress, onProgress) as ResetResult;
       return undefined;
     },
   });
+  let exporting = false;
   return {
     database,
     report,
+    export: async (exportOptions = {}) => {
+      const maxBytes = sqliteExportLimit(exportOptions);
+      if (exporting)
+        throw new SqliteExportError("sqlite_export_busy", "A SQLite export is already in progress. Wait for it to finish, then try again.");
+      exporting = true;
+      try {
+        return await database.export({ maxBytes });
+      } finally {
+        exporting = false;
+      }
+    },
     reset: async () => {
       await database.reset();
       return lastReset;

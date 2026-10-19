@@ -10,7 +10,7 @@ export type { DemoDbProgressEvent, DemoDbProgressListener, DemoDbProgressPhase, 
 /** The worker global the server listens on (`self` in a dedicated worker). */
 export interface WorkerScopeLike {
   addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
-  postMessage(message: unknown): void;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
 }
 
 export interface ServeDemoDbWorkerOptions extends EngineOptions {
@@ -44,7 +44,7 @@ function isRequest(data: unknown): data is WorkerRequest {
  * messages (throttled) before its result.
  */
 export function serveDemoDbWorker(options: ServeDemoDbWorkerOptions = {}): void {
-  const scope: WorkerScopeLike = options.scope ?? globalThis;
+  const scope: WorkerScopeLike = options.scope ?? globalThis as unknown as WorkerScopeLike;
   let engine: Promise<DemoDbEngine> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
   const getEngine = (): Promise<DemoDbEngine> => {
@@ -60,6 +60,7 @@ export function serveDemoDbWorker(options: ServeDemoDbWorkerOptions = {}): void 
     switch (request.op) {
       case "open": return current.open(request.pin, request.options, progressOf(request));
       case "exec": return current.exec(request.sql, request.binds);
+      case "export": return current.export(request.options);
       case "reset": return current.reset(progressOf(request));
       case "close": current.close(); return undefined;
     }
@@ -74,7 +75,8 @@ export function serveDemoDbWorker(options: ServeDemoDbWorkerOptions = {}): void 
       } catch (error) {
         response = { id: request.id, ok: false, error: serializeError(error) };
       }
-      scope.postMessage(response);
+      // The native serializer owns this buffer; transfer it instead of copying a large snapshot.
+      scope.postMessage(response, request.op === "export" && response.ok ? [(response.value as Uint8Array).buffer as ArrayBuffer] : []);
     });
   });
 }
