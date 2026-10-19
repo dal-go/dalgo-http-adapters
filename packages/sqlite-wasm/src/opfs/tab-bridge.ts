@@ -1,4 +1,5 @@
 import { reviveError, serializeError, type SerializedError } from "./protocol.js";
+import type { SqliteExportOptions } from "../export.js";
 
 /** The part of `BroadcastChannel` the bridge uses. */
 export interface BroadcastChannelLike {
@@ -84,6 +85,8 @@ export interface BridgeHost {
   request(payload: unknown): Promise<unknown>;
   /** Resets the dataset. */
   reset(): Promise<unknown>;
+  /** Optional for existing custom hosts; DemoDbSession always supplies it. */
+  export?(options: SqliteExportOptions): Promise<Uint8Array>;
   /** Serves one connected port; returns a function that stops serving. */
   port(port: BridgePort): (() => void) | undefined;
 }
@@ -110,7 +113,7 @@ type Envelope = { readonly ns: typeof ns; readonly from: string } & (
   | { readonly k: "hello" }
   | { readonly k: "leader"; readonly info: unknown }
   | { readonly k: "bye" }
-  | { readonly k: "req"; readonly to: string; readonly id: number; readonly op: "request" | "reset"; readonly payload?: unknown }
+  | { readonly k: "req"; readonly to: string; readonly id: number; readonly op: "request" | "reset" | "export"; readonly payload?: unknown }
   | ({ readonly k: "res"; readonly to: string; readonly id: number } & ({ readonly ok: true; readonly payload: unknown } | { readonly ok: false; readonly error: SerializedError }))
   | { readonly k: "port"; readonly to: string; readonly port: number; readonly data: unknown }
   | { readonly k: "port-close"; readonly to: string; readonly port: number }
@@ -152,7 +155,7 @@ abstract class PortEvents {
 }
 
 interface Pending {
-  readonly op: "request" | "reset";
+  readonly op: "request" | "reset" | "export";
   readonly payload: unknown;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
@@ -247,6 +250,7 @@ export class TabBridge {
   readonly #served = new Map<string, ServedPort>();
   #leaderWaiters: ((leader: { readonly id: string; readonly info: unknown }) => void)[] = [];
   #closed = false;
+  #leaderGeneration = 0;
   /** Called when the known leader changes (undefined: none known). */
   public onLeaderChange: ((leader: { readonly id: string; readonly info: unknown; readonly local: boolean } | undefined) => void) | undefined;
   readonly #listener = (event: MessageEvent): void => { this.#receive(event.data); };
@@ -324,7 +328,12 @@ export class TabBridge {
   /** Asks the leader to reset the dataset. */
   public reset(): Promise<unknown> { return this.#call("reset", undefined); }
 
-  #call(op: "request" | "reset", payload: unknown): Promise<unknown> {
+  /** First-class binary export, independent of consumer request handlers. */
+  public export(options: SqliteExportOptions = {}): Promise<Uint8Array> {
+    return this.#call("export", options) as Promise<Uint8Array>;
+  }
+
+  #call(op: "request" | "reset" | "export", payload: unknown): Promise<unknown> {
     if (this.#closed) return Promise.reject(new LeaderChangedError("the dataset session was closed"));
     this.#nextId += 1;
     const id = this.#nextId;
@@ -342,13 +351,28 @@ export class TabBridge {
       this.#post({ k: "req", to: leader.id, id, op: pending.op, payload: pending.payload });
       return;
     }
-    this.#pending.delete(id);
-    this.#serve(pending.op, pending.payload).then(pending.resolve, pending.reject);
+    // Local requests need the same lifetime checks as follower requests.
+    const generation = this.#leaderGeneration;
+    this.#serve(pending.op, pending.payload).then(
+      (value) => {
+        if (generation !== this.#leaderGeneration || this.#pending.get(id) !== pending) return;
+        this.#pending.delete(id);
+        pending.resolve(value);
+      },
+      (error: unknown) => {
+        if (this.#pending.get(id) !== pending) return;
+        this.#pending.delete(id);
+        pending.reject(error as Error);
+      },
+    );
   }
 
-  #serve(op: "request" | "reset", payload: unknown): Promise<unknown> {
+  #serve(op: "request" | "reset" | "export", payload: unknown): Promise<unknown> {
     const host = this.#host;
     if (host === undefined) return Promise.reject(new LeaderChangedError());
+    if (op === "export") return host.export === undefined
+      ? Promise.reject(new Error("This dataset host does not provide SQLite export."))
+      : host.export(payload as SqliteExportOptions);
     return op === "reset" ? host.reset() : host.request(payload);
   }
 
@@ -418,6 +442,7 @@ export class TabBridge {
     const previous = this.#leader;
     this.#leader = leader;
     if (previous?.id !== leader?.id) {
+      this.#leaderGeneration += 1;
       // Requests sent to the previous leader can no longer be answered.
       for (const [id, pending] of this.#pending) {
         if (pending.sentTo === undefined) continue;
@@ -467,10 +492,11 @@ export class TabBridge {
     }
   }
 
-  #answer(from: string, id: number, op: "request" | "reset", payload: unknown): void {
+  #answer(from: string, id: number, op: "request" | "reset" | "export", payload: unknown): void {
+    const generation = this.#leaderGeneration;
     this.#serve(op, payload).then(
-      (result) => { this.#post({ k: "res", to: from, id, ok: true, payload: result }); },
-      (error: unknown) => { this.#post({ k: "res", to: from, id, ok: false, error: serializeError(error) }); },
+      (result) => { if (generation === this.#leaderGeneration) this.#post({ k: "res", to: from, id, ok: true, payload: result }); },
+      (error: unknown) => { if (generation === this.#leaderGeneration) this.#post({ k: "res", to: from, id, ok: false, error: serializeError(error) }); },
     );
   }
 

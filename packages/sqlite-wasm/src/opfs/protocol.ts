@@ -1,4 +1,5 @@
 import type { SqliteBindValue } from "../driver.js";
+import type { SqliteExportOptions } from "../export.js";
 import { CanonicalFetchError, CanonicalIntegrityError, CorruptDatabaseError, DatasetStorageError, type CanonicalPin } from "./canonical.js";
 import { DemoDbConfigError } from "./config-error.js";
 import type { OpenOptions } from "./engine.js";
@@ -9,6 +10,7 @@ import type { DemoDbProgressEvent } from "./progress.js";
 export type WorkerRequest = { readonly id: number } & (
   | { readonly op: "open"; readonly pin: CanonicalPin; readonly options?: OpenOptions; readonly progress?: boolean }
   | { readonly op: "exec"; readonly sql: string; readonly binds?: readonly SqliteBindValue[] }
+  | { readonly op: "export"; readonly options?: SqliteExportOptions }
   | { readonly op: "reset"; readonly progress?: boolean }
   | { readonly op: "close" }
 );

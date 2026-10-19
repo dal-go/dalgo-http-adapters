@@ -1,4 +1,6 @@
 export { SqliteDatabase, createSqliteDatabase } from "./database.js";
+export { MAX_SQLITE_EXPORT_BYTES, SqliteExportError } from "./export.js";
+export type { SqliteExportOptions } from "./export.js";
 export type { SqliteDatabaseOptions, SqliteResetHandler } from "./database.js";
 export { enableForeignKeys } from "./driver.js";
 export type { SqliteBindValue, SqliteDriver, SqliteExecResult } from "./driver.js";

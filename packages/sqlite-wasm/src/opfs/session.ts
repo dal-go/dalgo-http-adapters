@@ -1,5 +1,6 @@
 import type { Resettable } from "@dalgo/core";
 import type { SqliteDatabase } from "../database.js";
+import type { SqliteExportOptions } from "../export.js";
 import { validatePin, type CanonicalPin, type StoragePolicy } from "./canonical.js";
 import { WorkerClient, openLeaderDatabase, type LeaderDatabase, type PersistenceResult, type RequestPersistence, type WorkerLike } from "./client.js";
 import { DemoDbConfigError } from "./config-error.js";
@@ -208,6 +209,9 @@ export class DemoDbSession {
   /** Resets the dataset to its pristine copy (in the leader tab). */
   public async reset(): Promise<ResetResult> { return await this.#bridge.reset() as ResetResult; }
 
+  /** Downloads committed edits from the current leader; losing that leader rejects this export. */
+  public export(options: SqliteExportOptions = {}): Promise<Uint8Array> { return this.#bridge.export(options); }
+
   /** A `MessagePort`-shaped endpoint served by the leader's `serve.port` handler. */
   public connect(protocol?: PortProtocol): BridgePort { return this.#bridge.connect(protocol); }
 
@@ -265,6 +269,7 @@ export class DemoDbSession {
         ? Promise.reject(new Error("this dataset session serves no requests"))
         : handlers.request(payload, context),
       reset: () => opened.reset(),
+      export: (options) => opened.export(options),
       port: (port) => handlers.port?.(port, context),
     }, opened.report);
   }

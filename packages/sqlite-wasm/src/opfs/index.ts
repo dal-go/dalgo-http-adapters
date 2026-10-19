@@ -29,3 +29,5 @@ export { DemoDbConfigError, DemoDbSession, openDemoDb } from "./session.js";
 export type { DemoDbEvent, DemoDbHandlers, DemoDbRole, LeaderContext, LifecycleTarget, OpenDemoDbOptions } from "./session.js";
 export { LeaderChangedError, RemoteRequestError, TabBridge } from "./tab-bridge.js";
 export type { BridgeHost, BridgePort, BridgePortEventMap, BroadcastChannelLike, PortProtocol } from "./tab-bridge.js";
+export { MAX_SQLITE_EXPORT_BYTES, SqliteExportError } from "../export.js";
+export type { SqliteExportOptions } from "../export.js";

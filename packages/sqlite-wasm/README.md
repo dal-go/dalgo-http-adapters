@@ -218,6 +218,42 @@ const artist = await session.request(1);
 await session.reset(); // back to the pristine dataset: { canonical: { sha256 } }
 ```
 
+### Downloading the current database
+
+`await session.export()` returns an independent `Uint8Array` containing the current
+SQLite working copy, including committed edits, inserts and deletions. It works
+from the leader or a follower tab, in OPFS and memory modes. It never downloads
+the canonical file or reads the pristine copy.
+
+```ts
+const bytes = await session.export();
+const file = new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/vnd.sqlite3" });
+// Offer this Blob as a download, then release the object URL after use.
+```
+
+Export waits for complete queued transactions, including commit or rollback,
+without requesting persistent storage. Its default and hard maximum is 256 MiB;
+`session.export({ maxBytes })` may choose a smaller positive integer limit. The
+worker checks the SQLite page count and page size before allocating a snapshot,
+and transfers the result buffer to the leader. A follower receives a bounded
+binary copy over BroadcastChannel; no base64 or JSON representation is created.
+
+Only one export may be in progress per leader. Consumer-visible errors retain
+their `code` and message across the worker and tab bridges:
+
+| Code | Recovery |
+| --- | --- |
+| `sqlite_export_too_large` | Export a smaller database or reduce its size. |
+| `sqlite_export_busy` | Wait for the current export to finish, then retry. |
+| `leader_changed` | Retry after the dataset has a current leader. |
+| `worker_unavailable` | Retry after the worker has reopened the dataset. |
+
+A pending export rejects when its leader steps down, crashes, or closes; a late
+response from that leader cannot become a successful download. The root package
+also exposes `SqliteDatabase.export()` for providers that supply an `onExport`
+callback. Custom callbacks must return owned bytes and respect the supplied
+limit; a database without that callback rejects export explicitly.
+
 ### Pins and storage
 
 A pin names the pristine file: `{ dataset, url, sha256, bytes }`, where
