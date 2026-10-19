@@ -49,6 +49,34 @@ function tabs(): { readonly hub: ChannelHub; readonly bridges: readonly [TabBrid
 }
 
 describe("TabBridge requests", () => {
+  it("keeps local export pending until completion and suppresses late answers after leader change", async () => {
+    const { hub, bridges: [leader, follower] } = tabs();
+    let release!: (value: Uint8Array) => void;
+    const delayed = new Promise<Uint8Array>((resolve) => { release = resolve; });
+    leader.becomeLeader({ ...echoHost(), export: () => delayed }, null);
+    await follower.whenLeader();
+    const local = leader.export().catch((error: unknown) => error);
+    const remote = follower.export().catch((error: unknown) => error);
+    await settle();
+    leader.stepDown();
+    expect(await local).toBeInstanceOf(LeaderChangedError);
+    expect(await remote).toBeInstanceOf(LeaderChangedError);
+    leader.becomeLeader({ ...echoHost(), export: () => Promise.resolve(new Uint8Array([2])) }, null);
+    release(new Uint8Array([1]));
+    await settle();
+    expect(hub.log.some((message) => (message as { k: string }).k === "res")).toBe(false);
+    expect(await leader.export()).toEqual(new Uint8Array([2]));
+    leader.close();
+    follower.close();
+  });
+
+  it("keeps old hosts compatible and rejects exports they cannot serve", async () => {
+    const { bridges: [leader] } = tabs();
+    leader.becomeLeader(echoHost(), null);
+    await expect(leader.export()).rejects.toThrow("does not provide SQLite export");
+    leader.close();
+  });
+
   it("queues requests until a leader is known, then answers them", async () => {
     const { bridges: [leader, follower] } = tabs();
     const changes: unknown[] = [];

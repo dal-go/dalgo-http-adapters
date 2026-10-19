@@ -1,4 +1,5 @@
 import { test as base, expect, type BrowserContext, type Page } from "@playwright/test";
+import { DatabaseSync } from "node:sqlite";
 import type { CanonicalPin, DemoDbProgressEvent, OpenReport } from "../../src/opfs/index.js";
 import type { OpenOptions } from "./fixtures/page.js";
 
@@ -21,6 +22,7 @@ interface Harness {
   stuckPool(pin: CanonicalPin, memoryWhenLocked: boolean): Promise<unknown>;
   lockedPool(pin: CanonicalPin, holdMs: number): Promise<{ readonly report: OpenReport; readonly name: unknown; readonly waitedMs: number }>;
   reset(): Promise<unknown>;
+  export(): Promise<Uint8Array>;
   persistence(): Promise<string | undefined>;
   close(): void;
 }
@@ -92,6 +94,47 @@ function request(page: Page, payload: unknown, retrying = false): Promise<unknow
 
 const artist = (id: number) => ({ op: "get", table: "Artist", id });
 const rename = (id: number, name: string) => ({ op: "update", table: "Artist", id, data: { Name: name } });
+
+for (const noOpfs of [false, true]) {
+  test(`exports a follower's current ${noOpfs ? "memory" : "OPFS"} copy as a valid edited SQLite download`, async ({ page, context }, testInfo) => {
+    const pins = await load(page);
+    expect((await open(page, pins.chinook, noOpfs)).persistent).toBe(!noOpfs);
+    const follower = await context.newPage();
+    await load(follower);
+    await open(follower, pins.chinook, noOpfs);
+    expect(await follower.evaluate(() => harness.role())).toBe("follower");
+    await request(follower, rename(1, "Exported current edit"));
+    await request(follower, { op: "insert", table: "Artist", id: 9001, data: { Name: "Deleted before export" } });
+    await request(follower, { op: "delete", table: "Artist", id: 9001 });
+    await request(follower, { op: "insert", table: "Artist", id: 9002, data: { Name: "Inserted before export" } });
+    const before = await downloads(page, "/data/chinook.sqlite");
+    const downloading = follower.waitForEvent("download");
+    const objectURL = await follower.evaluate(async () => {
+      const bytes = await harness.export();
+      const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/vnd.sqlite3" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "chinook-browser.sqlite";
+      link.click();
+      return url;
+    });
+    const download = await downloading;
+    expect(download.suggestedFilename()).toBe("chinook-browser.sqlite");
+    const path = testInfo.outputPath("chinook-browser.sqlite");
+    await download.saveAs(path);
+    await follower.evaluate((url) => { URL.revokeObjectURL(url); }, objectURL);
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      expect(database.prepare("PRAGMA integrity_check").all().map((row) => row.integrity_check)).toEqual(["ok"]);
+      expect(database.prepare("SELECT Name FROM Artist WHERE ArtistId = 1").get()?.Name).toBe("Exported current edit");
+      expect(database.prepare("SELECT Name FROM Artist WHERE ArtistId = 9001").get()).toBeUndefined();
+      expect(database.prepare("SELECT Name FROM Artist WHERE ArtistId = 9002").get()?.Name).toBe("Inserted before export");
+    } finally {
+      database.close();
+    }
+    expect(await downloads(page, "/data/chinook.sqlite")).toBe(before);
+  });
+}
 
 test("an ephemeral (private-like) context: OPFS where the browser allows it, memory otherwise", async ({ browser, browserName, baseURL }) => {
   const context: BrowserContext = await browser.newContext(baseURL === undefined ? {} : { baseURL });
