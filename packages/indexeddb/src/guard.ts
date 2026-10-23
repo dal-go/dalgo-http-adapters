@@ -6,7 +6,7 @@ const filterKeys = new Set(["field", "operator", "value"]);
 const orderKeys = new Set(["field", "direction"]);
 
 export function assertLeafQuery(value: unknown): void {
-  const reject = (): never => { throw new UnsupportedError("recursive DTQL requires the core recursive executor"); };
+  const reject = (): never => { throw new UnsupportedError("recursive TugQL requires the core recursive executor"); };
   if (typeof value !== "object" || value === null) reject();
   const query = value as Record<string, unknown>;
   if (Object.keys(query).some((key) => !queryKeys.has(key))) reject();

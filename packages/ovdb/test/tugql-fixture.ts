@@ -1,5 +1,5 @@
 import { providerEvidenceDigest, type ProviderReadBinding, type ProviderReadPlan, type QueryMetadata, type SourceRight } from "@dalgo/core";
-import { type OpenVaultDbDTQLPlanConfiguration } from "../src/dtql/index.js";
+import { type OpenVaultDbTugQLPlanConfiguration } from "../src/tugql/index.js";
 
 // Immutable declaration metadata from Cloud's reviewed publisher fixture.
 // Observations and rows below are authored synthetic values; no upstream content.
@@ -52,7 +52,7 @@ const expected: { binding: ProviderReadBinding; right: SourceRight } = {
     ]
   }
 };
-export async function fixture(executionId = "0123456789abcdef0123456789abcdef"): Promise<{ config: OpenVaultDbDTQLPlanConfiguration; plan: ProviderReadPlan; metadata: QueryMetadata }> {
+export async function fixture(executionId = "0123456789abcdef0123456789abcdef"): Promise<{ config: OpenVaultDbTugQLPlanConfiguration; plan: ProviderReadPlan; metadata: QueryMetadata }> {
   const { binding, right } = structuredClone(expected);
   const execution = { id: executionId, mode: "proxy" as const, executorId: "openvaultdb-cloud" };
   const request = { resourceId: "ecb-daily", method: "GET" as const, upstreamUrl: "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml", params: {} };
@@ -65,13 +65,13 @@ export async function fixture(executionId = "0123456789abcdef0123456789abcdef"):
     format: "ovdb-provider-read/1" as const, execution, bindings: [binding], reads: [read],
     usage: [{ providerSourceId: binding.providerSourceId, rightsSourceId: binding.rightsSourceId, observationIds: [read.observationId] }],
   } };
-  const config: OpenVaultDbDTQLPlanConfiguration = { endpoint: "https://worker.example/ecb-public/v1/databases/ecb/dtql",
+  const config: OpenVaultDbTugQLPlanConfiguration = { endpoint: "https://worker.example/ecb-public/v1/databases/ecb/tugql",
     expectedServerId: "openvaultdb-cloud", databaseId: "ecb", collectionName: "daily", requestProfile: "ecb-public-free/1",
     origin: "https://directory.example", sourceRight: right,
     admission: { format: "ovdb-ecb-public-free-admission/1", decision: "public-free-transient-read-only", approvedBy: "synthetic fixture",
       approvedAt: new Date(Date.now() - 1000).toISOString(), expiresAt: new Date(Date.now() + 86400_000).toISOString(), costOwner: "synthetic fixture",
       hostConfigSHA256: "a".repeat(64), publisherManifestSHA256: binding.definitionDigest, decoderModuleVersion: "v0.4.0", decoderSHA256: binding.decoderDigest,
-      rightsDigest: binding.rightsDigest, requestProfile: "ecb-public-free/1", workerPath: "/ecb-public/v1/databases/ecb/dtql", goPath: "/v1/databases/ecb/dtql",
+      rightsDigest: binding.rightsDigest, requestProfile: "ecb-public-free/1", workerPath: "/ecb-public/v1/databases/ecb/tugql", goPath: "/v1/databases/ecb/tugql",
       directoryOrigin: "https://directory.example", backendOrigin: "https://synthetic.run.app", audience: "public-free", paidAccess: false,
       maxReads: 1, maxRows: 50, maxConcurrent: 1, executionsPerMinute: 6 },
   };

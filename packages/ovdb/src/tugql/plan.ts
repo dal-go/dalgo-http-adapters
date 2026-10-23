@@ -6,7 +6,7 @@ import { assertOpenVaultDbExecutionId, assertOpenVaultDbExecutionBudget, raceOpe
 
 import { nativeCalendarDate } from "./wire.js";
 
-const PATH = "/ecb-public/v1/databases/ecb/dtql";
+const PATH = "/ecb-public/v1/databases/ecb/tugql";
 const RESOURCE = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml";
 const DEFINITION = "399ce77bc4513b1a819f61e26a54fe8e6c46569b2b45ea078582d9ad6758697e";
 const DECODER = "20477d567705fe7cf8115caf696848b9ea1db2e1a165b977a4f54bd610955b49";
@@ -27,7 +27,7 @@ export interface OpenVaultDbPublicAdmission {
   readonly rightsDigest: string;
   readonly requestProfile: "ecb-public-free/1";
   readonly workerPath: typeof PATH;
-  readonly goPath: "/v1/databases/ecb/dtql";
+  readonly goPath: "/v1/databases/ecb/tugql";
   readonly directoryOrigin: string;
   readonly backendOrigin: string;
   readonly audience: "public-free";
@@ -37,7 +37,7 @@ export interface OpenVaultDbPublicAdmission {
   readonly maxConcurrent: 1;
   readonly executionsPerMinute: 6;
 }
-export interface OpenVaultDbDTQLPlanConfiguration {
+export interface OpenVaultDbTugQLPlanConfiguration {
   readonly endpoint: string;
   readonly expectedServerId: "openvaultdb-cloud";
   readonly databaseId: "ecb";
@@ -50,13 +50,13 @@ export interface OpenVaultDbDTQLPlanConfiguration {
   readonly sourceRight: SourceRight;
 }
 const matches = (value: unknown, expected: unknown): boolean => value === expected;
-const refuse = (): never => { throw new TypeError("refused OpenVaultDB DTQL admission"); };
+const refuse = (): never => { throw new TypeError("refused OpenVaultDB TugQL admission"); };
 function httpsOrigin(raw: string): string {
   const url = new URL(raw);
   if (url.protocol !== "https:" || url.username || url.password || url.port || url.origin !== raw) refuse();
   return url.origin;
 }
-export function assertOpenVaultDbDTQLConfiguration(config: OpenVaultDbDTQLPlanConfiguration): void {
+export function assertOpenVaultDbTugQLConfiguration(config: OpenVaultDbTugQLPlanConfiguration): void {
   const endpoint = new URL(config.endpoint);
   if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.port
     || config.endpoint !== endpoint.origin + PATH) refuse();
@@ -70,7 +70,7 @@ export function assertOpenVaultDbDTQLConfiguration(config: OpenVaultDbDTQLPlanCo
     || !matches(a.format, "ovdb-ecb-public-free-admission/1") || !matches(a.decision, "public-free-transient-read-only")
     || a.publisherManifestSHA256 !== DEFINITION || a.decoderSHA256 !== DECODER || a.rightsDigest !== RIGHTS
     || !matches(a.decoderModuleVersion, "v0.4.0") || !matches(a.requestProfile, "ecb-public-free/1")
-    || !matches(a.workerPath, PATH) || !matches(a.goPath, "/v1/databases/ecb/dtql") || !matches(a.audience, "public-free")
+    || !matches(a.workerPath, PATH) || !matches(a.goPath, "/v1/databases/ecb/tugql") || !matches(a.audience, "public-free")
     || !matches(a.paidAccess, false) || !matches(a.maxReads, 1) || !matches(a.maxRows, 50) || !matches(a.maxConcurrent, 1) || !matches(a.executionsPerMinute, 6)
     || !matches(config.expectedServerId, "openvaultdb-cloud") || !matches(config.databaseId, "ecb") || !matches(config.collectionName, "daily")
     || !matches(config.requestProfile, a.requestProfile) || httpsOrigin(config.origin) !== httpsOrigin(a.directoryOrigin)
@@ -78,13 +78,13 @@ export function assertOpenVaultDbDTQLConfiguration(config: OpenVaultDbDTQLPlanCo
     || (typeof location !== "undefined" && location.origin !== config.origin)) refuse();
 }
 /** Structural and immutable binding checks; the host owns authorization and artifact verification. */
-export async function validateOpenVaultDbDTQLPlan(
-  configuration: OpenVaultDbDTQLPlanConfiguration, plan: ProviderReadPlan, budget: OpenVaultDbExecutionBudget,
+export async function validateOpenVaultDbTugQLPlan(
+  configuration: OpenVaultDbTugQLPlanConfiguration, plan: ProviderReadPlan, budget: OpenVaultDbExecutionBudget,
 ): Promise<void> {
   const config = structuredClone(configuration), captured = structuredClone(plan);
   assertOpenVaultDbExecutionBudget(budget);
   try {
-    assertOpenVaultDbDTQLConfiguration(config);
+    assertOpenVaultDbTugQLConfiguration(config);
     assertOpenVaultDbExecutionId(budget, captured.execution.id);
     validateProviderReadPlan(captured);
     const binding = captured.bindings[0], request = captured.requests[0], right = captured.sourceRights[0];
@@ -98,7 +98,7 @@ export async function validateOpenVaultDbDTQLPlan(
       || right.source.serverId !== config.expectedServerId || right.source.databaseId !== config.databaseId || right.source.recordset !== config.collectionName
       || canonicalProviderEvidence(right) !== canonicalProviderEvidence(config.sourceRight)) refuse();
     await raceOpenVaultDbExecutionBudget(budget, validateSourceLeafAdmission({ kind: "provider-get", plan: captured }));
-    assertOpenVaultDbDTQLConfiguration(config);
+    assertOpenVaultDbTugQLConfiguration(config);
     assertOpenVaultDbExecutionBudget(budget);
   } catch {
     assertOpenVaultDbExecutionBudget(budget);
@@ -106,7 +106,7 @@ export async function validateOpenVaultDbDTQLPlan(
   }
 }
 /** Thin released-core evidence facade, with one native observation and the shared deadline. */
-export async function validateOpenVaultDbDTQLEvidence(
+export async function validateOpenVaultDbTugQLEvidence(
   metadata: QueryMetadata, plan: ProviderReadPlan, budget: OpenVaultDbExecutionBudget,
 ): Promise<QueryMetadata> {
   const captured = structuredClone(plan);
@@ -121,6 +121,6 @@ export async function validateOpenVaultDbDTQLEvidence(
     return result;
   } catch {
     assertOpenVaultDbExecutionBudget(budget);
-    throw new TypeError("refused OpenVaultDB DTQL evidence");
+    throw new TypeError("refused OpenVaultDB TugQL evidence");
   }
 }

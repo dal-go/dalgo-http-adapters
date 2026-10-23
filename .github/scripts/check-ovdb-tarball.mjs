@@ -36,7 +36,7 @@ for (const [path, pkg] of Object.entries(lock.packages)) {
 }
 const ovdbRoot = resolve(destination, 'node_modules/@dalgo/ovdb');
 const manifest = JSON.parse(readFileSync(resolve(ovdbRoot, 'package.json'), 'utf8'));
-assert.deepEqual(Object.keys(manifest.exports).sort(), ['.', './dtql']);
+assert.deepEqual(Object.keys(manifest.exports).sort(), ['.', './tugql']);
 for (const path of ['client', 'database', 'query', 'path', 'dist/index.js']) {
   run(process.execPath, ['--input-type=module', '-e', `try { await import('@dalgo/ovdb/${path}'); process.exit(1); } catch (e) { if(e.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw e; }`]);
 }
@@ -48,8 +48,8 @@ assert.ok(!manifest.private);
 assert.equal(manifest.peerDependencies['@dalgo/core'], '>=0.6.0 <0.7.0');
 assert.equal(readFileSync(resolve(ovdbRoot, 'LICENSE'), 'utf8').trimEnd(), readFileSync(resolve(repository, 'LICENSE'), 'utf8').trimEnd());
 mkdirSync(resolve(destination, 'test'));
-const fixtureSource = readFileSync(resolve(repository, 'packages/ovdb/test/dtql-fixture.ts'), 'utf8').replace('../src/dtql/index.js', '@dalgo/ovdb/dtql');
-writeFileSync(resolve(destination, 'test/dtql-fixture.ts'), fixtureSource);
+const fixtureSource = readFileSync(resolve(repository, 'packages/ovdb/test/tugql-fixture.ts'), 'utf8').replace('../src/tugql/index.js', '@dalgo/ovdb/tugql');
+writeFileSync(resolve(destination, 'test/tugql-fixture.ts'), fixtureSource);
 cpSync(resolve(repository, 'packages/ovdb/test/browser-fixture.ts'), resolve(destination, 'test/browser-fixture.ts'));
 writeFileSync(resolve(destination, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', lib: ['ES2022', 'DOM'], strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, skipLibCheck: false, rootDir: 'test', outDir: 'fixture' }, include: ['test/browser-fixture.ts'] }));
 cpSync(resolve(repository, '.github/scripts/ovdb-runtime-smoke.mjs'), resolve(destination, 'runtime-smoke.mjs'));

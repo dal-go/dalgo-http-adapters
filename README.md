@@ -195,7 +195,7 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dalgo/firestore`](packages/firestore) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
 | [`@dalgo/indexeddb`](packages/indexeddb) | Implemented local browser adapter. |
 | [`@dalgo/http`](packages/http) | ECB daily XML query slice with detached rights/read evidence, reviewed synthetic validation and registry-only release gates; npm publication and live CORS/rights admission remain separate. |
-| [`@dalgo/ovdb`](packages/ovdb) | Bounded query-only OpenVaultDB DTQL adapter; public activation requires separate admission. |
+| [`@dalgo/ovdb`](packages/ovdb) | Bounded query-only OpenVaultDB TugQL adapter; public activation requires separate admission. |
 | [`@dal-go/dalgo2snowflake`](packages/snowflake) | Implemented read/query SQL API adapter; writes and DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2databricks`](packages/databricks) | Implemented read/query Statement Execution API adapter with complete inline chunk validation; writes and DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) | Implemented HTTP document CRUD/query adapter; DALgo callback transactions remain explicitly unsupported. |

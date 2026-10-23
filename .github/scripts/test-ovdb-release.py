@@ -14,9 +14,9 @@ with tempfile.TemporaryDirectory(prefix='ovdb-artifact-guards-') as directory:
     package.mkdir(parents=True)
     manifest = json.loads((repo/'packages/ovdb/package.json').read_text())
     manifest['gitHead'] = 'a'*40
-    (package/'dist-dtql').mkdir()
-    (package/'dist-dtql/index.js').write_text('export const fixture = true;')
-    (package/'dist-dtql/index.d.ts').write_text('export declare const fixture: boolean;')
+    (package/'dist-tugql').mkdir()
+    (package/'dist-tugql/index.js').write_text('export const fixture = true;')
+    (package/'dist-tugql/index.d.ts').write_text('export declare const fixture: boolean;')
     for name in ['README.md', 'LICENSE']:
         shutil.copyfile(repo/'packages/ovdb'/name, package/name)
     env = dict(os.environ, NPM_CONFIG_CACHE=str(root/'npm-cache'))
@@ -30,14 +30,14 @@ with tempfile.TemporaryDirectory(prefix='ovdb-artifact-guards-') as directory:
         if case == 'core_dependency': changed['dependencies']['@dalgo/core'] = '^0.6.0'
         if case == 'core_optional_peer': changed['peerDependenciesMeta'] = {'@dalgo/core': {'optional': True}}
         if case == 'wrong_name': changed['name'] = '@dal-go/dalgo2ovdb'
-        if case == 'legacy_output': (package/'dist-dtql/legacy.js').write_text('export class OpenVaultDbClient {}')
+        if case == 'legacy_output': (package/'dist-tugql/legacy.js').write_text('export class OpenVaultDbClient {}')
         if case == 'extra_export': changed['exports']['./legacy'] = changed['exports']['.']
         (package/'package.json').write_text(json.dumps(changed))
         if case == 'missing_license': (package/'LICENSE').unlink()
         artifact = root/case
         result = subprocess.run([node, str(helper), 'pack', str(artifact), 'a'*40, manifest['version']], env=env, capture_output=True, text=True)
         assert (result.returncode == 0) == (case in ('valid', 'old_peer')), (case, result.stderr)
-        if case == 'legacy_output': (package/'dist-dtql/legacy.js').unlink()
+        if case == 'legacy_output': (package/'dist-tugql/legacy.js').unlink()
         print('PASS OVDB pack', case)
     artifact = root/'valid'
     original = json.loads((artifact/'packed-artifact.json').read_text())
