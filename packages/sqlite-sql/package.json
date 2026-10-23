@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/sqlite-sql",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Shared DALgo structured-query to SQLite SQL compiler for DALgo TypeScript adapters",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
