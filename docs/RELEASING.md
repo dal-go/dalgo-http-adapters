@@ -40,7 +40,13 @@ Node 24, npm 11.11.0, and `id-token: write`; it contains no long-lived npm
 token. Configure trusted publishing before merging a version pull request.
 A package's first npm publication (for example `@dalgo/sqlite-sql` and
 `@dalgo/sqlite-wasm`) needs an authorized bootstrap before its trusted-publisher
-settings can exist; otherwise the loop stops at that package.
+settings can exist. Bootstrap with the placeholder version `0.0.0-stage` under
+`--tag stage`, as `@dalgo/bigquery`, `@dalgo/http` and `@dalgo/ovdb` were, then
+configure the trusted publisher. Never bootstrap with the version the version
+pull request will release: the workflow then finds it already present, fails
+its `gitHead` check, and npm never allows that version to be republished.
+Without the bootstrap, publication fails with an authentication error at that
+package or at the first earlier package whose trusted publisher is missing.
 The existing [manual tagging workflow](../.github/workflows/tag-published-package.yml)
 can reconcile a successfully published version if automated tagging fails.
 If publishing itself fails, manually run **Release packages** with the exact
