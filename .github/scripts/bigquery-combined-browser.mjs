@@ -44,8 +44,11 @@ try {
   });
   await page.goto('https://directory.example/');
   const proof = await page.evaluate(() => window.proof);
-  assert.equal(bigqueryPosts, 2); assert.equal(httpGets, 1); assert.deepEqual(ovdbPosts, { default: 2, explicit: 2 });
-  assert.equal(proof.bigqueryRows, 2); assert.equal(proof.httpRows, 1); assert.equal(proof.ovdbDefaultRows, 2); assert.equal(proof.ovdbExplicitRows, 2); assert.equal(proof.sharedKeyIdentity, true);
+  // Each consumer pairs BigQuery with exactly one other packed adapter.
+  const withHttp = proof.adapters.includes('@dalgo/http'), withOvdb = proof.adapters.includes('@dalgo/ovdb');
+  assert.equal(proof.adapters.length, 2); assert.equal(proof.adapters[0], '@dalgo/bigquery'); assert.notEqual(withHttp, withOvdb);
+  assert.equal(bigqueryPosts, 2); assert.equal(httpGets, withHttp ? 1 : 0); assert.deepEqual(ovdbPosts, withOvdb ? { default: 2, explicit: 2 } : { default: 0, explicit: 0 });
+  assert.equal(proof.bigqueryRows, 2); assert.equal(proof.httpRows, withHttp ? 1 : 0); assert.equal(proof.ovdbDefaultRows, withOvdb ? 2 : 0); assert.equal(proof.ovdbExplicitRows, withOvdb ? 2 : 0); assert.equal(proof.sharedKeyIdentity, true);
   assert.equal(prepared.size, 0); assert.equal(blocked.length, 0);
   console.log(JSON.stringify({ ...proof, bigqueryPosts, httpGets, ovdbPosts, blockedExternalRequests: blocked }));
 } finally { await browser.close(); }

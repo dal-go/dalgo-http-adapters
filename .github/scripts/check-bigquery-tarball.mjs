@@ -6,7 +6,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 const coreVersion = process.env.BIGQUERY_CORE_VERSION ?? "0.1.0";
-const coreIntegrity = { "0.1.0": "sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==", "0.6.0": "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==" }[coreVersion];
+const coreIntegrity = { "0.1.0": "sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==", "0.6.0": "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==", "0.8.0": "sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A==" }[coreVersion];
 if (!coreIntegrity) throw new Error("unsupported core compatibility target");
 const [tarballArg, destinationArg, ...runtimes] = process.argv.slice(2);
 if (!tarballArg || !destinationArg || !runtimes.length) throw new Error("tarball, external directory and runtime paths are required");
@@ -34,7 +34,7 @@ if (core?.version !== coreVersion || core.resolved !== `https://registry.npmjs.o
 if (Object.keys(lock.packages).filter(p => p.endsWith("node_modules/@dalgo/core")).length !== 1 || lock.packages["node_modules/@dal-go/dalgo"]) throw new Error("exactly one canonical core required");
 const installedPackage = resolve(destination, "node_modules/@dalgo/bigquery");
 const manifest = JSON.parse(readFileSync(resolve(installedPackage, "package.json"), "utf8"));
-if (manifest.name !== "@dalgo/bigquery" || manifest.private || manifest.peerDependencies?.["@dalgo/core"] !== "^0.1.0 || ^0.6.0" || manifest.peerDependencies?.["@dal-go/dalgo"]) throw new Error("unexpected package contract");
+if (manifest.name !== "@dalgo/bigquery" || manifest.private || manifest.peerDependencies?.["@dalgo/core"] !== "^0.1.0 || ^0.6.0 || ^0.8.0" || manifest.peerDependencies?.["@dal-go/dalgo"]) throw new Error("unexpected package contract");
 if (lock.packages["node_modules/@dalgo/bigquery"]?.integrity !== artifactIntegrity) throw new Error("installed artifact integrity mismatch");
 if (process.env.EXPECTED_PACKAGE_VERSION && manifest.version !== process.env.EXPECTED_PACKAGE_VERSION) throw new Error("unexpected package version");
 if (process.env.EXPECTED_SOURCE_SHA && manifest.gitHead !== process.env.EXPECTED_SOURCE_SHA) throw new Error("unexpected package gitHead");
