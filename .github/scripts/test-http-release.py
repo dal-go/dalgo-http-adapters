@@ -34,8 +34,8 @@ with tempfile.TemporaryDirectory(prefix='http-artifact-guards-') as directory:
         print('PASS pack', case)
     artifact = root/'valid'
     original = json.loads((artifact/'packed-artifact.json').read_text())
-    consumer = dict(original, core={'version':'0.6.0', 'resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz', 'integrity':'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=='}, browser={'synthetic':True, 'providerRequests':0, 'blockedExternalRequests':[], 'core':'registry:0.6.0'})
-    consumer['runtimes'] = [dict(nodeVersion=f'v{major}.0.0', synthetic=True, typedImports=True, localComposedRows=1, preIORefusal=True, providerRequests=0, core='registry:0.6.0', package=original['package'], sourceSHA=original['sourceSHA'], sha256=original['sha256'], integrity=original['integrity']) for major in [20,24]]
+    consumer = dict(original, core={'version':'0.8.0', 'resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.8.0.tgz', 'integrity':'sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A=='}, browser={'synthetic':True, 'providerRequests':0, 'blockedExternalRequests':[], 'core':'registry:0.8.0'})
+    consumer['runtimes'] = [dict(nodeVersion=f'v{major}.0.0', synthetic=True, typedImports=True, localComposedRows=1, preIORefusal=True, providerRequests=0, core='registry:0.8.0', package=original['package'], sourceSHA=original['sourceSHA'], sha256=original['sha256'], integrity=original['integrity']) for major in [20,24]]
     receipt = root/'tested.json'
     for case in ['valid', 'changed_integrity', 'wrong_source', 'git_core', 'wrong_core', 'provider_request', 'missing_browser', 'missing_runtime', 'wrong_runtime', 'wrong_runtime24', 'swapped_runtimes', 'one_runtime', 'duplicate_runtime', 'wrong_runtime_artifact', 'wrong_runtime_source', 'missing_typed_import', 'missing_runtime_refusal']:
         changed = json.loads(json.dumps(consumer))

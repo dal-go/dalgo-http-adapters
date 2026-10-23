@@ -181,16 +181,16 @@ elif [[ "$1" == .github/scripts/check-bigquery-core-matrix.mjs ]]; then
     exit 1
   fi
   echo '{}' > "$3/artifact-receipt.json"
-  for core in 0.1.0 0.6.0; do
+  for core in 0.1.0 0.6.0 0.8.0; do
     mkdir "$3/core-$core"
     for report in parity-0 parity-1 http-0 http-1; do printf '{"core":"%s"}\\n' "$core" > "$3/core-$core/$report.json"; done
   done
   if [[ "$CASE" == checker_error_modern ]]; then
-    echo '{"partial":true}' > "$3/core-0.6.0/parity-0.json"
+    echo '{"partial":true}' > "$3/core-0.8.0/parity-0.json"
     echo 'partial fixture failure'
     exit 1
   fi
-  [[ "$CASE" != missing_matrix_report ]] || rm "$3/core-0.6.0"/http-*.json
+  [[ "$CASE" != missing_matrix_report ]] || rm "$3/core-0.8.0"/http-*.json
 elif [[ "$1" == .github/scripts/prepare-http-release.mjs ]]; then
   printf 'http artifact %s\\n' "$2" >> "$MOCK_LOG"
   [[ "$3" == "$HTTP_ARTIFACT_DIR" && "$3" != "$BIGQUERY_ARTIFACT_DIR" ]] || exit 98
@@ -277,11 +277,11 @@ fi
             assert not Path(env['MOCK_VIEW_LOG']).exists()
         if case in ['checker_error','checker_error_modern']:
             artifacts = Path(env['BIGQUERY_ARTIFACT_DIR'])
-            assert json.loads((artifacts/('core-0.6.0' if case == 'checker_error_modern' else 'core-0.1.0')/'parity-0.json').read_text()) == {'partial':True}
+            assert json.loads((artifacts/('core-0.8.0' if case == 'checker_error_modern' else 'core-0.1.0')/'parity-0.json').read_text()) == {'partial':True}
             assert 'partial fixture failure' in (artifacts/'check.log').read_text()
             assert not (artifacts/'tested-artifact.json').exists()
         if case in ['bigquery_changed','registry_existing','metadata_delayed']:
-            for core in ['0.1.0','0.6.0']:
+            for core in ['0.1.0','0.6.0','0.8.0']:
                 for report in ['parity-0','parity-1','http-0','http-1']:
                     assert json.loads(Path(env['BIGQUERY_ARTIFACT_DIR'],f'core-{core}',report+'.json').read_text()) == {'core':core}
         print(f'PASS {case}: exit={result.returncode}, calls={calls.splitlines()}')
@@ -391,7 +391,7 @@ with tempfile.TemporaryDirectory(prefix='bigquery-pack-once-') as directory:
     shutil.copyfile(repository/'.github/scripts/prepare-bigquery-release.mjs', helper)
     pkg = repo/'packages/bigquery'
     (pkg/'dist').mkdir(parents=True)
-    manifest = {'name':'@dalgo/bigquery','version':'0.2.0','peerDependencies':{'@dalgo/core':'^0.1.0 || ^0.6.0'}, 'exports':{'.':{'import':'./dist/index.js','types':'./dist/index.d.ts'},'./analytical':{'import':'./dist/analytical.js','types':'./dist/analytical.d.ts'}}}
+    manifest = {'name':'@dalgo/bigquery','version':'0.2.0','peerDependencies':{'@dalgo/core':'^0.1.0 || ^0.6.0 || ^0.8.0'}, 'exports':{'.':{'import':'./dist/index.js','types':'./dist/index.d.ts'},'./analytical':{'import':'./dist/analytical.js','types':'./dist/analytical.d.ts'}}}
     (pkg/'package.json').write_text(json.dumps(manifest))
     for file in ['dist/index.js','dist/index.d.ts','dist/analytical.js','dist/analytical.d.ts','README.md','LICENSE']:
         (pkg/file).write_text('export {};')
@@ -434,10 +434,11 @@ print(json.dumps([{'filename':output.name,'integrity':integrity}]))
     output=root/'good'
     packed=json.loads((output/'packed-artifact.json').read_text())
     consumer={**packed,'core':{'version':'0.1.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.1.0.tgz','integrity':core_integrity},'runtimes':[{'version':'v20.0.0'},{'version':'v24.15.0'}]}
-    consumer['coreMatrix'] = [{'core':consumer['core'],'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}, {'core':{'version':'0.6.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz','integrity':'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=='},'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}]
-    consumer['combinedBrowser'] = dict(synthetic=True, coreVersion='0.6.0', providerRequests=0, blockedExternalRequests=[], sharedKeyIdentity=True, bigqueryDefaultNativeFetch=True, bigqueryExplicitNativeFetch=True, bigqueryRows=2, bigqueryPosts=2, httpRows=1, httpGets=1, ovdbDefaultRows=2, ovdbExplicitRows=2, ovdbPosts=dict(default=2, explicit=2))
+    consumer['coreMatrix'] = [{'core':consumer['core'],'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}, {'core':{'version':'0.6.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz','integrity':'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=='},'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}, {'core':{'version':'0.8.0','resolved':'https://registry.npmjs.org/@dalgo/core/-/core-0.8.0.tgz','integrity':'sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A=='},'runtimes':[{'version':'v20.0.0','typedImports':True},{'version':'v24.15.0','typedImports':True}]}]
+    shared = dict(synthetic=True, providerRequests=0, blockedExternalRequests=[], sharedKeyIdentity=True, bigqueryDefaultNativeFetch=True, bigqueryExplicitNativeFetch=True, bigqueryRows=2, bigqueryPosts=2)
+    consumer['combinedBrowsers'] = [dict(shared, coreVersion='0.6.0', adapters=['@dalgo/bigquery','@dalgo/ovdb'], httpRows=0, httpGets=0, ovdbDefaultRows=2, ovdbExplicitRows=2, ovdbPosts=dict(default=2, explicit=2)), dict(shared, coreVersion='0.8.0', adapters=['@dalgo/bigquery','@dalgo/http'], httpRows=1, httpGets=1, ovdbDefaultRows=0, ovdbExplicitRows=0, ovdbPosts=dict(default=0, explicit=0))]
     consumer['combinedArtifacts'] = [dict(package=dict(name=name,gitHead=sha),sourceSHA=sha,sha256='a'*64,integrity='sha512-fixture') for name in ['@dalgo/http','@dalgo/ovdb']]
-    for case in ['good','wrong_sha256','wrong_sri','wrong_core','wrong_core_integrity','wrong_runtime','wrong_githead','wrong_artifact_path','missing_core_matrix','wrong_modern_core','missing_modern_types','missing_combined_browser','wrong_native_count','missing_explicit_fetch','provider_request','wrong_combined_source','wrong_bytes']:
+    for case in ['good','wrong_sha256','wrong_sri','wrong_core','wrong_core_integrity','wrong_runtime','wrong_githead','wrong_artifact_path','missing_core_matrix','wrong_modern_core','missing_modern_types','missing_combined_browser','wrong_native_count','missing_explicit_fetch','provider_request','wrong_combined_source','wrong_combined_core','swapped_combined_adapters','wrong_bytes']:
         candidate=json.loads(json.dumps(consumer))
         if case == 'wrong_sha256': candidate['sha256']='0'*64
         if case == 'wrong_sri': candidate['integrity']='sha512-wrong'
@@ -447,12 +448,14 @@ print(json.dumps([{'filename':output.name,'integrity':integrity}]))
         if case == 'wrong_githead': candidate['package']['gitHead']='0'*40
         if case == 'wrong_artifact_path': candidate['tarball']=str(root/'other.tgz')
         if case == 'missing_core_matrix': candidate.pop('coreMatrix')
-        if case == 'wrong_modern_core': candidate['coreMatrix'][1]['core']['version']='0.2.0'
-        if case == 'missing_modern_types': candidate['coreMatrix'][1]['runtimes'][0].pop('typedImports')
-        if case == 'missing_combined_browser': candidate.pop('combinedBrowser')
-        if case == 'wrong_native_count': candidate['combinedBrowser']['bigqueryPosts']=0
-        if case == 'missing_explicit_fetch': candidate['combinedBrowser'].pop('bigqueryExplicitNativeFetch')
-        if case == 'provider_request': candidate['combinedBrowser']['providerRequests']=1
+        if case == 'wrong_modern_core': candidate['coreMatrix'][2]['core']['version']='0.2.0'
+        if case == 'missing_modern_types': candidate['coreMatrix'][2]['runtimes'][0].pop('typedImports')
+        if case == 'missing_combined_browser': candidate['combinedBrowsers'].pop()
+        if case == 'wrong_native_count': candidate['combinedBrowsers'][0]['bigqueryPosts']=0
+        if case == 'missing_explicit_fetch': candidate['combinedBrowsers'][1].pop('bigqueryExplicitNativeFetch')
+        if case == 'provider_request': candidate['combinedBrowsers'][1]['providerRequests']=1
+        if case == 'wrong_combined_core': candidate['combinedBrowsers'][1]['coreVersion']='0.6.0'
+        if case == 'swapped_combined_adapters': candidate['combinedBrowsers'].reverse()
         if case == 'wrong_combined_source': candidate['combinedArtifacts'][1]['sourceSHA']='b'*40
         if case == 'wrong_bytes': Path(packed['tarball']).write_bytes(b'changed')
         receipt=root/(case+'.json')

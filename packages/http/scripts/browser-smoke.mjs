@@ -11,8 +11,8 @@ const httpRoot = process.env.HTTP_PACKAGE_ROOT ?? fileURLToPath(new URL('..', im
 // Core exposes an import-only entry. Resolve as ESM from HTTP's package scope.
 const coreEntry = process.env.CORE_PACKAGE_ROOT ? join(process.env.CORE_PACKAGE_ROOT, 'dist/index.js') : fileURLToPath(import.meta.resolve('@dalgo/core'));
 const registryConsumer = !!process.env.CORE_PACKAGE_ROOT;
-if (registryConsumer) assert.equal(JSON.parse(await readFile(join(process.env.CORE_PACKAGE_ROOT, 'package.json'), 'utf8')).version, '0.6.0');
-else assert.equal(JSON.parse(await readFile(join(dirname(coreEntry), '../package.json'), 'utf8')).version, '0.6.0');
+if (registryConsumer) assert.equal(JSON.parse(await readFile(join(process.env.CORE_PACKAGE_ROOT, 'package.json'), 'utf8')).version, '0.8.0');
+else assert.equal(JSON.parse(await readFile(join(dirname(coreEntry), '../package.json'), 'utf8')).version, '0.8.0');
 const yamlRoot = join(dirname(createRequire(coreEntry).resolve('yaml/package.json')), 'browser');
 const assets = new Map();
 for (const [prefix, root] of [['/http/', join(httpRoot, 'dist')], ['/core/', dirname(coreEntry)], ['/yaml/', yamlRoot], ['/fixture/', process.env.HTTP_FIXTURE_ROOT ?? join(httpRoot, '.browser-fixture-dist')]]) {
@@ -59,7 +59,7 @@ try {
   });
   const page = await context.newPage(); await page.goto(origin);
   const result = await page.evaluate(async ({ fixtureOrigin }) => {
-    const { Key, UnsupportedError, collection, executeSourceComposedJoinedDTQLQuery } = await import('@dalgo/core');
+    const { Key, UnsupportedError, collection, executeSourceComposedJoinedTugQLQuery } = await import('@dalgo/core');
     const { ECB_DAILY_URL, decodeECBDaily } = await import('@dalgo/http');
     const { ImmutableDescriptors, descriptors, joinedQuery, joinOptions, materialize, syntheticExecutor, syntheticXML, syntheticPlan, unsupportedSink, viewSnapshot } = await import('/fixture/browser-fixture.js');
     let calls = 0;
@@ -97,7 +97,7 @@ try {
     const options = joinOptions(executor, plan, new ImmutableDescriptors(descriptors));
     const resolve = options.resolveInput;
     const before = calls;
-    const invalidLater = await refusal(() => executeSourceComposedJoinedDTQLQuery(joinedQuery(), { ...options, resolveInput: (relation, path) => {
+    const invalidLater = await refusal(() => executeSourceComposedJoinedTugQLQuery(joinedQuery(), { ...options, resolveInput: (relation, path) => {
       const input = resolve(relation, path); return relation.name === 'descriptors' ? { ...input, scanQuery: { ...input.scanQuery, limit: 2 } } : input;
     } }));
     if (calls !== before) throw Error('preflight performed I/O');
@@ -119,7 +119,7 @@ try {
     const changedEvidence = await refusal(() => materialize(broken(true), plan));
     if (recordsRead) throw Error('evidence failure read rows');
     const bounds = [];
-    for (const override of [{ maxFetchedRows: 1 }, { maxMetadataBytes: 1 }, { maxRetainedBytes: 1 }, { maxResultRows: 1 }]) bounds.push(await refusal(() => executeSourceComposedJoinedDTQLQuery(joinedQuery('left'), { ...options, ...override })));
+    for (const override of [{ maxFetchedRows: 1 }, { maxMetadataBytes: 1 }, { maxRetainedBytes: 1 }, { maxResultRows: 1 }]) bounds.push(await refusal(() => executeSourceComposedJoinedTugQLQuery(joinedQuery('left'), { ...options, ...override })));
     let dispatched = false, rawRowsRead = false;
     const sinks = [];
     const composed = viewSnapshot(await materialize(executor, plan)).metadata.sourceComposition;
@@ -149,7 +149,7 @@ try {
   for (const flags of [result.parserRefusals, result.bounds, result.sinks]) assert.ok(flags.every(Boolean));
   assert.deepEqual(result.viewerCases, ['normal', 'projected', 'empty-local', 'where-empty', 'left']); assert.deepEqual(blocked, []);
   assert.deepEqual(requests, [...Array(6).fill('/pass.xml'), '/fail.xml', '/malformed.xml', ...Array(6).fill('/pass.xml')]); assert.equal(result.calls, requests.length);
-  console.log(JSON.stringify({ synthetic: true, browser: browser.version(), core: 'registry:0.6.0', cases: result.cases.map(value => ({ name: value.name, rowCount: value.rows.length, rights: value.notices.map(notice => notice.rightsStatus), evidenceReads: 1 })), refusals: { cors: result.corsFailure, malformed: result.malformedFailure, invalidLater: result.invalidLater, mismatch: result.mismatch, missingEvidence: result.missingEvidence, changedEvidence: result.changedEvidence, bounds: result.bounds.length, unsupportedSinks: result.sinks.length }, fixtureRequests: requests, blockedExternalRequests: blocked, providerRequests: 0 }));
+  console.log(JSON.stringify({ synthetic: true, browser: browser.version(), core: 'registry:0.8.0', cases: result.cases.map(value => ({ name: value.name, rowCount: value.rows.length, rights: value.notices.map(notice => notice.rightsStatus), evidenceReads: 1 })), refusals: { cors: result.corsFailure, malformed: result.malformedFailure, invalidLater: result.invalidLater, mismatch: result.mismatch, missingEvidence: result.missingEvidence, changedEvidence: result.changedEvidence, bounds: result.bounds.length, unsupportedSinks: result.sinks.length }, fixtureRequests: requests, blockedExternalRequests: blocked, providerRequests: 0 }));
 } finally {
   await browser?.close();
   if (fixture.listening) await close(fixture);

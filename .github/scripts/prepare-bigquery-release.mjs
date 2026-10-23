@@ -19,7 +19,7 @@ const inspect = tarball => {
   const contents = file => execFileSync("tar", ["-xOzf", tarball, `package/${file}`], { encoding: "utf8" });
   const manifest = JSON.parse(contents("package.json"));
   failUnless(Object.entries(identity).every(([key, value]) => manifest[key] === value), "wrong packed package/version/gitHead");
-  failUnless(!manifest.private && manifest.peerDependencies?.["@dalgo/core"] === "^0.1.0 || ^0.6.0" && !manifest.peerDependencies?.["@dal-go/dalgo"], "wrong packed core peer");
+  failUnless(!manifest.private && manifest.peerDependencies?.["@dalgo/core"] === "^0.1.0 || ^0.6.0 || ^0.8.0" && !manifest.peerDependencies?.["@dal-go/dalgo"], "wrong packed core peer");
   for (const section of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     failUnless(Object.entries(manifest[section] ?? {}).every(([name, value]) => name !== "@dal-go/dalgo" && !/^(file:|link:|workspace:|git[+:]|https?:)/.test(value)), "repository-only or legacy dependency");
   }
@@ -66,15 +66,22 @@ if (mode === "pack") {
   const expectedCores = [
     ["0.1.0", "sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw=="],
     ["0.6.0", "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ=="],
+    ["0.8.0", "sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A=="],
   ];
-  failUnless(consumer.coreMatrix?.length === 2, "both supported core receipts required");
+  failUnless(consumer.coreMatrix?.length === 3, "every supported core receipt required");
   expectedCores.forEach(([coreVersion, integrity], index) => {
     const proof = consumer.coreMatrix[index];
     failUnless(proof.core?.version === coreVersion && proof.core.resolved === `https://registry.npmjs.org/@dalgo/core/-/core-${coreVersion}.tgz` && proof.core.integrity === integrity, "wrong core matrix identity");
     failUnless(proof.runtimes?.length === 2 && proof.runtimes[0].version === "v20.0.0" && /^v24\./.test(proof.runtimes[1].version) && proof.runtimes.every(runtime => runtime.typedImports === true), "typed Node20/24 matrix receipts required");
   });
-  const browser = consumer.combinedBrowser;
-  failUnless(browser?.synthetic === true && browser.coreVersion === "0.6.0" && browser.providerRequests === 0 && browser.blockedExternalRequests?.length === 0 && browser.sharedKeyIdentity === true && browser.bigqueryDefaultNativeFetch === true && browser.bigqueryExplicitNativeFetch === true && browser.bigqueryRows === 2 && browser.bigqueryPosts === 2 && browser.httpRows === 1 && browser.httpGets === 1 && browser.ovdbDefaultRows === 2 && browser.ovdbExplicitRows === 2 && browser.ovdbPosts?.default === 2 && browser.ovdbPosts.explicit === 2, "strict shared-core native browser receipt required");
+  // OVDB's npm artifact is gated to core 0.6 and HTTP requires core 0.8, so each
+  // pairs with BigQuery on its own strict shared core.
+  const browsers = consumer.combinedBrowsers;
+  failUnless(Array.isArray(browsers) && browsers.length === 2, "both strict shared-core browser receipts required");
+  browsers.forEach((browser, index) => {
+    const [coreVersion, companion, httpRows, ovdbRows] = [["0.6.0", "@dalgo/ovdb", 0, 2], ["0.8.0", "@dalgo/http", 1, 0]][index];
+    failUnless(browser?.synthetic === true && browser.coreVersion === coreVersion && browser.adapters?.length === 2 && browser.adapters[0] === "@dalgo/bigquery" && browser.adapters[1] === companion && browser.providerRequests === 0 && browser.blockedExternalRequests?.length === 0 && browser.sharedKeyIdentity === true && browser.bigqueryDefaultNativeFetch === true && browser.bigqueryExplicitNativeFetch === true && browser.bigqueryRows === 2 && browser.bigqueryPosts === 2 && browser.httpRows === httpRows && browser.httpGets === httpRows && browser.ovdbDefaultRows === ovdbRows && browser.ovdbExplicitRows === ovdbRows && browser.ovdbPosts?.default === ovdbRows && browser.ovdbPosts.explicit === ovdbRows, "strict shared-core native browser receipt required");
+  });
   failUnless(consumer.combinedArtifacts?.length === 2 && consumer.combinedArtifacts.every((candidate, index) => candidate.package?.name === ["@dalgo/http", "@dalgo/ovdb"][index] && candidate.sourceSHA === sourceSHA && candidate.package.gitHead === sourceSHA && /^[0-9a-f]{64}$/.test(candidate.sha256) && candidate.integrity?.startsWith("sha512-")), "same-source combined package receipts required");
   inspect(receipt.tarball);
 }

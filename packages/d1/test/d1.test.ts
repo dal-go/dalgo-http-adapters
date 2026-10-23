@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { executeJoinedDTQLQuery, isJoinedDTQLQuery, Key, parseDTQL } from "@dalgo/core";
+import { executeJoinedTugQLQuery, isJoinedTugQLQuery, Key, parseTugQLYaml } from "@dalgo/core";
 import { D1HttpDatabase, D1QueryDatabase, compileD1Query, createD1ReadHandler, type D1Binding, type D1PreparedStatement, type D1Table } from "../src/index.js";
 
 type Row = Readonly<Record<string, unknown>>;
@@ -173,12 +173,12 @@ describe("D1 adapter", () => {
           { aggregate: { function: "count", args: [{ star: true }] }, as: "rows" },
         ],
       };
-      const parsed = parseDTQL(document, { tables: [
+      const parsed = parseTugQLYaml(document, { tables: [
         { name: "OrderDetails", fields: ["orderId", "productId", "groupId", "quantity"] },
         { name: "Groups", fields: ["groupId", "name"] },
       ] });
-      if (!isJoinedDTQLQuery(parsed)) throw new Error("expected SQLite-backed joined query");
-      const result = await executeJoinedDTQLQuery(db, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
+      if (!isJoinedTugQLQuery(parsed)) throw new Error("expected SQLite-backed joined query");
+      const result = await executeJoinedTugQLQuery(db, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
       expect(result.records.map((record) => record.data)).toEqual([
         { group: "even", total: 15_876, rows: 126 },
         { group: "odd", total: 15_750, rows: 125 },
@@ -209,7 +209,7 @@ describe("D1 adapter", () => {
       expect(await emptyBlobWire.json()).toMatchObject({ records: [{ payload: { $type: "blob", base64: "" } }] });
       const numericInFilter = await http.query({ source: { kind: "collection", name: "OrderDetails" }, filters: [{ field: "orderId", operator: "in", value: [1, 2] }], orders: [], limit: 2 });
       expect(numericInFilter.records).toHaveLength(2);
-      const httpJoin = await executeJoinedDTQLQuery(http, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
+      const httpJoin = await executeJoinedTugQLQuery(http, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
       expect(httpJoin.records.map((record) => record.data)).toEqual(result.records.map((record) => record.data));
     } finally {
       sqlite.close();
@@ -263,12 +263,12 @@ describe("D1 adapter", () => {
         { aggregate: { function: "count", args: [{ star: true }] }, as: "rows" },
       ],
     };
-    const parsed = parseDTQL(document, { tables: [
+    const parsed = parseTugQLYaml(document, { tables: [
       { name: "Items", fields: ["id", "groupId", "amount"] },
       { name: "Groups", fields: ["id", "name"] },
     ] });
-    if (!isJoinedDTQLQuery(parsed)) throw new Error("expected joined query");
-    const result = await executeJoinedDTQLQuery(db, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
+    if (!isJoinedTugQLQuery(parsed)) throw new Error("expected joined query");
+    const result = await executeJoinedTugQLQuery(db, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
     expect(result.records.map((record) => record.data)).toEqual([
       { group: "even", total: 15_876, rows: 126 },
       { group: "odd", total: 15_750, rows: 125 },
@@ -283,7 +283,7 @@ describe("D1 adapter", () => {
       baseUrl: "https://d1.test", tables: schema, maxQueryLimit: 100, scanPageSize: 80,
       fetch: async (input, init) => handle(new Request(input, init)),
     });
-    const httpResult = await executeJoinedDTQLQuery(http, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
+    const httpResult = await executeJoinedTugQLQuery(http, parsed, { resolveSource: (relation) => ({ kind: "collection", name: relation.name }) });
     expect(httpResult.records.map((record) => record.data)).toEqual(result.records.map((record) => record.data));
     expect(httpBinding.state.calls.filter(({ sql }) => sql.includes('FROM "items"')).length).toBeGreaterThan(1);
     const httpPage150 = await http.query({ source: { kind: "collection", name: "Items" }, filters: [], orders: [], limit: 150 });

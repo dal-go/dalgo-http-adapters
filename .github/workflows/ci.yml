@@ -102,7 +102,7 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @dalgo/bigquery --filter @dalgo/http --filter @dalgo/ovdb check
-      - name: Verify both supported cores and a strict shared-core browser
+      - name: Verify every supported core and the strict shared-core browsers
         run: |
           set -euo pipefail
           source_sha=$(git rev-parse HEAD)

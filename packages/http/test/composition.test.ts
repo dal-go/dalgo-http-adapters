@@ -1,5 +1,5 @@
 import {
-  Key, UnsupportedError, collection, executeSourceComposedJoinedDTQLQuery,
+  Key, UnsupportedError, collection, executeSourceComposedJoinedTugQLQuery,
   type QueryExecutor, type QueryPage, type StructuredQuery,
 } from "@dalgo/core";
 import { describe, expect, it, vi } from "vitest";
@@ -100,7 +100,7 @@ describe("actual ECB executor with materialized source composition", () => {
     expect(viewSnapshot(await pending).notices[0]?.declarations[0]).toBe("Fabricated permission\n preserve whitespace");
     const options = joinOptions(executor, await syntheticPlan(), new ImmutableDescriptors(descriptors));
     const resolved = options.resolveInput;
-    await expect(executeSourceComposedJoinedDTQLQuery(joinedQuery(), { ...options, resolveInput: (relation, path) => {
+    await expect(executeSourceComposedJoinedTugQLQuery(joinedQuery(), { ...options, resolveInput: (relation, path) => {
       const input = resolved(relation, path);
       return relation.name === "descriptors" ? { ...input, scanQuery: { ...input.scanQuery, limit: 2 } } : input;
     } })).rejects.toThrow();
@@ -132,7 +132,7 @@ describe("actual ECB executor with materialized source composition", () => {
     const { executor, plan } = await fixture();
     const options = joinOptions(executor, plan, new ImmutableDescriptors(descriptors));
     for (const override of [{ maxFetchedRows: 1 }, { maxResultRows: 1 }, { maxMetadataBytes: 1 }, { maxRetainedBytes: 1 }]) {
-      await expect(executeSourceComposedJoinedDTQLQuery(joinedQuery("left"), { ...options, ...override })).rejects.toThrow();
+      await expect(executeSourceComposedJoinedTugQLQuery(joinedQuery("left"), { ...options, ...override })).rejects.toThrow();
     }
   });
   it("direct filtered empty ECB pages retain fresh leaf evidence", async () => {

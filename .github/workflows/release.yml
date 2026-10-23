@@ -214,7 +214,7 @@ jobs:
                 2>&1 | tee "$BIGQUERY_ARTIFACT_DIR/check.log" || checker_status=$?
               # Preserve partial fixture reports before propagating a failure.
               if [[ -d "$BIGQUERY_CONSUMER_DIR" ]]; then
-                for core in 0.1.0 0.6.0; do
+                for core in 0.1.0 0.6.0 0.8.0; do
                   reports="$BIGQUERY_CONSUMER_DIR/core-$core"
                   if [[ -d "$reports" ]]; then
                     mkdir -p "$BIGQUERY_ARTIFACT_DIR/core-$core"
@@ -225,7 +225,7 @@ jobs:
               fi
               [[ "$checker_status" == 0 ]] || exit "$checker_status"
               cp "$BIGQUERY_CONSUMER_DIR/artifact-receipt.json" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
-              for core in 0.1.0 0.6.0; do
+              for core in 0.1.0 0.6.0 0.8.0; do
                 cp "$BIGQUERY_CONSUMER_DIR/core-$core"/parity-*.json "$BIGQUERY_CONSUMER_DIR/core-$core"/http-*.json "$BIGQUERY_ARTIFACT_DIR/core-$core/"
               done
               node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"

@@ -1,9 +1,9 @@
 // Synthetic-only consumer. Never exported by the HTTP package.
 import {
-  Key, UnsupportedError, executeSourceComposedJoinedDTQLQuery, isJoinedDTQLQuery,
-  parseDTQL, providerEvidenceDigest, requireNoSourceComposition,
+  Key, UnsupportedError, executeSourceComposedJoinedTugQLQuery, isJoinedTugQLQuery,
+  parseTugQLYaml, providerEvidenceDigest, requireNoSourceComposition,
   requireSourceCompositionConsumer, snapshotQueryMetadata,
-  type AdmittedMaterializedJoinInput, type JoinedDTQLQuery, type ProviderReadPlan,
+  type AdmittedMaterializedJoinInput, type JoinedTugQLQuery, type ProviderReadPlan,
   type QueryExecutor, type QueryPage, type SourceCompositionJoinOptions,
   type SourceRight, type StructuredQuery,
 } from "@dalgo/core";
@@ -70,8 +70,8 @@ export async function syntheticPlan(): Promise<ProviderReadPlan> {
   };
 }
 
-export function joinedQuery(kind: "inner" | "left" = "inner", projected = false, emptyWhere = false): JoinedDTQLQuery {
-  const parsed = parseDTQL({
+export function joinedQuery(kind: "inner" | "left" = "inner", projected = false, emptyWhere = false): JoinedTugQLQuery {
+  const parsed = parseTugQLYaml({
     from: { name: "daily", alias: "q", joins: [{ type: kind, from: { name: "descriptors", alias: "d" },
       on: [{ left: { field: "currency", source: "q" }, op: "==", right: { field: "currency", source: "d" } }] }] },
     columns: projected ? [{ field: "name", source: "d", as: "name" }] : [
@@ -80,7 +80,7 @@ export function joinedQuery(kind: "inner" | "left" = "inner", projected = false,
     ],
     ...(emptyWhere ? { where: { left: { field: "currency", source: "q" }, op: "==", right: { value: "BBB" } } } : {}),
   }, { tables: [{ name: "daily", fields: ["currency", "time", "rate"] }, { name: "descriptors", fields: ["currency", "name"] }] });
-  if (!isJoinedDTQLQuery(parsed)) throw new Error("expected synthetic join");
+  if (!isJoinedTugQLQuery(parsed)) throw new Error("expected synthetic join");
   return parsed;
 }
 
@@ -124,5 +124,5 @@ export function unsupportedSink(page: object, dispatch: () => void): void {
 
 export async function materialize(executor: QueryExecutor, plan: ProviderReadPlan,
   rows: readonly Descriptor[] = descriptors, query = joinedQuery()) {
-  return executeSourceComposedJoinedDTQLQuery(query, joinOptions(executor, plan, new ImmutableDescriptors(rows)));
+  return executeSourceComposedJoinedTugQLQuery(query, joinOptions(executor, plan, new ImmutableDescriptors(rows)));
 }

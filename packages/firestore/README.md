@@ -11,7 +11,9 @@ including apps that query an OpenVaultDB Firestore database directly.
 pnpm add @dalgo/core @dalgo/firestore firebase
 ```
 
-The adapter uses the separately published `@dalgo/core` contracts.
+The adapter uses the separately published `@dalgo/core` contracts. Its required
+peer range is `@dalgo/core >=0.8.0 <0.9.0`, the first core line with the TugQL
+names.
 
 ## Browser setup
 
@@ -68,7 +70,7 @@ the returned `nextCursor` rather than constructing pagination values manually.
 
 ## Recursive TugQL
 
-Run recursive TugQL through `executeRecursiveDTQLQuery` from `@dalgo/core`.
+Run recursive TugQL through `executeRecursiveTugQLQuery` from `@dalgo/core`.
 The core sends Firestore ordinary bounded leaf queries; a direct recursive AST
 is rejected before Firestore query compilation. `EXISTS` can stop its logical
 evaluation after a match, while each Firestore leaf query remains a Web SDK

@@ -5,11 +5,13 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@dalgo/http>@dalgo/core': 0.6.0
+  '@dalgo/http>@dalgo/core': 0.8.0
+  '@dalgo/d1>@dalgo/core': 0.8.0
+  '@dalgo/firestore>@dalgo/core': 0.8.0
   '@dal-go/dalgo': github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
   '@dalgo/bigquery>@dalgo/core': 0.1.0
   '@dalgo/core': github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
-  '@dalgo/indexeddb>@dalgo/core': 0.6.0
+  '@dalgo/indexeddb>@dalgo/core': 0.8.0
   '@dalgo/ovdb>@dalgo/core': github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42
   '@dalgo/sqlite-wasm>@dalgo/core': github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42
 
@@ -219,13 +221,13 @@ importers:
 
   packages/d1:
     dependencies:
-      '@dalgo/core':
-        specifier: github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336
       '@dalgo/sqlite-sql':
         specifier: workspace:^
         version: link:../sqlite-sql
     devDependencies:
+      '@dalgo/core':
+        specifier: 0.8.0
+        version: 0.8.0
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -365,11 +367,10 @@ importers:
         version: 5.0.1(@types/node@26.6.2)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.1))
 
   packages/firestore:
-    dependencies:
-      '@dalgo/core':
-        specifier: github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336
     devDependencies:
+      '@dalgo/core':
+        specifier: 0.8.0
+        version: 0.8.0
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -392,8 +393,8 @@ importers:
   packages/http:
     devDependencies:
       '@dalgo/core':
-        specifier: 0.6.0
-        version: 0.6.0
+        specifier: 0.8.0
+        version: 0.8.0
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -419,8 +420,8 @@ importers:
   packages/indexeddb:
     devDependencies:
       '@dalgo/core':
-        specifier: 0.6.0
-        version: 0.6.0
+        specifier: 0.8.0
+        version: 0.8.0
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -1122,8 +1123,8 @@ packages:
     resolution: {integrity: sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==}
     engines: {node: '>=20'}
 
-  '@dalgo/core@0.6.0':
-    resolution: {integrity: sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==}
+  '@dalgo/core@0.8.0':
+    resolution: {integrity: sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A==}
     engines: {node: '>=20'}
 
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42':
@@ -3113,9 +3114,9 @@ snapshots:
 
   '@dalgo/core@0.1.0': {}
 
-  '@dalgo/core@0.6.0':
+  '@dalgo/core@0.8.0':
     dependencies:
-      yaml: 2.8.2
+      yaml: 2.9.1
 
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42':
     dependencies:

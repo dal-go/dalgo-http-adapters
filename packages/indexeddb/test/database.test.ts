@@ -1,4 +1,4 @@
-import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, UnsupportedError, collection, collectionGroup, executeRecursiveDTQLQuery, key, parseRecursiveDTQL, type DTQLSchema, type StructuredQuery } from "@dalgo/core";
+import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, UnsupportedError, collection, collectionGroup, executeRecursiveTugQLQuery, key, parseRecursiveTugQL, type TugQLSchema, type StructuredQuery } from "@dalgo/core";
 import { IDBFactory, IDBIndex } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { IndexedDbDatabase, withIndexedDbQueryHints } from "../src/index.js";
@@ -37,10 +37,10 @@ describe("IndexedDbDatabase", () => {
       await transaction.set(items.key("bread"), { title: "Bread", done: false, rank: 2, tags: [] });
       await transaction.set(items.key("walk"), { title: "Walk", done: true, rank: 3, tags: [] });
     });
-    const schema: DTQLSchema = { tables: [{ name: "items", fields: ["title", "done", "rank", "tags"] }] };
-    const recursive = parseRecursiveDTQL("from: {name: items, alias: outer}\nwhere:\n  exists:\n    query:\n      from: {name: items, alias: inner}\n      where: {left: {field: done, source: inner}, op: '==', right: {field: done, source: outer}}\norderBy: [{field: rank, source: outer}]\nlimit: 1\ncolumns: [{field: title, source: outer}]\n", schema);
+    const schema: TugQLSchema = { tables: [{ name: "items", fields: ["title", "done", "rank", "tags"] }] };
+    const recursive = parseRecursiveTugQL("from: {name: items, alias: outer}\nwhere:\n  exists:\n    query:\n      from: {name: items, alias: inner}\n      where: {left: {field: done, source: inner}, op: '==', right: {field: done, source: outer}}\norderBy: [{field: rank, source: outer}]\nlimit: 1\ncolumns: [{field: title, source: outer}]\n", schema);
 
-    const page = await executeRecursiveDTQLQuery(db, recursive, { maxFetchedRows: 20 });
+    const page = await executeRecursiveTugQLQuery(db, recursive, { maxFetchedRows: 20 });
 
     expect(page.records.map((record) => record.data)).toEqual([{ title: "Milk" }]);
     await db.close();
