@@ -66,9 +66,9 @@ const db = new FirestoreDatabase(getFirestore(app, openVaultDatabaseId));
 The adapter appends document ID as a deterministic final ordering field. Use
 the returned `nextCursor` rather than constructing pagination values manually.
 
-## Recursive DTQL
+## Recursive TugQL
 
-Run recursive DTQL through `executeRecursiveDTQLQuery` from `@dalgo/core`.
+Run recursive TugQL through `executeRecursiveDTQLQuery` from `@dalgo/core`.
 The core sends Firestore ordinary bounded leaf queries; a direct recursive AST
 is rejected before Firestore query compilation. `EXISTS` can stop its logical
 evaluation after a match, while each Firestore leaf query remains a Web SDK

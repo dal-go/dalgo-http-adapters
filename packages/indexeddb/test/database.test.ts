@@ -22,7 +22,7 @@ describe("IndexedDbDatabase", () => {
     const factory = new IDBFactory();
     const open = vi.spyOn(factory, "open");
     const db = new IndexedDbDatabase({ name: "reject-recursive", factory });
-    const recursive = { kind: "recursive-dtql", from: { kind: "table", name: "items", joins: [] } } as unknown as StructuredQuery<Item>;
+    const recursive = { kind: "recursive-tugql", from: { kind: "table", name: "items", joins: [] } } as unknown as StructuredQuery<Item>;
     await expect(db.query(recursive)).rejects.toThrow(UnsupportedError);
     await expect(db.query(recursive)).rejects.toThrow("core recursive executor");
     const disguised = { ...recursive, source: { kind: "collection", name: "items" }, filters: [], orders: [] } as unknown as StructuredQuery<Item>;
