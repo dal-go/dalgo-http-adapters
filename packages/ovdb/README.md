@@ -1,6 +1,6 @@
 # OpenVaultDB TugQL executor
 
-`@dalgo/ovdb` exposes the query-only `OpenVaultDbTugQLQueryExecutor` at both the package root and `@dalgo/ovdb/tugql`. Requires Node >=20 or a browser with Fetch and Web Crypto, and `@dalgo/core` `>=0.6.0 <0.9.0` (0.8.0 is the TugQL release).
+`@dalgo/ovdb` exposes the query-only `OpenVaultDbTugQLQueryExecutor` at both the package root and `@dalgo/ovdb/tugql`. Requires Node >=20 or a browser with Fetch and Web Crypto, and `@dalgo/core` `>=0.6.0 <0.7.0` (the npm package; a GitHub-path install of this source accepts `>=0.6.0 <0.9.0`, which includes the 0.8 TugQL release; see below).
 
 The first native profile accepts one `daily` collection query, zero through ten flat string equality filters on `time`, `currency` and `rate`, and a limit of 1–50 (default 50). It preserves native lexical strings, validates one independently admitted source read and full immutable rights metadata, and returns `complete: true` only after bounded JSON reaches EOF and evidence passes. Completion describes a bounded query, not complete source inventory.
 

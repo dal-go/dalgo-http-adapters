@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='ovdb-artifact-guards-') as directory:
         if case == 'private': changed['private'] = True
         if case == 'wrong_access': changed['publishConfig']['access'] = 'restricted'
         if case == 'git_peer': changed['peerDependencies']['@dalgo/core'] = 'github:dal-go/dalgo-js#main'
-        if case == 'near_widened_peer': changed['peerDependencies']['@dalgo/core'] = '>=0.6.0 <0.9.0'
+        if case == 'near_widened_peer': changed['peerDependencies']['@dalgo/core'] = '>=0.6.0 <0.8.0'
         if case == 'old_peer': changed['peerDependencies']['@dalgo/core'] = '>=0.6.0 <0.7.0'
         if case == 'core_dependency': changed['dependencies']['@dalgo/core'] = '^0.6.0'
         if case == 'core_optional_peer': changed['peerDependenciesMeta'] = {'@dalgo/core': {'optional': True}}

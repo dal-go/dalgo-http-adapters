@@ -58,7 +58,7 @@ if (mode === "pack") {
     // Staging copies no "dist", so npm packs none; dropping it from "files" keeps the
     // published manifest honest (kept deliberately, not for filtering).
     files: manifest.files.filter(file => file !== "dist"),
-    peerDependencies: manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.8.0"
+    peerDependencies: manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.9.0"
       ? { ...manifest.peerDependencies, "@dalgo/core": ">=0.6.0 <0.7.0" }
       : manifest.peerDependencies,
     gitHead: sourceSHA,
