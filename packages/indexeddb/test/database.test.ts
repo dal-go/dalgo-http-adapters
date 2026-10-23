@@ -30,7 +30,7 @@ describe("IndexedDbDatabase", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("runs core recursive DTQL through bounded IndexedDB leaf scans", async () => {
+  it("runs core recursive TugQL through bounded IndexedDB leaf scans", async () => {
     const db = database();
     await db.runReadwriteTransaction(async (transaction) => {
       await transaction.set(items.key("milk"), { title: "Milk", done: false, rank: 1, tags: [] });

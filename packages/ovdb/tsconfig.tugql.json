@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "rootDir": "src/tugql",
+    "outDir": "dist-tugql"
+  },
+  "include": [
+    "src/tugql"
+  ]
+}

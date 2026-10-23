@@ -1,5 +1,11 @@
 # @dalgo/bigquery
 
+## 0.3.2
+
+### Patch Changes
+
+- 907fc56: Support a shared @dalgo/core 0.6 consumer alongside the existing 0.1 core line, with strict packed compatibility and native browser regression gates. Bind default and explicit global Fetch to its native receiver in the record adapter.
+
 ## 0.3.1
 
 ### Patch Changes

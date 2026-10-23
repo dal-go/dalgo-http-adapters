@@ -1,6 +1,6 @@
 # ECB daily XML query adapter
 
-`@dal-go/dalgo2http` implements the first supported slice for the named
+`@dalgo/http` implements the first supported slice for the named
 `ecb-eurofxref/1` daily XML contract. It implements DALgo `QueryExecutor` with
 native string fields `time`, `currency`, and `rate`, and currency record IDs.
 It supports string equality filters and a positive limit of at most 256.
@@ -40,7 +40,7 @@ against ECB. `no-cors` opaque responses cannot enable this path.
 
 ```ts
 import { collection } from "@dalgo/core";
-import { ECBQueryExecutor, type ECBQuote } from "@dal-go/dalgo2http";
+import { ECBQueryExecutor, type ECBQuote } from "@dalgo/http";
 
 // admittedOptions includes a trusted Fetch, executor/collection identity,
 // and an independently verified providerReadPlan. It is not learned from XML.
@@ -66,16 +66,16 @@ changing package visibility alone does not satisfy the changed-version release g
 Registry discovery alone does not establish live query eligibility.
 
 Validation uses fabricated XML/terms only: package tests use test-only jsdom.
-`pnpm --filter @dal-go/dalgo2http check` runs those tests and declaration build.
+`pnpm --filter @dalgo/http check` runs those tests and declaration build.
 After build and fixture compilation, the native harness runs actual
 `ECBQueryExecutor`, native Fetch/DOMParser and the separate materialized composer
 against invented XML and currency descriptors. Run with Node 24:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm --filter @dal-go/dalgo2http check
-pnpm --filter @dal-go/dalgo2http run check:clean-output
-pnpm --filter @dal-go/dalgo2http exec tsc -p tsconfig.browser-fixture.json
+pnpm --filter @dalgo/http check
+pnpm --filter @dalgo/http run check:clean-output
+pnpm --filter @dalgo/http exec tsc -p tsconfig.browser-fixture.json
 node packages/http/scripts/browser-smoke.mjs
 ```
 

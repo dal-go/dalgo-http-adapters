@@ -24,7 +24,7 @@ for (const [prefix, root] of [['/http/', join(httpRoot, 'dist')], ['/core/', dir
     assets.set(prefix + name.split(sep).join('/'), file);
   }
 }
-const imports = { '@dal-go/dalgo2http': '/http/index.js', '@dalgo/core': '/core/index.js', yaml: '/yaml/index.js' };
+const imports = { '@dalgo/http': '/http/index.js', '@dalgo/core': '/core/index.js', yaml: '/yaml/index.js' };
 const xml = `<g:Envelope xmlns:g="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><Cube><Cube time="2037-02-03"><Cube currency="AAA" rate="001.23000"/><Cube currency="ZZZ" rate="0.00001"/></Cube></Cube></g:Envelope>`;
 const requests = [];
 const app = createServer(async (req, res) => {
@@ -60,7 +60,7 @@ try {
   const page = await context.newPage(); await page.goto(origin);
   const result = await page.evaluate(async ({ fixtureOrigin }) => {
     const { Key, UnsupportedError, collection, executeSourceComposedJoinedDTQLQuery } = await import('@dalgo/core');
-    const { ECB_DAILY_URL, decodeECBDaily } = await import('@dal-go/dalgo2http');
+    const { ECB_DAILY_URL, decodeECBDaily } = await import('@dalgo/http');
     const { ImmutableDescriptors, descriptors, joinedQuery, joinOptions, materialize, syntheticExecutor, syntheticXML, syntheticPlan, unsupportedSink, viewSnapshot } = await import('/fixture/browser-fixture.js');
     let calls = 0;
     // Trusted test-only exact URL rewrite. Native Fetch performs native CORS.

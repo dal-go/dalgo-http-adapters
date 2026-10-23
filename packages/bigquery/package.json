@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/bigquery",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "BigQuery REST API adapter for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
@@ -42,7 +42,7 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dalgo/core": "^0.1.0"
+    "@dalgo/core": "^0.1.0 || ^0.6.0"
   },
   "devDependencies": {
     "@dalgo/core": "0.1.0",

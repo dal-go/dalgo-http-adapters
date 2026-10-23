@@ -31,15 +31,15 @@ assert.equal(core.integrity, 'sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+7
 assert.equal(Object.keys(lock.packages).filter(p => p.endsWith('node_modules/@dalgo/core')).length, 1);
 assert.ok(!lock.packages['node_modules/@dal-go/dalgo']);
 for (const [path, pkg] of Object.entries(lock.packages)) {
-  if (!path || path === 'node_modules/@dal-go/dalgo2http') continue;
+  if (!path || path === 'node_modules/@dalgo/http') continue;
   assert.ok(!pkg.link && pkg.resolved?.startsWith('https://registry.npmjs.org/'), `nonregistry dependency: ${path}`);
 }
-const httpRoot = resolve(destination, 'node_modules/@dal-go/dalgo2http');
+const httpRoot = resolve(destination, 'node_modules/@dalgo/http');
 const manifest = JSON.parse(readFileSync(resolve(httpRoot, 'package.json'), 'utf8'));
-assert.equal(manifest.name, '@dal-go/dalgo2http');
+assert.equal(manifest.name, '@dalgo/http');
 assert.equal(manifest.version, process.env.EXPECTED_PACKAGE_VERSION);
 assert.equal(manifest.gitHead, process.env.EXPECTED_SOURCE_SHA);
-assert.equal(lock.packages['node_modules/@dal-go/dalgo2http'].integrity, hashes.integrity);
+assert.equal(lock.packages['node_modules/@dalgo/http'].integrity, hashes.integrity);
 assert.ok(!manifest.private);
 assert.equal(manifest.peerDependencies['@dalgo/core'], '>=0.6.0 <0.7.0');
 assert.equal(readFileSync(resolve(httpRoot, 'LICENSE'), 'utf8').trimEnd(), readFileSync(resolve(repository, 'LICENSE'), 'utf8').trimEnd());
@@ -55,7 +55,7 @@ const runtimes = [node20, node24].map((runtime, index) => {
   assert.match(proof.nodeVersion, new RegExp(`^v${major}\\.`));
   return { ...proof, typedImports: true, ...hashes, sourceSHA: manifest.gitHead };
 });
-run('npm', ['ls', '@dalgo/core', '@dal-go/dalgo2http', '--all']);
+run('npm', ['ls', '@dalgo/core', '@dalgo/http', '--all']);
 run(process.execPath, ['node_modules/playwright/cli.js', 'install', 'chromium']);
 const browser = JSON.parse(run(process.execPath, [resolve(repository, 'packages/http/scripts/browser-smoke.mjs')], {
   PLAYWRIGHT_MODULE: resolve(destination, 'node_modules/playwright/index.mjs'),

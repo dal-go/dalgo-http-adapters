@@ -6,6 +6,11 @@ The ordinary package export retains the legacy DALgo record adapter described
 below. The analytical entry does not import a DALgo runtime; consumer integration
 and release acceptance remain separate required gates.
 
+The record adapter supports one consumer core from either `^0.1.0` or `^0.6.0`.
+Use core0.6 when combining it with `@dalgo/http` or `@dalgo/ovdb`; core0.1
+consumers remain supported. Release tests cover both declared core lines, and
+the combined core0.6 consumer uses one strict registry core instance.
+
 ## Metadata-only browser discovery
 
 `BigQueryMetadataClient` in `/analytical` makes only bounded `datasets.get` and

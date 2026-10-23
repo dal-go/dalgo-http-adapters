@@ -1,0 +1,75 @@
+{
+  "name": "@dalgo/sqlite-wasm",
+  "version": "0.0.0",
+  "description": "Read-write DALgo database over SQLite for browsers (sqlite-wasm, OPFS) and Node",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./opfs": {
+      "types": "./dist/opfs/index.d.ts",
+      "import": "./dist/opfs/index.js"
+    },
+    "./opfs/worker": {
+      "types": "./dist/opfs/worker.d.ts",
+      "import": "./dist/opfs/worker.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "eslint . && tsc -p tsconfig.json --noEmit && vitest run --coverage && tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "prepack": "npm --prefix ../sqlite-sql run build && npm run build",
+    "test": "vitest run",
+    "test:browser": "playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dal-go/dalgo-http-adapters.git",
+    "directory": "packages/sqlite-wasm"
+  },
+  "bugs": {
+    "url": "https://github.com/dal-go/dalgo-http-adapters/issues"
+  },
+  "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/sqlite-wasm#readme",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@dalgo/core": ">=0.7.4 <0.9.0",
+    "@dalgo/sqlite-sql": ">=0.0.0 <1.0.0",
+    "@sqlite.org/sqlite-wasm": ">=3.50.0"
+  },
+  "peerDependenciesMeta": {
+    "@sqlite.org/sqlite-wasm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@dalgo/core": "^0.8.0",
+    "@dalgo/sqlite-sql": "workspace:^",
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.0",
+    "@sqlite.org/sqlite-wasm": "3.53.4-build2",
+    "@types/node": "26.6.2",
+    "@vitest/coverage-v8": "5.0.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.11.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1"
+  }
+}
