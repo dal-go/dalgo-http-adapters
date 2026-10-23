@@ -8,29 +8,18 @@ schema map. Callers cannot submit SQL.
 
 ## Install
 
-The `@dalgo/core` peer is not published to npm. Its immutable source commit is
-`b863f32d2e92a0784e9633aa0eaa14d2d5528336`; the codeload archive contains
-source but no built `dist` files. Prepare the package with the TypeScript
-compiler, then pack and install the built artifact:
+The required `@dalgo/core` peer range is `>=0.8.0 <0.9.0`, the first core line
+with the TugQL names; install it from npm. D1 itself ships as a GitHub release
+asset:
 
 ```sh
-curl -fL https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336 -o dalgo-js.tar.gz
-mkdir dalgo-js
-tar -xzf dalgo-js.tar.gz -C dalgo-js --strip-components=1
-pnpm --dir dalgo-js install --frozen-lockfile --ignore-scripts
-pnpm --dir dalgo-js exec tsc -p tsconfig.build.json
-pnpm --dir dalgo-js pack
-
-# After the D1 0.2.0 GitHub release is available, run from your application directory.
-pnpm add https://github.com/dal-go/dalgo-http-adapters/releases/download/d1-v0.2.0/dalgo-d1-0.2.0.tgz ./dalgo-js/dalgo-core-0.2.0.tgz
+# After the D1 0.3.0 GitHub release is available, run from your application directory.
+pnpm add @dalgo/core@~0.8.0 https://github.com/dal-go/dalgo-http-adapters/releases/download/d1-v0.3.0/dalgo-d1-0.3.0.tgz
 ```
 
-Do not add the raw GitHub or codeload source as a runtime dependency: the
-archive needs this build step to create the files exposed by `@dalgo/core`.
-Direct Git installs can also fail during npm 10's automatic `prepare` step;
-building and packing the pinned source explicitly avoids that lifecycle path.
-The D1 release URL above becomes usable only after the `d1-v0.2.0` GitHub
-release has been created.
+The D1 release URL above becomes usable only after the `d1-v0.3.0` GitHub
+release has been created. The earlier `d1-v0.2.0` asset requires the unpublished
+core 0.2.0 source and is superseded.
 
 ## Worker binding
 

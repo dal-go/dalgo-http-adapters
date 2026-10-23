@@ -10,6 +10,9 @@ This adapter provides local, same-origin browser persistence. It complements `@d
 pnpm add @dalgo/core @dalgo/indexeddb
 ```
 
+The required peer range is `@dalgo/core >=0.8.0 <0.9.0`, the first core line
+with the TugQL names.
+
 ## Use
 
 ```ts
@@ -81,7 +84,7 @@ Hints apply to this query only; fields marked numeric must contain decimal strin
 
 ## Recursive TugQL
 
-Run recursive TugQL through `executeRecursiveDTQLQuery` from `@dalgo/core`.
+Run recursive TugQL through `executeRecursiveTugQLQuery` from `@dalgo/core`.
 The core sends this adapter ordinary, bounded leaf queries; calling
 `IndexedDbDatabase.query()` with a recursive AST is rejected before the database
 opens. The leaf path scans IndexedDB cursors. A bounded leaf retains only its
