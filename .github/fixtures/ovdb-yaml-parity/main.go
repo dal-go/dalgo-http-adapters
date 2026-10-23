@@ -7,7 +7,7 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/dal-go/dalgo/dtql"
+	"github.com/dal-go/dalgo/tugql"
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,7 +47,7 @@ func run() error {
 		return err
 	}
 	for index, in := range inputs {
-		query, err := dtql.Deserialize([]byte(in.Body))
+		query, err := tugql.Deserialize([]byte(in.Body))
 		if err != nil {
 			return fmt.Errorf("case %d: %w", index, err)
 		}
@@ -58,16 +58,16 @@ func run() error {
 		if err != nil || !reflect.DeepEqual(decoded, in.Values) {
 			return fmt.Errorf("Go YAML string parity failed")
 		}
-		encoded, err := dtql.Serialize(query)
+		encoded, err := tugql.Serialize(query)
 		if err != nil {
 			return err
 		}
 		again, err := values(encoded)
 		if err != nil || !reflect.DeepEqual(again, in.Values) {
-			return fmt.Errorf("released DTQL string parity failed")
+			return fmt.Errorf("released TugQL string parity failed")
 		}
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"synthetic": true, "cases": len(inputs), "parser": "github.com/dal-go/dalgo v0.93.0", "protocol": "openvaultdb-go v0.24.1", "providerRequests": 0})
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"synthetic": true, "cases": len(inputs), "parser": "github.com/dal-go/dalgo v0.95.2", "protocol": "openvaultdb-go v0.26.2", "providerRequests": 0})
 }
 func main() {
 	if err := run(); err != nil {

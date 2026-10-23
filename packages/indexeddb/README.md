@@ -79,9 +79,9 @@ const page = await db.query(query);
 
 Hints apply to this query only; fields marked numeric must contain decimal strings or safe integer numbers. Decimal comparison is exact within the adapter's 1,000-digit scale bound. Cancellation rejects the query without returning a partial page.
 
-## Recursive DTQL
+## Recursive TugQL
 
-Run recursive DTQL through `executeRecursiveDTQLQuery` from `@dalgo/core`.
+Run recursive TugQL through `executeRecursiveDTQLQuery` from `@dalgo/core`.
 The core sends this adapter ordinary, bounded leaf queries; calling
 `IndexedDbDatabase.query()` with a recursive AST is rejected before the database
 opens. The leaf path scans IndexedDB cursors. A bounded leaf retains only its

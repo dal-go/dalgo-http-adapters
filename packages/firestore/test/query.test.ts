@@ -14,7 +14,7 @@ const firestore = getFirestore(app);
 
 describe("compileFirestoreQuery", () => {
   it("rejects a raw recursive query before Firestore receives it", () => {
-    const recursive = { kind: "recursive-dtql", from: { kind: "table", name: "items", joins: [] } } as unknown as StructuredQuery<Item>;
+    const recursive = { kind: "recursive-tugql", from: { kind: "table", name: "items", joins: [] } } as unknown as StructuredQuery<Item>;
     expect(() => compileFirestoreQuery(firestore, recursive)).toThrow(UnsupportedError);
     expect(() => compileFirestoreQuery(firestore, recursive)).toThrow("core recursive executor");
     const disguised = { ...recursive, source: { kind: "collection", name: "items" }, filters: [], orders: [] } as unknown as StructuredQuery<Item>;
