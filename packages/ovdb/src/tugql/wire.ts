@@ -1,7 +1,7 @@
 import { Key, type ExistingRecord, type StructuredQuery } from "@dalgo/core";
 import { stringify } from "yaml";
 
-const fail = (): never => { throw new TypeError("invalid native OpenVaultDB DTQL query"); };
+const fail = (): never => { throw new TypeError("invalid native OpenVaultDB TugQL query"); };
 function closed(raw: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail();
   const value = raw as Record<string, unknown>;
@@ -33,7 +33,7 @@ export function encodeNativeQuery<T>(query: StructuredQuery<T>): { body: string;
   return { body, limit, filters: comparisons.map(comparison => ({ field: comparison.left.field, value: comparison.right.value as string })) };
 }
 export function nativeRecords<T>(raw: unknown, limit: number, referenceDate: string, filters: readonly NativeEquality[]): readonly ExistingRecord<T>[] {
-  const invalid = (): never => { throw new TypeError("invalid native OpenVaultDB DTQL records"); };
+  const invalid = (): never => { throw new TypeError("invalid native OpenVaultDB TugQL records"); };
   if (!Array.isArray(raw) || raw.length > limit) invalid();
   const currencies = new Set<string>();
   return (raw as unknown[]).map(item => {

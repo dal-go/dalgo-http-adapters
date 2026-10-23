@@ -43,7 +43,7 @@ for (const [path, pkg] of Object.entries(lock.packages)) {
 const test = resolve(modern.path, 'test');
 cpSync(resolve(repository, '.github/fixtures/bigquery-combined/browser.ts'), resolve(test, 'browser.ts'));
 cpSync(resolve(repository, 'packages/http/test/browser-fixture.ts'), resolve(test, 'http-fixture.ts'));
-writeFileSync(resolve(test, 'dtql-fixture.ts'), readFileSync(resolve(repository, 'packages/ovdb/test/dtql-fixture.ts'), 'utf8').replace('../src/dtql/index.js', '@dalgo/ovdb/dtql'));
+writeFileSync(resolve(test, 'tugql-fixture.ts'), readFileSync(resolve(repository, 'packages/ovdb/test/tugql-fixture.ts'), 'utf8').replace('../src/tugql/index.js', '@dalgo/ovdb/tugql'));
 writeFileSync(resolve(modern.path, 'tsconfig.combined.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', lib: ['ES2022', 'DOM'], strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, skipLibCheck: false, noEmit: true }, include: ['test/browser.ts'] }));
 for (const runtime of [node20, node24]) process.stdout.write(run(runtime, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.combined.json'], modern.path));
 cpSync(resolve(repository, '.github/scripts/bigquery-combined-browser.mjs'), resolve(modern.path, 'combined-browser.mjs'));

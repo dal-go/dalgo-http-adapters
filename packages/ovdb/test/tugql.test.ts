@@ -1,10 +1,10 @@
 import { collection, providerEvidenceDigest, type StructuredQuery } from "@dalgo/core";
 import { parse } from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenVaultDbDTQLQueryExecutor, createOpenVaultDbExecutionBudget, createOpenVaultDbExecutionId,
-  assertOpenVaultDbExecutionBudget, raceOpenVaultDbExecutionBudget, validateOpenVaultDbDTQLEvidence, validateOpenVaultDbDTQLPlan,
-  type OpenVaultDbExecutionOwner } from "../src/dtql/index.js";
-import { fixture, response, rows } from "./dtql-fixture.js";
+import { OpenVaultDbTugQLQueryExecutor, createOpenVaultDbExecutionBudget, createOpenVaultDbExecutionId,
+  assertOpenVaultDbExecutionBudget, raceOpenVaultDbExecutionBudget, validateOpenVaultDbTugQLEvidence, validateOpenVaultDbTugQLPlan,
+  type OpenVaultDbExecutionOwner } from "../src/tugql/index.js";
+import { fixture, response, rows } from "./tugql-fixture.js";
 const owners: OpenVaultDbExecutionOwner[] = [];
 function owner(): OpenVaultDbExecutionOwner { const handle = createOpenVaultDbExecutionBudget(); owners.push(handle); return handle; }
 afterEach(() => { owners.splice(0).forEach(handle => { handle.dispose(); }); vi.restoreAllMocks(); vi.useRealTimers(); });
@@ -14,10 +14,10 @@ async function setup() {
   const handle = owner(), f = await fixture(createOpenVaultDbExecutionId(handle.budget));
   const captured = structuredClone(f.metadata);
   const fetcher = vi.fn<typeof fetch>(() => Promise.resolve(response(captured)));
-  const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: fetcher });
+  const executor = new OpenVaultDbTugQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: fetcher });
   return { ...f, handle, fetcher, executor };
 }
-describe("completed native DTQL executor", () => {
+describe("completed native TugQL executor", () => {
   it("POSTs once with exact nonce/YAML/privacy options and preserves lexical rows and detached evidence", async () => {
     const s = await setup();
     const page = await s.executor.query(query());
@@ -40,7 +40,7 @@ describe("completed native DTQL executor", () => {
       expect(this).toBe(globalThis);
       return Promise.resolve(response(f.metadata));
     });
-    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget });
+    const executor = new OpenVaultDbTugQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget });
     expect((await executor.query(query())).records[0]?.data.rate).toBe("001.23000");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
@@ -50,7 +50,7 @@ describe("completed native DTQL executor", () => {
       expect(this).toBe(globalThis);
       return Promise.resolve(response(f.metadata));
     });
-    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: globalThis.fetch });
+    const executor = new OpenVaultDbTugQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: globalThis.fetch });
     expect((await executor.query(query())).records[0]?.data.rate).toBe("001.23000");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
@@ -59,7 +59,7 @@ describe("completed native DTQL executor", () => {
     const fetcher = vi.fn<typeof fetch>(function () {
       return Promise.resolve(response(f.metadata));
     });
-    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: fetcher });
+    const executor = new OpenVaultDbTugQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: fetcher });
     expect((await executor.query(query())).records[0]?.data.rate).toBe("001.23000");
     expect(fetcher.mock.contexts[0]).toBe(executor);
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -112,7 +112,7 @@ describe("completed native DTQL executor", () => {
       if (kind === "execution") Object.assign(f.plan.execution, { id: "A".repeat(32) });
       if (kind === "request") Object.assign(f.plan.requests[0] ?? {}, { upstreamUrl: "https://other.example" });
       if (kind === "decoder") Object.assign(f.plan.bindings[0] ?? {}, { decoderDigest: "a".repeat(64) });
-      const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: fetcher });
+      const executor = new OpenVaultDbTugQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: handle.budget, fetch: fetcher });
       await expect(executor.query(query())).rejects.toThrow(); expect(fetcher).not.toHaveBeenCalled();
     }
   });
@@ -127,7 +127,7 @@ describe("completed native DTQL executor", () => {
   });
   it("refuses a second executor on the same owner budget before another POST", async () => {
     const s = await setup(); await s.executor.query(query());
-    const second = new OpenVaultDbDTQLQueryExecutor({ ...s.config, providerReadPlan: s.plan, budget: s.handle.budget, fetch: s.fetcher });
+    const second = new OpenVaultDbTugQLQueryExecutor({ ...s.config, providerReadPlan: s.plan, budget: s.handle.budget, fetch: s.fetcher });
     await expect(second.query(query())).rejects.toThrow(); expect(s.fetcher).toHaveBeenCalledTimes(1);
   });
   it("rechecks admission expiry after body/evidence and honors a captured explicit limit", async () => {
@@ -173,7 +173,7 @@ describe("completed native DTQL executor", () => {
     const s = await setup(); await s.executor.query(query());
     const h = owner(); createOpenVaultDbExecutionId(h.budget);
     const fetcher = vi.fn<typeof fetch>();
-    const copy = new OpenVaultDbDTQLQueryExecutor({ ...s.config, providerReadPlan: structuredClone(s.plan), budget: h.budget, fetch: fetcher });
+    const copy = new OpenVaultDbTugQLQueryExecutor({ ...s.config, providerReadPlan: structuredClone(s.plan), budget: h.budget, fetch: fetcher });
     await expect(copy.query(query())).rejects.toThrow(); expect(fetcher).not.toHaveBeenCalled();
     expect(() => { createOpenVaultDbExecutionId(h.budget); }).toThrow("already issued");
     expect(() => { Object.assign(h.budget, { deadlineAt: Infinity }); }).toThrow();
@@ -185,8 +185,8 @@ describe("completed native DTQL executor", () => {
       const page = await s.executor.query(query());
       now += 10001;
       const next = owner(); createOpenVaultDbExecutionId(next.budget);
-      await expect(validateOpenVaultDbDTQLEvidence(page, s.plan, next.budget)).rejects.toThrow("refused");
-      await expect(validateOpenVaultDbDTQLEvidence(page, s.plan, s.handle.budget)).rejects.toMatchObject({ name: "TimeoutError" });
+      await expect(validateOpenVaultDbTugQLEvidence(page, s.plan, next.budget)).rejects.toThrow("refused");
+      await expect(validateOpenVaultDbTugQLEvidence(page, s.plan, s.handle.budget)).rejects.toMatchObject({ name: "TimeoutError" });
     }
   });
   it("waits for EOF and refuses late invalid terminal without returning records", async () => {
@@ -235,17 +235,17 @@ describe("absolute owner execution budget", () => {
   });
   it("consumes admission time and refuses deadline crossing before delayed timers run", async () => {
     let now = 0; vi.spyOn(performance, "now").mockImplementation(() => now); const h = owner(), f = await fixture(createOpenVaultDbExecutionId(h.budget));
-    now = 9000; await validateOpenVaultDbDTQLPlan(f.config, f.plan, h.budget);
+    now = 9000; await validateOpenVaultDbTugQLPlan(f.config, f.plan, h.budget);
     const fetcher = vi.fn<typeof fetch>(() => { now = 10001; return Promise.resolve(response(f.metadata)); });
-    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: h.budget, fetch: fetcher });
+    const executor = new OpenVaultDbTugQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: h.budget, fetch: fetcher });
     await expect(executor.query(query())).rejects.toMatchObject({ name: "TimeoutError" });
     expect(h.budget.signal.aborted).toBe(false);
   });
   it("keeps the owner alive after adapter return for evidence and guarded detached render handoff", async () => {
     let now = 0; vi.spyOn(performance, "now").mockImplementation(() => now); const h = owner(), f = await fixture(createOpenVaultDbExecutionId(h.budget));
-    const executor = new OpenVaultDbDTQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: h.budget, fetch: () => Promise.resolve(response(f.metadata)) });
+    const executor = new OpenVaultDbTugQLQueryExecutor({ ...f.config, providerReadPlan: f.plan, budget: h.budget, fetch: () => Promise.resolve(response(f.metadata)) });
     const page = await executor.query(query()); expect(h.budget.signal.aborted).toBe(false);
-    now = 10001; await expect(validateOpenVaultDbDTQLEvidence(page, f.plan, h.budget)).rejects.toMatchObject({ name: "TimeoutError" });
+    now = 10001; await expect(validateOpenVaultDbTugQLEvidence(page, f.plan, h.budget)).rejects.toMatchObject({ name: "TimeoutError" });
     const commit = vi.fn(); expect(() => { assertOpenVaultDbExecutionBudget(h.budget); commit(page); }).toThrow(); expect(commit).not.toHaveBeenCalled();
     h.dispose(); expect(h.budget.signal.aborted).toBe(true);
   });

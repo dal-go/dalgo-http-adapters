@@ -4,4 +4,4 @@ dist/
 .pnpm-store/
 .browser-fixture-dist/
 
-dist-dtql/
+dist-tugql/

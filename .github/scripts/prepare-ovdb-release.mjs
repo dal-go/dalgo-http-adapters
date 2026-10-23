@@ -15,7 +15,7 @@ const readJSON = path => JSON.parse(readFileSync(path, "utf8"));
 const failUnless = (condition, message) => { if (!condition) throw new Error(message); };
 const inspect = tarball => {
   const files = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" }).trim().split("\n");
-  failUnless(files.every(file => /^package\/(dist-dtql\/[^\s]+|package\.json|README\.md|LICENSE)$/.test(file) && !file.split("/").includes("..")), "unexpected tarball file");
+  failUnless(files.every(file => /^package\/(dist-tugql\/[^\s]+|package\.json|README\.md|LICENSE)$/.test(file) && !file.split("/").includes("..")), "unexpected tarball file");
   const contents = file => execFileSync("tar", ["-xOzf", tarball, `package/${file}`], { encoding: "utf8" });
   const manifest = JSON.parse(contents("package.json"));
   failUnless(Object.entries(identity).every(([key, value]) => manifest[key] === value), "wrong packed package/version/gitHead");
@@ -25,12 +25,12 @@ const inspect = tarball => {
   for (const section of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     failUnless(Object.entries(manifest[section] ?? {}).every(([name, value]) => name !== "@dal-go/dalgo" && !/^(file:|link:|workspace:|git[+:]|github:|https?:)/.test(value)), "repository-only or legacy dependency");
   }
-  for (const entry of [".", "./dtql"]) for (const kind of ["import", "types"]) {
+  for (const entry of [".", "./tugql"]) for (const kind of ["import", "types"]) {
     failUnless(Object.keys(manifest.exports ?? {}).length === 2, "unexpected export entry");
     failUnless(Object.keys(manifest.exports?.[entry] ?? {}).length === 2, "unexpected export condition");
     const path = manifest.exports?.[entry]?.[kind];
-    failUnless(path === (kind === "import" ? "./dist-dtql/index.js" : "./dist-dtql/index.d.ts"), "wrong query-only entrypoint");
-    failUnless(typeof path === "string" && path.startsWith("./dist-dtql/") && files.includes(`package/${path.slice(2)}`), `missing ${entry} ${kind}`);
+    failUnless(path === (kind === "import" ? "./dist-tugql/index.js" : "./dist-tugql/index.d.ts"), "wrong query-only entrypoint");
+    failUnless(typeof path === "string" && path.startsWith("./dist-tugql/") && files.includes(`package/${path.slice(2)}`), `missing ${entry} ${kind}`);
   }
   failUnless(files.includes("package/README.md") && files.includes("package/LICENSE"), "missing README/LICENSE");
   for (const file of files.filter(file => /\.(js|ts|map)$/.test(file))) failUnless(!/(?:OpenVaultDbClient|OpenVaultDbDatabase|bearer|getAccessToken|\.\.\/client|\.\.\/database|@dal-go\/dalgo)/i.test(contents(file.slice(8))), "legacy code in packed output");
@@ -43,7 +43,7 @@ if (mode === "pack") {
   const pkg = resolve(dirname(fileURLToPath(import.meta.url)), "../../packages/ovdb");
   const staging = resolve(directory, "staging");
   mkdirSync(staging);
-  for (const file of ["dist-dtql", "README.md", "LICENSE"]) cpSync(resolve(pkg, file), resolve(staging, file), { recursive: true });
+  for (const file of ["dist-tugql", "README.md", "LICENSE"]) cpSync(resolve(pkg, file), resolve(staging, file), { recursive: true });
   const manifest = readJSON(resolve(pkg, "package.json"));
   failUnless(manifest.name === identity.name && manifest.version === version, "source package identity mismatch");
   // npm tarball publication reads gitHead from the packed manifest. Explicitly

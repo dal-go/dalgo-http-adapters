@@ -1,11 +1,11 @@
 export {
-  OpenVaultDbDTQLQueryExecutor,
+  OpenVaultDbTugQLQueryExecutor,
   type CompletedOpenVaultDbQueryPage,
-  type OpenVaultDbDTQLQueryOptions,
+  type OpenVaultDbTugQLQueryOptions,
 } from "./executor.js";
 export {
-  validateOpenVaultDbDTQLPlan, validateOpenVaultDbDTQLEvidence,
-  type OpenVaultDbDTQLPlanConfiguration, type OpenVaultDbPublicAdmission,
+  validateOpenVaultDbTugQLPlan, validateOpenVaultDbTugQLEvidence,
+  type OpenVaultDbTugQLPlanConfiguration, type OpenVaultDbPublicAdmission,
 } from "./plan.js";
 export {
   createOpenVaultDbExecutionId, createOpenVaultDbExecutionBudget,

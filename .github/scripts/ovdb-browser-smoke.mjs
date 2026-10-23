@@ -10,7 +10,7 @@ const nativePosts = { default: 0, explicit: 0 };
 try {
   const page = await browser.newPage();
   await page.exposeFunction('prepareNativeResponse', (endpoint, executionId, body, mode) => {
-    assert.equal(endpoint, 'https://worker.example/ecb-public/v1/databases/ecb/dtql');
+    assert.equal(endpoint, 'https://worker.example/ecb-public/v1/databases/ecb/tugql');
     assert.match(executionId, /^[a-f0-9]{32}$/);
     assert.equal(JSON.parse(body).providerReads.execution.id, executionId);
     assert.ok(!prepared.has(executionId));
@@ -21,7 +21,7 @@ try {
     const request = route.request(), url = request.url();
     if (url === 'https://directory.example/') return route.fulfill({ contentType: 'text/html', body: '<!doctype html><script type="module">import { runSyntheticOVDBConsumer, runSyntheticOVDBNativeBrowserConsumer } from "./fixture.js"; window.proof = (async () => ({ ...await runSyntheticOVDBConsumer(), ...await runSyntheticOVDBNativeBrowserConsumer(window.prepareNativeResponse) }))();</script>' });
     if (url === 'https://directory.example/fixture.js') return route.fulfill({ contentType: 'text/javascript', body: readFileSync('browser-fixture.js', 'utf8') });
-    if (url === 'https://worker.example/ecb-public/v1/databases/ecb/dtql') {
+    if (url === 'https://worker.example/ecb-public/v1/databases/ecb/tugql') {
       const headers = { 'Access-Control-Allow-Origin': 'https://directory.example', 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type, OVDB-Execution-ID', 'Cache-Control': 'no-store' };
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       assert.equal(request.method(), 'POST');

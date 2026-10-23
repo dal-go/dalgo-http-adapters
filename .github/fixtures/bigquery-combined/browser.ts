@@ -3,9 +3,9 @@ import { collection, Key, UnsupportedError, type QueryExecutor, type QueryPage }
 import { BigQueryDatabase } from "@dalgo/bigquery";
 import { ECBQueryExecutor } from "@dalgo/http";
 import * as root from "@dalgo/ovdb";
-import * as dtql from "@dalgo/ovdb/dtql";
+import * as tugql from "@dalgo/ovdb/tugql";
 import { syntheticPlan } from "./http-fixture.js";
-import { fixture, response } from "./dtql-fixture.js";
+import { fixture, response } from "./tugql-fixture.js";
 
 function nativePage(page: QueryPage<{ rate: string }>): void {
   if (page.records.length !== 1 || !(page.records[0]?.key instanceof Key) || page.records[0].data.rate !== "001.23000") throw new Error("shared core lexical/key identity lost");
@@ -30,7 +30,7 @@ export async function runCombinedConsumer(prepare: (endpoint: string, id: string
   if (httpPage.sourceRights?.length !== 1 || httpPage.providerReads?.execution.id !== plan.execution.id) throw new Error("HTTP evidence lost");
   const ovdbRows = { default: 0, explicit: 0 };
   for (const mode of ["default", "explicit"] as const) {
-    for (const Executor of [root.OpenVaultDbDTQLQueryExecutor, dtql.OpenVaultDbDTQLQueryExecutor]) {
+    for (const Executor of [root.OpenVaultDbTugQLQueryExecutor, tugql.OpenVaultDbTugQLQueryExecutor]) {
       const owner = root.createOpenVaultDbExecutionBudget();
       try {
         const f = await fixture(root.createOpenVaultDbExecutionId(owner.budget));
@@ -38,7 +38,7 @@ export async function runCombinedConsumer(prepare: (endpoint: string, id: string
         const executor: QueryExecutor = new Executor({ ...f.config, providerReadPlan: f.plan, budget: owner.budget, ...(mode === "explicit" ? { fetch: globalThis.fetch } : {}) });
         const page = await executor.query(collection<{ rate: string }>("daily").query().limit(1).build());
         nativePage(page);
-        await root.validateOpenVaultDbDTQLEvidence(page, f.plan, owner.budget);
+        await root.validateOpenVaultDbTugQLEvidence(page, f.plan, owner.budget);
         root.assertOpenVaultDbExecutionBudget(owner.budget);
         if (page.sourceRights?.length !== 1) throw new Error("OVDB evidence lost");
         ovdbRows[mode]++;

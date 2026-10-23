@@ -11,7 +11,7 @@ const ovdbPosts = { default: 0, explicit: 0 };
 try {
   const page = await browser.newPage({ serviceWorkers: 'block' });
   await page.exposeFunction('prepareResponse', (endpoint, id, body, mode) => {
-    assert.equal(endpoint, 'https://worker.example/ecb-public/v1/databases/ecb/dtql');
+    assert.equal(endpoint, 'https://worker.example/ecb-public/v1/databases/ecb/tugql');
     assert.match(id, /^[a-f0-9]{32}$/); assert.equal(JSON.parse(body).providerReads.execution.id, id);
     assert.ok(!prepared.has(id)); assert.ok(mode === 'default' || mode === 'explicit');
     prepared.set(id, { body, mode });
@@ -32,7 +32,7 @@ try {
       assert.equal(request.method(), 'GET'); assert.equal(request.headers().authorization, undefined); httpGets++;
       return route.fulfill({ contentType: 'application/xml', headers, body: '<g:Envelope xmlns:g="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><Cube><Cube time="2037-02-03"><Cube currency="AAA" rate="001.23000"/></Cube></Cube></g:Envelope>' });
     }
-    if (url === 'https://worker.example/ecb-public/v1/databases/ecb/dtql') {
+    if (url === 'https://worker.example/ecb-public/v1/databases/ecb/tugql') {
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       assert.equal(request.method(), 'POST'); assert.equal(request.headers().authorization, undefined); assert.equal(request.headers().cookie, undefined);
       assert.deepEqual(parse(request.postData()), { from: { name: 'daily' }, limit: 1 });
