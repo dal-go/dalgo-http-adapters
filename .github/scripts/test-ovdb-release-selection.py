@@ -7,7 +7,9 @@ start = workflow.index('          source_sha=$(git rev-parse HEAD)')
 # Exact package-loop indentation excludes nested report and metadata loops.
 end = workflow.index('\n          done\n', start) + len('\n          done')
 shell = 'set -euo pipefail\n' + '\n'.join(line[10:] for line in workflow[start:end].splitlines()) + '\n'
-shell = shell.replace('for package in firestore indexeddb bigquery http ovdb; do', 'for package in "$SELECTED"; do')
+loop = 'for package in firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm; do'
+assert loop in shell, 'release publish loop changed; update this selection test'
+shell = shell.replace(loop, 'for package in "$SELECTED"; do')
 sha = 'a'*40
 with tempfile.TemporaryDirectory(prefix='ovdb-release-selection-') as directory:
     root = Path(directory)
