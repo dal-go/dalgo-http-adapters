@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "eslint . && vitest run && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json",
     "lint": "eslint .",
-    "prepack": "npm run build",
+    "prepack": "npm --prefix ../sqlite-sql run build && npm run build",
     "test": "vitest run"
   },
   "repository": {
@@ -29,10 +29,13 @@
   "license": "MIT",
   "publishConfig": { "access": "public" },
   "engines": { "node": ">=20" },
-  "peerDependencies": { "@dalgo/core": ">=0.8.0 <0.9.0" },
-  "dependencies": { "@dalgo/sqlite-sql": "workspace:^" },
+  "peerDependencies": {
+    "@dalgo/core": ">=0.8.0 <0.9.0",
+    "@dalgo/sqlite-sql": ">=0.1.0"
+  },
   "devDependencies": {
     "@dalgo/core": "^0.8.0",
+    "@dalgo/sqlite-sql": "workspace:^",
     "@types/node": "26.6.2",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",

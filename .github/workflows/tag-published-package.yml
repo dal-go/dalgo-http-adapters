@@ -14,6 +14,7 @@ on:
           - http
           - sqlite-sql
           - sqlite-wasm
+          - d1
       version:
         description: Published version, without v
         required: true
@@ -63,7 +64,7 @@ jobs:
           case "$PACKAGE" in
             firestore|indexeddb|bigquery) name="@dalgo/$PACKAGE" ;;
             http) name='@dalgo/http' ;;
-            sqlite-sql|sqlite-wasm) name="@dalgo/$PACKAGE" ;;
+            sqlite-sql|sqlite-wasm|d1) name="@dalgo/$PACKAGE" ;;
             *) exit 1 ;;
           esac
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then

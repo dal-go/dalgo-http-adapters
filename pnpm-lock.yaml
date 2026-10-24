@@ -220,14 +220,13 @@ importers:
         version: 5.0.1(@types/node@26.6.2)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.2)(esbuild@0.28.2)(yaml@2.9.1))
 
   packages/d1:
-    dependencies:
-      '@dalgo/sqlite-sql':
-        specifier: workspace:^
-        version: link:../sqlite-sql
     devDependencies:
       '@dalgo/core':
         specifier: 0.8.0
         version: 0.8.0
+      '@dalgo/sqlite-sql':
+        specifier: workspace:^
+        version: link:../sqlite-sql
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
