@@ -42,7 +42,7 @@ A package's first npm publication (for example `@dalgo/sqlite-sql`,
 `@dalgo/sqlite-wasm` and `@dalgo/d1`) needs an authorized bootstrap before its trusted-publisher
 settings can exist. Bootstrap with the placeholder version `0.0.0-stage` under
 `--tag stage`, as `@dalgo/bigquery`, `@dalgo/http` and `@dalgo/ovdb` were, then
-configure the trusted publisher. Never bootstrap with the version the version
+configure the trusted publisher. If `npm publish` of the placeholder returns E403 "You cannot publish using the version" right after browser authentication, run `npm view <package> versions` first: the publish usually already succeeded and npm rejected the automatic retry of the same version. Never bootstrap with the version the version
 pull request will release: the workflow then finds it already present, fails
 its `gitHead` check, and npm never allows that version to be republished.
 Without the bootstrap, publication fails with an authentication error at that
