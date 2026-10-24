@@ -218,17 +218,18 @@ fi
     (root/'sleep').write_text('#!/usr/bin/env bash\necho sleep >> "$MOCK_SLEEP_LOG"\n')
     for executable in ['git', 'npm', 'curl', 'node', 'sleep', 'timeout']:
         (root/executable).chmod(0o755)
-    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http']:
+    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http', 'sqlite_changed']:
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
-        for package in ['firestore','indexeddb','bigquery','http','ovdb']:
+        for package in ['firestore','indexeddb','bigquery','http','ovdb','sqlite-sql','sqlite-wasm']:
             manifest = root/'packages'/package/'package.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
-            version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure']) else '0.1.0'
+            version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed','sqlite_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure']) else '0.1.0'
             if case.startswith('http_'):
                 version = '0.2.0' if package == 'http' else '0.1.0'
             elif case == 'mixed_bigquery_http':
                 version = '0.2.0' if package in ['bigquery','http'] else '0.1.0'
             if package == 'ovdb': version = '0.1.0'
+            if package.startswith('sqlite-'): version = '0.2.0' if case == 'sqlite_changed' else '0.1.0'
             manifest.write_text(json.dumps({'name': {'http':'@dalgo/http','ovdb':'@dalgo/ovdb'}.get(package, '@dalgo/'+package), 'version': version}))
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
@@ -249,6 +250,11 @@ fi
                 assert 'publish bigquery' not in calls and not Path(env['BIGQUERY_ARTIFACT_DIR']).exists(), calls
             if case == 'http_checker_error':
                 assert not Path(env['HTTP_ARTIFACT_DIR'],'tested-artifact.json').exists()
+            print(f'PASS {case}: exit={result.returncode}, calls={calls.splitlines()}')
+            continue
+        if case == 'sqlite_changed':
+            assert result.returncode == 0, (case,result.stderr,calls)
+            assert calls.splitlines() == ['publish sqlite-sql','git tag -a sqlite-sql@v0.2.0 '+sha+' -m @dalgo/sqlite-sql 0.2.0','git push origin refs/tags/sqlite-sql@v0.2.0','publish sqlite-wasm','git tag -a sqlite-wasm@v0.2.0 '+sha+' -m @dalgo/sqlite-wasm 0.2.0','git push origin refs/tags/sqlite-wasm@v0.2.0'], (case,calls)
             print(f'PASS {case}: exit={result.returncode}, calls={calls.splitlines()}')
             continue
         assert (result.returncode == 0) == (case in ['unchanged','bigquery_changed','registry_existing','firestore_changed','indexeddb_changed','metadata_delayed']), (case,result.stderr,calls)
@@ -366,12 +372,12 @@ fi
 ''')
     (root/'npm').chmod(0o755)
     (root/'git').chmod(0o755)
-    for case in ['firestore', 'indexeddb', 'bigquery', 'http', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
+    for case in ['firestore', 'indexeddb', 'bigquery', 'http', 'sqlite-sql', 'sqlite-wasm', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
         output = root/f'{case}.output'
-        package = case if case in ['firestore', 'indexeddb', 'bigquery', 'http'] else 'algolia' if case == 'private_package' else 'bigquery'
+        package = case if case in ['firestore', 'indexeddb', 'bigquery', 'http', 'sqlite-sql', 'sqlite-wasm'] else 'algolia' if case == 'private_package' else 'bigquery'
         env = dict(os.environ, PATH=f'{root}:'+os.environ['PATH'], CASE=case, PACKAGE=package, VERSION='v0.3.0' if case == 'invalid_version' else '0.3.0', MOCK_SHA=sha, GITHUB_OUTPUT=str(output))
         result = subprocess.run(['bash',str(root/'run.sh')],env=env,capture_output=True,text=True)
-        succeeds = case in ['firestore', 'indexeddb', 'bigquery', 'http']
+        succeeds = case in ['firestore', 'indexeddb', 'bigquery', 'http', 'sqlite-sql', 'sqlite-wasm']
         assert (result.returncode == 0) == succeeds, (case, result.stderr)
         assert output.exists() == succeeds, case
         if succeeds: assert f'tag={package}@v0.3.0' in output.read_text()
