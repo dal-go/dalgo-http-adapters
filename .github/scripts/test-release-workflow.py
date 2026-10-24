@@ -559,3 +559,13 @@ tsc.write_text('process.exit(0);')
             assert [runtime['version'] for runtime in receipt['runtimes']] == ['v20.0.0','v24.15.0']
             assert log.read_text().splitlines() == ['strict-install','runtime-20','runtime-20','runtime-24','runtime-24']
         print(f'PASS real checker {case}: exit={result.returncode}')
+
+# Tag pushes must not use GITHUB_TOKEN, which GitHub refuses for a tag whose
+# commit's workflow files differ from main.
+for name in ['release.yml', 'tag-published-package.yml']:
+    text = (Path(__file__).resolve().parents[1] / 'workflows' / name).read_text()
+    mint = text.index('      - name: Mint tag-push token')
+    checkout = text.index('      - uses: actions/checkout@', mint)
+    assert 'permission-workflows: write' in text[mint:checkout], name
+    assert 'token: ${{ steps.tag-token.outputs.token }}' in text[checkout:text.index('\n      - ', checkout + 1)], name
+    print(f'PASS tag push uses the releaser token: {name}')
