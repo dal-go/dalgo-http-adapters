@@ -28,15 +28,16 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     concurrency:
       group: tag-${{ inputs.package }}-${{ inputs.version }}
       cancel-in-progress: false
     steps:
       # GITHUB_TOKEN cannot create a tag whose commit has workflow files that
-      # differ from main (a retry, or main moving mid-release), so git uses a
-      # Sneat Releaser token that can. Minted first: a missing permission fails
-      # before anything is published.
+      # differ from main (a retry, or main moving mid-release), so the tag push
+      # uses a Sneat Releaser token that can. Minted first: a missing permission
+      # fails before the package is verified or tagged. Checkout keeps no
+      # credential; the token is set only just before the push.
       - name: Mint tag-push token
         id: tag-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -50,7 +51,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          token: ${{ steps.tag-token.outputs.token }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
@@ -87,6 +88,12 @@ jobs:
             echo "package_name=$name"
             echo "tag=$PACKAGE@v$VERSION"
           } >> "$GITHUB_OUTPUT"
+      - name: Set tag-push credential
+        env:
+          TAG_PUSH_TOKEN: ${{ steps.tag-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git remote set-url --push origin "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
       - name: Create package tag without overwriting an existing tag
         env:
           PACKAGE_NAME: ${{ steps.release.outputs.package_name }}

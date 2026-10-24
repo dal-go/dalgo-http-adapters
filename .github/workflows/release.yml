@@ -118,7 +118,9 @@ jobs:
       # GITHUB_TOKEN cannot create a tag whose commit has workflow files that
       # differ from main (a retry, or main moving mid-release), so git uses a
       # Sneat Releaser token that can. Minted first: a missing permission fails
-      # before anything is published.
+      # before anything is published. Checkout keeps no credential, so pnpm
+      # install of third-party dependencies never sees it; it is set only just
+      # before the publish-and-tag step.
       - name: Mint tag-push token
         id: tag-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -132,7 +134,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
-          token: ${{ steps.tag-token.outputs.token }}
+          persist-credentials: false
           fetch-depth: 0
       - name: Verify merged version pull request
         env:
@@ -183,6 +185,12 @@ jobs:
           pnpm --filter @dalgo/sqlite-sql check
           pnpm --filter @dalgo/sqlite-wasm check
           pnpm --filter @dalgo/d1 check
+      - name: Set tag-push credential
+        env:
+          TAG_PUSH_TOKEN: ${{ steps.tag-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git remote set-url --push origin "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
       - name: Publish changed versions and tag their npm source commits
         env:
           NPM_CONFIG_PROVENANCE: 'true'

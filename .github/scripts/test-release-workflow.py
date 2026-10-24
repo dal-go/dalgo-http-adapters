@@ -345,8 +345,8 @@ fi
 # Manual recovery admits all public adapters, including BigQuery, only after
 # exact registry identity, on-main source and matching source manifest checks.
 tag_workflow = (Path(__file__).resolve().parents[1] / 'workflows/tag-published-package.yml').read_text()
-start = tag_workflow.index('          set -euo pipefail')
-end = tag_workflow.index('      - name: Create package tag', start)
+start = tag_workflow.index('          set -euo pipefail', tag_workflow.index('id: release'))
+end = tag_workflow.index('      - name: Set tag-push credential', start)
 shell = '\n'.join(line[10:] for line in tag_workflow[start:end].splitlines())
 assert '          - bigquery\n' in tag_workflow
 with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
@@ -567,11 +567,24 @@ tsc.write_text('process.exit(0);')
         print(f'PASS real checker {case}: exit={result.returncode}')
 
 # Tag pushes must not use GITHUB_TOKEN, which GitHub refuses for a tag whose
-# commit's workflow files differ from main.
-for name in ['release.yml', 'tag-published-package.yml']:
+# commit's workflow files differ from main. The releaser token is minted first,
+# never persisted by checkout, and set as the push credential only just before
+# the step that pushes tags.
+for name, push_step in [
+    ('release.yml', '      - name: Publish changed versions and tag their npm source commits'),
+    ('tag-published-package.yml', '      - name: Create package tag without overwriting an existing tag'),
+]:
     text = (Path(__file__).resolve().parents[1] / 'workflows' / name).read_text()
     mint = text.index('      - name: Mint tag-push token')
     checkout = text.index('      - uses: actions/checkout@', mint)
     assert 'permission-workflows: write' in text[mint:checkout], name
-    assert 'token: ${{ steps.tag-token.outputs.token }}' in text[checkout:text.index('\n      - ', checkout + 1)], name
-    print(f'PASS tag push uses the releaser token: {name}')
+    checkout_block = text[checkout:text.index('\n      - ', checkout + 1)]
+    assert 'persist-credentials: false' in checkout_block, name
+    assert 'tag-token' not in checkout_block and 'token:' not in checkout_block, name
+    credential = text.index('      - name: Set tag-push credential')
+    push = text.index(push_step)
+    assert checkout < credential < push, name
+    credential_block = text[credential:push]
+    assert 'TAG_PUSH_TOKEN: ${{ steps.tag-token.outputs.token }}' in credential_block, name
+    assert 'git remote set-url --push origin' in credential_block and 'echo' not in credential_block, name
+    print(f'PASS tag push credential is scoped to the push step: {name}')
