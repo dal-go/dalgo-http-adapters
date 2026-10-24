@@ -182,6 +182,7 @@ jobs:
           pnpm --filter @dalgo/ovdb check
           pnpm --filter @dalgo/sqlite-sql check
           pnpm --filter @dalgo/sqlite-wasm check
+          pnpm --filter @dalgo/d1 check
       - name: Publish changed versions and tag their npm source commits
         env:
           NPM_CONFIG_PROVENANCE: 'true'
@@ -199,8 +200,8 @@ jobs:
           registry_metadata=$(mktemp)
           metadata_error=$(mktemp)
           trap 'rm -f "$registry_metadata" "$metadata_error"' EXIT
-          # sqlite-sql precedes sqlite-wasm, whose peer range requires it.
-          for package in firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm; do
+          # sqlite-sql precedes sqlite-wasm and d1, whose peer ranges require it.
+          for package in firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do
             manifest="packages/$package/package.json"
             name=$(jq -r '.name' "$manifest")
             version=$(jq -r '.version' "$manifest")
@@ -213,6 +214,7 @@ jobs:
               ovdb) expected_name='@dalgo/ovdb' ;;
               sqlite-sql) expected_name='@dalgo/sqlite-sql' ;;
               sqlite-wasm) expected_name='@dalgo/sqlite-wasm' ;;
+              d1) expected_name='@dalgo/d1' ;;
               *) exit 1 ;;
             esac
             [[ "$name" == "$expected_name" ]] || exit 1

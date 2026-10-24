@@ -9,17 +9,12 @@ schema map. Callers cannot submit SQL.
 ## Install
 
 The required `@dalgo/core` peer range is `>=0.8.0 <0.9.0`, the first core line
-with the TugQL names; install it from npm. D1 itself ships as a GitHub release
-asset:
+with the TugQL names. `@dalgo/sqlite-sql`, the shared SQL compiler, is a peer
+dependency too. Install all three from npm:
 
 ```sh
-# After the D1 0.3.0 GitHub release is available, run from your application directory.
-pnpm add @dalgo/core@~0.8.0 https://github.com/dal-go/dalgo-http-adapters/releases/download/d1-v0.3.0/dalgo-d1-0.3.0.tgz
+pnpm add @dalgo/core@~0.8.0 @dalgo/sqlite-sql @dalgo/d1
 ```
-
-The D1 release URL above becomes usable only after the `d1-v0.3.0` GitHub
-release has been created. The earlier `d1-v0.2.0` asset requires the unpublished
-core 0.2.0 source and is superseded.
 
 ## Worker binding
 

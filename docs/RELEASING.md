@@ -2,7 +2,7 @@
 
 The public package manifests in this workspace are `@dalgo/firestore`,
 `@dalgo/indexeddb`, `@dalgo/bigquery`, `@dalgo/http`, `@dalgo/ovdb`,
-`@dalgo/sqlite-sql` and `@dalgo/sqlite-wasm`. They have independent
+`@dalgo/sqlite-sql`, `@dalgo/sqlite-wasm` and `@dalgo/d1`. They have independent
 versions; a public manifest does not establish npm availability. Every other
 adapter is currently private in its package manifest and is excluded from Changesets
 publishing. Remove `private: true` only as part of preparing that adapter for
@@ -29,8 +29,8 @@ workflow publishes only package versions changed by that merge, using direct
 `npm publish` for trusted publishing. It then verifies each version's npm
 `gitHead` and creates
 `firestore@v<version>`, `indexeddb@v<version>`, `bigquery@v<version>` or
-`http@v<version>`, `ovdb@v<version>`, `sqlite-sql@v<version>` or
-`sqlite-wasm@v<version>` at that exact commit. A release for one package leaves other
+`http@v<version>`, `ovdb@v<version>`, `sqlite-sql@v<version>`,
+`sqlite-wasm@v<version>` or `d1@v<version>` at that exact commit. A release for one package leaves other
 package versions unchanged.
 
 Publishing uses npm trusted publishing through GitHub Actions. The npm settings
@@ -38,8 +38,8 @@ for **each** published package must authorize GitHub repository
 `dal-go/dalgo-http-adapters` and workflow `release.yml`. The workflow uses
 Node 24, npm 11.11.0, and `id-token: write`; it contains no long-lived npm
 token. Configure trusted publishing before merging a version pull request.
-A package's first npm publication (for example `@dalgo/sqlite-sql` and
-`@dalgo/sqlite-wasm`) needs an authorized bootstrap before its trusted-publisher
+A package's first npm publication (for example `@dalgo/sqlite-sql`,
+`@dalgo/sqlite-wasm` and `@dalgo/d1`) needs an authorized bootstrap before its trusted-publisher
 settings can exist. Bootstrap with the placeholder version `0.0.0-stage` under
 `--tag stage`, as `@dalgo/bigquery`, `@dalgo/http` and `@dalgo/ovdb` were, then
 configure the trusted publisher. Never bootstrap with the version the version
@@ -54,7 +54,7 @@ merged version pull request's commit SHA in `release_sha`. The workflow checks
 that this commit belongs to `main` and was produced by the merged version pull
 request, then safely retries publication and tagging. Do not use a later
 unrelated commit SHA. The publish loop processes Firestore, IndexedDB, BigQuery,
-HTTP, OVDB, SQLite SQL, then SQLite WASM and stops on the first failure. Before merging a BigQuery-only version
+HTTP, OVDB, SQLite SQL, SQLite WASM, then D1 and stops on the first failure. Before merging a BigQuery-only version
 pull request, verify its manifest-version diff changes only BigQuery. If earlier
 packages also change, their publication and tag gates must be resolved before
 that merge; retrying the same SHA repeats an earlier package failure.
