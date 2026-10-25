@@ -1,26 +1,27 @@
 # DALgo adapter for Firestore Web
 
-`@dal-go/dalgo2firestore` implements the
-[`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) database contracts with
+`@dalgo/firestore` implements the
+[`@dalgo/core`](https://www.npmjs.com/package/@dalgo/core) database contracts with
 Firebase's modular Cloud Firestore Web SDK. It is intended for browser apps,
 including apps that query an OpenVaultDB Firestore database directly.
 
 ## Install
 
 ```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2firestore-js firebase
+pnpm add @dalgo/core @dalgo/firestore firebase
 ```
 
-The repositories currently build as `@dal-go/dalgo` and
-`@dal-go/dalgo2firestore`; the first npm publication has not been performed.
+The adapter uses the separately published `@dalgo/core` contracts. Its required
+peer range is `@dalgo/core >=0.8.0 <0.9.0`, the first core line with the TugQL
+names.
 
 ## Browser setup
 
 ```ts
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { collection, key } from "@dal-go/dalgo";
-import { FirestoreDatabase } from "@dal-go/dalgo2firestore";
+import { collection, key } from "@dalgo/core";
+import { FirestoreDatabase } from "@dalgo/firestore";
 
 interface Item {
   title: string;
@@ -66,6 +67,14 @@ const db = new FirestoreDatabase(getFirestore(app, openVaultDatabaseId));
 
 The adapter appends document ID as a deterministic final ordering field. Use
 the returned `nextCursor` rather than constructing pagination values manually.
+
+## Recursive TugQL
+
+Run recursive TugQL through `executeRecursiveTugQLQuery` from `@dalgo/core`.
+The core sends Firestore ordinary bounded leaf queries; a direct recursive AST
+is rejected before Firestore query compilation. `EXISTS` can stop its logical
+evaluation after a match, while each Firestore leaf query remains a Web SDK
+page request and cannot promise physical first-record stopping within that page.
 
 ## Point reads and transactions
 

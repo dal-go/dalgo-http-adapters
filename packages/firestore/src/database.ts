@@ -11,7 +11,7 @@ import {
   type RecordSnapshot,
   type StructuredQuery,
   type UpdateData,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import {
   doc,
   getDoc,

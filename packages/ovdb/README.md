@@ -1,90 +1,44 @@
-# dalgo2ovdb-js
+# OpenVaultDB TugQL executor
 
-Browser-ready [DALgo TypeScript](https://github.com/dal-go/dalgo-js) adapter for the versioned [OpenVaultDB](https://openvaultdb.com/) HTTP API.
+`@dalgo/ovdb` exposes the query-only `OpenVaultDbTugQLQueryExecutor` at both the package root and `@dalgo/ovdb/tugql`. Requires Node >=20 or a browser with Fetch and Web Crypto, and `@dalgo/core` `>=0.6.0 <0.7.0` (the npm package; a GitHub-path install of this source accepts `>=0.6.0 <0.9.0`, which includes the 0.8 TugQL release; see below).
 
-Use this package when a web application should query an OpenVaultDB server directly. For direct Firestore Web SDK access use [`@dal-go/dalgo2firestore`](../firestore); for same-origin offline storage use [`@dal-go/dalgo2indexeddb`](../indexeddb).
+The first native profile accepts one `daily` collection query, zero through ten flat string equality filters on `time`, `currency` and `rate`, and a limit of 1–50 (default 50). It preserves native lexical strings, validates one independently admitted source read and full immutable rights metadata, and returns `complete: true` only after bounded JSON reaches EOF and evidence passes. Completion describes a bounded query, not complete source inventory.
 
-## Install
+The trusted host supplies the exact endpoint, current independently pinned public admission, complete SourceRight, plan and browser origin. URL presence, matching response digests or registry discovery never grant permission or configure the executor. Production activation requires separate public-free admission and activation, origin/host verification and service cost controls. No production factory or authorization is included.
 
-This package is developed in the repository workspace and is not yet published
-to npm:
+Create `createOpenVaultDbExecutionBudget()` **before** asynchronous admission, then call `createOpenVaultDbExecutionId(owner.budget)` once to issue the fresh nonce for that exact owner. Plan validation refuses a copied nonce under a different owner; weak ownership maps retain no global nonce history. Pass its exact frozen `budget` through plan validation, construction, query, evidence validation and final output handoff; generic `QueryExecutor.query(query)` uses that prebound signal. Use `raceOpenVaultDbExecutionBudget` around owned admission/evidence awaits and `assertOpenVaultDbExecutionBudget` immediately before releasing output. Keep the owner alive after adapter return, then call `owner.dispose()` in a final handoff `finally`; cancellation calls `owner.cancel()`. Each owner has one absolute ten-second monotonic deadline, which cannot be extended or reset.
 
-```sh
-pnpm install --frozen-lockfile
-pnpm --filter @dal-go/dalgo2ovdb build
-```
+One executor makes at most one POST. Fetch omits credentials and referrers, refuses redirects and uses no-store. The npm package has no bearer client, database, CRUD, direct provider fallback, history, cache or persistence API. A server-only attestation authenticates the deployed route; browser digest validation does not independently authenticate provider bytes or establish legal clearance. The browser relies on the route's duplicate-member JSON refusal before parsing its completed output.
 
-## Use
+Development keeps legacy adapter tests workspace-private. Only `dist-tugql`, README and LICENSE are packed into the npm tarball (the source tree's `dist` CRUD client is not), and release gates test those exact immutable tarball bytes under Node 20.0.0, Node 24 and Chromium. First publication and npm namespace/trusted publisher setup are external release prerequisites; this source change does not publish or activate provider access.
+
+## CRUD client (`@dalgo/ovdb/client`): GitHub-path install only, not in the npm package yet
+
+The npm release of `@dalgo/ovdb` does not contain this subpath: importing `@dalgo/ovdb/client` from an npm install fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. It is available only when installing this repository from GitHub, as described below, until a release gate covers it.
+
+In the repository source the subpath `@dalgo/ovdb/client` exports the CRUD `OpenVaultDbDatabase` (a DALgo `Database`) and `OpenVaultDbHttpError`; fetch is injectable via the `fetch` option. It ships from `dist/` and is independent of the TugQL executor, whose `.` and `./tugql` exports are unchanged.
 
 ```ts
-import { collection } from "@dal-go/dalgo";
-import { OpenVaultDbDatabase } from "@dal-go/dalgo2ovdb";
+import { OpenVaultDbDatabase, OpenVaultDbHttpError } from "@dalgo/ovdb/client";
 
-interface Todo {
-  title: string;
-  done: boolean;
-  rank: number;
-}
-
-const db = new OpenVaultDbDatabase({
-  baseUrl: "https://vault.example",
-  databaseId: "my-app",
-  getAccessToken: async () => auth.currentToken(),
-});
-const todos = collection<Todo>("todos");
-
-const page = await db.query(
-  todos.query()
-    .where("done", "==", false)
-    .orderBy("rank")
-    .limit(20)
-    .build(),
-);
-
-await db.runReadwriteTransaction(async (transaction) => {
-  await transaction.set(todos.key("first"), {
-    title: "Try OpenVaultDB",
-    done: false,
-    rank: 1,
-  });
-});
+const db = new OpenVaultDbDatabase({ baseUrl, databaseId, accessToken, fetch });
 ```
 
-Reads use OpenVaultDB's record and query endpoints. A DALgo read-write transaction buffers mutations and commits them atomically with one `POST /v1/databases/{database}/batch` request. Reads of buffered point records have read-your-writes behavior; queries inside a transaction are not part of the DALgo TypeScript transaction interface.
+### Installing from GitHub (before a release)
 
-## Browser configuration
+Pin `@dalgo/core` and this package from GitHub in the consuming project (pnpm 11). `<sha>` is a dal-go/dalgo-http-adapters commit that contains the `./client` export:
 
-Start the OpenVaultDB server with the web application's exact origin allowed, for example:
-
-```sh
-ovdb serve --manifest mydb.yaml --auth --cors https://app.example
+```jsonc
+// package.json
+"@dalgo/core": "github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42",
+"@dalgo/ovdb": "github:dal-go/dalgo-http-adapters#<sha>&path:/packages/ovdb"
 ```
 
-Use HTTPS outside loopback development. Tokens are sent only in the `Authorization: Bearer` header; never put them in the base URL, query parameters, logs, analytics, or persisted browser metadata. The adapter rejects base URLs containing credentials, query parameters, or fragments, and refuses HTTP redirects.
-
-Pass `getAccessToken` when the token can rotate. Pass `accessToken` only when the caller already manages its lifecycle securely.
-
-## Current server profile
-
-The adapter matches OpenVaultDB HTTP API v1:
-
-- Point get and multi-get.
-- Atomic set, insert, update, and delete batches.
-- Root and parent-scoped collection queries.
-- `==`, `<`, `<=`, `>`, `>=`, `in`, `array-contains`, and `array-contains-any` filters.
-- Field ordering and limits.
-
-Collection-group queries, document-ID filters/order, offsets, cursors, `!=`, and `not-in` fail explicitly because the current OpenVaultDB query endpoint does not preserve those semantics. Query responses therefore do not return a DALgo `nextCursor` yet.
-
-OpenVaultDB record paths carry IDs as strings over HTTP. Numeric DALgo key IDs are serialized in paths and return as string IDs in query results.
-
-## Development
-
-```sh
-pnpm install
-npm run check
+```yaml
+# pnpm-workspace.yaml: the GitHub tarballs build themselves on install
+allowBuilds:
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42': true
+  '@dalgo/ovdb@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<sha>#path:/packages/ovdb': true
 ```
 
-## License
-
-MIT
+The package's `prepack` runs `npm run build`, which emits both `dist` and `dist-tugql`.

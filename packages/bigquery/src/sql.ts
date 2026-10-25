@@ -1,4 +1,4 @@
-import { DOCUMENT_ID, UnsupportedError, type QueryFilter, type QueryOrder, type StructuredQuery } from "@dal-go/dalgo";
+import { DOCUMENT_ID, UnsupportedError, type QueryFilter, type QueryOrder, type StructuredQuery } from "@dalgo/core";
 import type { BigQueryColumn, BigQueryScalarType, BigQueryTable } from "./types.js";
 
 export interface BigQueryParameter {

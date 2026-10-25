@@ -9,7 +9,7 @@ import {
   type ReadwriteTransaction,
   type RecordSnapshot,
   type StructuredQuery,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import { compileBigQueryQuery, parameter, quoteTable, validateIdentifier, validateProjectId, type BigQueryParameter } from "./sql.js";
 import type { BigQueryColumn, BigQueryDatabaseOptions, BigQueryQueryMetadata, BigQueryTable } from "./types.js";
 
@@ -231,7 +231,7 @@ export class BigQueryDatabase implements Database {
     this.#pageSize = exactPositiveInteger(options.pageSize, 500, "pageSize");
     this.#timeoutMs = exactPositiveInteger(options.timeoutMs, 30_000, "timeoutMs");
     this.#initialWaitMs = exactPositiveInteger(options.initialWaitMs, 1000, "initialWaitMs");
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = options.fetch === undefined || options.fetch === globalThis.fetch ? globalThis.fetch.bind(globalThis) : options.fetch;
   }
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {

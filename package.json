@@ -12,9 +12,11 @@
     "build": "pnpm -r --if-present run build",
     "check": "pnpm -r --if-present run check",
     "lint": "pnpm -r --if-present run lint",
-    "test": "pnpm -r --if-present run test"
+    "test": "pnpm -r --if-present run test",
+    "release:version": "changeset version"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",

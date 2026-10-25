@@ -1,0 +1,388 @@
+name: Release packages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact merged version-PR commit SHA to retry publishing
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-packages-main
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_sha == '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Create or update the version PR and dispatch its CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! find .changeset -maxdepth 1 -name '*.md' ! -name README.md -print -quit | grep -q .; then
+            echo 'No pending changesets'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -C changeset-release/main
+          pnpm exec changeset version
+          pnpm install --lockfile-only
+          git add .changeset packages pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo 'No version changes'
+            exit 0
+          fi
+          git commit -m 'chore: version DALgo adapters'
+          if git ls-remote --exit-code --heads origin changeset-release/main >/dev/null; then
+            git fetch origin changeset-release/main
+            previous=$(git rev-parse FETCH_HEAD)
+            git push --force-with-lease="refs/heads/changeset-release/main:$previous" origin HEAD:refs/heads/changeset-release/main
+          else
+            git push origin HEAD:refs/heads/changeset-release/main
+          fi
+          pr=$(gh pr list --head changeset-release/main --base main --state open --json number --jq '.[0].number')
+          manual_pr=false
+          if [[ -z "$pr" ]]; then
+            create_error=$(mktemp)
+            trap 'rm -f "$create_error"' EXIT
+            if gh pr create --head changeset-release/main --base main --title 'chore: version DALgo adapters' --body 'Review the independent package versions, changelogs, and dependency ranges before merging.' 2>"$create_error"; then
+              :
+            elif grep -Fq 'GitHub Actions is not permitted to create or approve pull requests' "$create_error"; then
+              # Organization/repository PR policy is separate from pull-requests: write.
+              # Preserve the generated branch for the authorized local WB route.
+              manual_pr=true
+            else
+              cat "$create_error" >&2
+              exit 1
+            fi
+            pr=$(gh pr list --head changeset-release/main --base main --state open --json number --jq '.[0].number')
+          fi
+          if [[ -n "$pr" ]]; then
+            :
+          elif [[ "$manual_pr" == true ]]; then
+            echo '::warning::Actions PR creation is disabled. The generated version branch requires an authorized local WB pull request.'
+            {
+              echo '### Version pull request requires a local maintainer'
+              echo
+              echo "Generated branch: changeset-release/main at $(git rev-parse HEAD)."
+              echo "Review the existing branch: https://github.com/$GITHUB_REPOSITORY/compare/main...changeset-release/main"
+              echo
+              echo 'Open or adopt that exact branch through wb pr create with base main and title chore: version DALgo adapters. Do not regenerate or duplicate it.'
+              echo 'The repository or organization disables Allow GitHub Actions to create and approve pull requests. No setting or credential change was attempted.'
+              echo 'Branch CI is dispatched below. This handoff does not authorize npm publication or resolve npm trusted publisher permissions.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Version pull request creation did not produce an open pull request.' >&2
+            exit 1
+          fi
+          gh workflow run ci.yml --ref changeset-release/main
+
+  publish:
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       github.event.pull_request.head.ref == 'changeset-release/main' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_sha != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: read
+    steps:
+      # GITHUB_TOKEN cannot create a tag whose commit has workflow files that
+      # differ from main (a retry, or main moving mid-release), so git uses a
+      # Sneat Releaser token that can. Minted first: a missing permission fails
+      # before anything is published. Checkout keeps no credential, so pnpm
+      # install of third-party dependencies never sees it; it is set only just
+      # before the publish-and-tag step.
+      - name: Mint tag-push token
+        id: tag-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23li26w131Kv6u3IdM
+          private-key: ${{ secrets.SNEAT_RELEASER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-workflows: write
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify merged version pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || exit 1
+          git fetch origin main
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          prs=$(gh api "/repos/$REPOSITORY/commits/$SOURCE_SHA/pulls")
+          jq -e '[.[] | select(
+            .merged_at != null and
+            .merge_commit_sha == $sha and
+            .base.ref == "main" and
+            .head.ref == "changeset-release/main" and
+            .head.repo.full_name == $repo
+          )] | length == 1' --arg sha "$SOURCE_SHA" --arg repo "$REPOSITORY" <<< "$prs" >/dev/null
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.20.0
+      - name: Install the declared adapter runtime floor
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.0.0'
+      - name: Record the Node 20 runtime path
+        run: |
+          {
+            echo "BIGQUERY_NODE20=$(command -v node)"
+            echo "HTTP_NODE20=$(command -v node)"
+            echo "OVDB_NODE20=$(command -v node)"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Use npm with trusted publishing support
+        run: npm install --global npm@11.11.0
+      - run: pnpm install --frozen-lockfile
+      - name: Check published adapters
+        run: |
+          pnpm --filter @dalgo/firestore check
+          pnpm --filter @dalgo/indexeddb check
+          pnpm --filter @dalgo/bigquery check
+          pnpm --filter @dalgo/http check
+          pnpm --filter @dalgo/ovdb check
+          pnpm --filter @dalgo/sqlite-sql check
+          pnpm --filter @dalgo/sqlite-wasm check
+          pnpm --filter @dalgo/d1 check
+      - name: Set tag-push credential
+        env:
+          TAG_PUSH_TOKEN: ${{ steps.tag-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git remote set-url --push origin "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+      - name: Publish changed versions and tag their npm source commits
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+          OVDB_ARTIFACT_DIR: ${{ runner.temp }}/ovdb-release
+          OVDB_CONSUMER_DIR: ${{ runner.temp }}/ovdb-release-consumer
+          HTTP_ARTIFACT_DIR: ${{ runner.temp }}/http-release
+          HTTP_CONSUMER_DIR: ${{ runner.temp }}/http-release-consumer
+          BIGQUERY_ARTIFACT_DIR: ${{ runner.temp }}/bigquery-release
+          BIGQUERY_CONSUMER_DIR: ${{ runner.temp }}/bigquery-release-consumer
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          registry_metadata=$(mktemp)
+          metadata_error=$(mktemp)
+          trap 'rm -f "$registry_metadata" "$metadata_error"' EXIT
+          # sqlite-sql precedes sqlite-wasm and d1, whose peer ranges require it.
+          for package in firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do
+            manifest="packages/$package/package.json"
+            name=$(jq -r '.name' "$manifest")
+            version=$(jq -r '.version' "$manifest")
+            previous_version=$(git show "HEAD^:$manifest" | jq -r '.version')
+            case "$package" in
+              firestore) expected_name='@dalgo/firestore' ;;
+              indexeddb) expected_name='@dalgo/indexeddb' ;;
+              bigquery) expected_name='@dalgo/bigquery' ;;
+              http) expected_name='@dalgo/http' ;;
+              ovdb) expected_name='@dalgo/ovdb' ;;
+              sqlite-sql) expected_name='@dalgo/sqlite-sql' ;;
+              sqlite-wasm) expected_name='@dalgo/sqlite-wasm' ;;
+              d1) expected_name='@dalgo/d1' ;;
+              *) exit 1 ;;
+            esac
+            [[ "$name" == "$expected_name" ]] || exit 1
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
+            if [[ "$version" == "$previous_version" ]]; then
+              continue
+            fi
+            if [[ "$package" == bigquery ]]; then
+              # Pack exactly once from the checked build, binding its gitHead
+              # without modifying the frozen checkout. Retain the original bytes.
+              node .github/scripts/prepare-bigquery-release.mjs pack "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version"
+              receipt="$BIGQUERY_ARTIFACT_DIR/packed-artifact.json"
+              tarball=$(jq -r '.tarball' "$receipt")
+              checker_status=0
+              EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
+                EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
+                EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
+                node .github/scripts/check-bigquery-core-matrix.mjs "$tarball" "$BIGQUERY_CONSUMER_DIR" "$BIGQUERY_NODE20" "$(command -v node)" \
+                2>&1 | tee "$BIGQUERY_ARTIFACT_DIR/check.log" || checker_status=$?
+              # Preserve partial fixture reports before propagating a failure.
+              if [[ -d "$BIGQUERY_CONSUMER_DIR" ]]; then
+                for core in 0.1.0 0.6.0 0.8.0; do
+                  reports="$BIGQUERY_CONSUMER_DIR/core-$core"
+                  if [[ -d "$reports" ]]; then
+                    mkdir -p "$BIGQUERY_ARTIFACT_DIR/core-$core"
+                    find "$reports" -maxdepth 1 -type f \( -name 'parity-*.json' -o -name 'http-*.json' \) \
+                      -exec cp '{}' "$BIGQUERY_ARTIFACT_DIR/core-$core/" \;
+                  fi
+                done
+              fi
+              [[ "$checker_status" == 0 ]] || exit "$checker_status"
+              cp "$BIGQUERY_CONSUMER_DIR/artifact-receipt.json" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+              for core in 0.1.0 0.6.0 0.8.0; do
+                cp "$BIGQUERY_CONSUMER_DIR/core-$core"/parity-*.json "$BIGQUERY_CONSUMER_DIR/core-$core"/http-*.json "$BIGQUERY_ARTIFACT_DIR/core-$core/"
+              done
+              node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+            fi
+            if [[ "$package" == http ]]; then
+              node .github/scripts/prepare-http-release.mjs pack "$HTTP_ARTIFACT_DIR" "$source_sha" "$version"
+              receipt="$HTTP_ARTIFACT_DIR/packed-artifact.json"
+              tarball=$(jq -r '.tarball' "$receipt")
+              EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
+                EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
+                EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
+                node .github/scripts/check-http-tarball.mjs "$tarball" "$HTTP_CONSUMER_DIR" "$HTTP_NODE20" "$(command -v node)"
+              cp "$HTTP_CONSUMER_DIR/artifact-receipt.json" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
+              node .github/scripts/prepare-http-release.mjs verify "$HTTP_ARTIFACT_DIR" "$source_sha" "$version" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
+            fi
+            if [[ "$package" == ovdb ]]; then
+              node .github/scripts/prepare-ovdb-release.mjs pack "$OVDB_ARTIFACT_DIR" "$source_sha" "$version"
+              receipt="$OVDB_ARTIFACT_DIR/packed-artifact.json"
+              tarball=$(jq -r '.tarball' "$receipt")
+              EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
+                EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
+                EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
+                node .github/scripts/check-ovdb-tarball.mjs "$tarball" "$OVDB_CONSUMER_DIR" "$OVDB_NODE20" "$(command -v node)"
+              cp "$OVDB_CONSUMER_DIR/artifact-receipt.json" "$OVDB_ARTIFACT_DIR/tested-artifact.json"
+              node .github/scripts/prepare-ovdb-release.mjs verify "$OVDB_ARTIFACT_DIR" "$source_sha" "$version" "$OVDB_ARTIFACT_DIR/tested-artifact.json"
+            fi
+            # Only an explicit registry 404 permits publication; network/auth errors fail closed.
+            http_status=$(curl --silent --show-error --retry 2 --output "$registry_metadata" \
+              --write-out '%{http_code}' "https://registry.npmjs.org/${name/\//%2f}/$version")
+            publication='already present in registry'
+            if [[ "$http_status" == '404' ]]; then
+              jq -e --arg missing "version not found: $version" '. == "Not Found" or . == $missing' "$registry_metadata" >/dev/null
+              if [[ "$package" == bigquery || "$package" == http || "$package" == ovdb ]]; then
+                # Verify again immediately before the sole publication call.
+                artifact_dir="$BIGQUERY_ARTIFACT_DIR"
+                [[ "$package" != http ]] || artifact_dir="$HTTP_ARTIFACT_DIR"
+                [[ "$package" != ovdb ]] || artifact_dir="$OVDB_ARTIFACT_DIR"
+                node ".github/scripts/prepare-$package-release.mjs" verify "$artifact_dir" "$source_sha" "$version" "$artifact_dir/tested-artifact.json"
+                if ! npm publish "$tarball" --ignore-scripts --access public --provenance --registry=https://registry.npmjs.org; then
+                  echo "::error::npm publish failed for $name@$version; metadata verification and tagging were not attempted. Inspect the publish diagnostics above." >&2
+                  exit 1
+                fi
+              else
+                if ! (cd "packages/$package" && npm publish --access public --provenance --registry=https://registry.npmjs.org); then
+                  echo "::error::npm publish failed for $name@$version; metadata verification and tagging were not attempted. Inspect the publish diagnostics above." >&2
+                  exit 1
+                fi
+              fi
+              publication='npm publish succeeded'
+            elif [[ "$http_status" != '200' ]]; then
+              echo "Registry lookup failed with HTTP $http_status" >&2
+              exit 1
+            fi
+            metadata=''
+            metadata_verified=false
+            # Allow ten minutes of propagation delays; each request has a ten
+            # second process timeout, two second kill grace, and no npm retries
+            # (under 18 minutes total, including the 39 sleeps).
+            for attempt in {1..40}; do
+              if metadata=$(timeout --kill-after=2s 10s npm view "$name@$version" name version gitHead dist.integrity --json \
+                --registry=https://registry.npmjs.org --prefer-online --fetch-retries=0 --fetch-timeout=10000 2>"$metadata_error"); then
+                metadata_verified=true
+                break
+              fi
+              cat "$metadata_error" >&2
+              if grep -Eq 'E401|E403|ENEEDAUTH' "$metadata_error"; then
+                echo "::error::$publication for $name@$version, but registry verification was denied. Inspect npm authentication diagnostics above; no source tag was created." >&2
+                exit 1
+              fi
+              if grep -Fq 'E404' "$metadata_error"; then
+                lookup_state='registry has not indexed this version'
+              else
+                lookup_state='registry lookup failed; indexing state is unknown'
+              fi
+              echo "$publication for $name@$version; $lookup_state (attempt $attempt/40)" >&2
+              if [[ "$attempt" -lt 40 ]]; then sleep 15; fi
+            done
+            if [[ "$metadata_verified" != true ]]; then
+              echo "::error::$publication for $name@$version; $lookup_state after bounded verification. No source tag was created. Retry this workflow with release_sha=$source_sha after resolving the lookup; the registry preflight skips versions already present." >&2
+              exit 1
+            fi
+            [[ "$(jq -r '.name' <<< "$metadata")" == "$name" ]] || exit 1
+            [[ "$(jq -r '.version' <<< "$metadata")" == "$version" ]] || exit 1
+            [[ "$(jq -r '.gitHead' <<< "$metadata")" == "$source_sha" ]] || exit 1
+            if [[ "$package" == bigquery ]]; then
+              # npm view with selected fields returns a literal dotted key.
+              [[ "$(jq -r '.["dist.integrity"]' <<< "$metadata")" == "$(jq -r '.integrity' "$receipt")" ]] || exit 1
+              node .github/scripts/prepare-bigquery-release.mjs verify "$BIGQUERY_ARTIFACT_DIR" "$source_sha" "$version" "$BIGQUERY_ARTIFACT_DIR/tested-artifact.json"
+              printf '%s\n' "$metadata" > "$BIGQUERY_ARTIFACT_DIR/registry-metadata.json"
+            fi
+            if [[ "$package" == http ]]; then
+              [[ "$(jq -r '.["dist.integrity"]' <<< "$metadata")" == "$(jq -r '.integrity' "$receipt")" ]] || exit 1
+              node .github/scripts/prepare-http-release.mjs verify "$HTTP_ARTIFACT_DIR" "$source_sha" "$version" "$HTTP_ARTIFACT_DIR/tested-artifact.json"
+              printf '%s\n' "$metadata" > "$HTTP_ARTIFACT_DIR/registry-metadata.json"
+            fi
+            if [[ "$package" == ovdb ]]; then
+              [[ "$(jq -r '.["dist.integrity"]' <<< "$metadata")" == "$(jq -r '.integrity' "$receipt")" ]] || exit 1
+              node .github/scripts/prepare-ovdb-release.mjs verify "$OVDB_ARTIFACT_DIR" "$source_sha" "$version" "$OVDB_ARTIFACT_DIR/tested-artifact.json"
+              printf '%s\n' "$metadata" > "$OVDB_ARTIFACT_DIR/registry-metadata.json"
+            fi
+            tag="$package@v$version"
+            git fetch origin tag "$tag" 2>/dev/null || true
+            if git rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
+              [[ "$(git rev-list -n 1 "$tag")" == "$source_sha" ]] || exit 1
+              continue
+            fi
+            git tag -a "$tag" "$source_sha" -m "$name $version"
+            git push origin "refs/tags/$tag"
+          done
+      - name: Retain BigQuery release artifact and gate receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bigquery-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+          path: ${{ runner.temp }}/bigquery-release
+          if-no-files-found: ignore
+      - name: Retain HTTP release artifact and gate receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: http-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+          path: ${{ runner.temp }}/http-release
+          if-no-files-found: ignore
+      - name: Retain OVDB release artifact and gate receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ovdb-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+          path: ${{ runner.temp }}/ovdb-release
+          if-no-files-found: ignore

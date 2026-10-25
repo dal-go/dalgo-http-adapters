@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2couchdb",
+  "private": true,
   "version": "0.1.0",
   "description": "Apache CouchDB HTTP document and Mango adapter for DALgo TypeScript",
   "type": "module",

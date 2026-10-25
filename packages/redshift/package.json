@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2redshift",
+  "private": true,
   "version": "0.1.0",
   "description": "Amazon Redshift Data API adapter for DALgo TypeScript",
   "type": "module",

@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": "test", "outDir": ".browser-fixture-dist" },
+  "include": ["test/browser-fixture.ts"]
+}

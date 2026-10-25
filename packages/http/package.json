@@ -1,0 +1,58 @@
+{
+  "name": "@dalgo/http",
+  "version": "0.2.0",
+  "description": "Admitted ECB daily XML query adapter for DALgo TypeScript",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.build.json && eslint . && vitest run",
+    "check:clean-output": "node scripts/check-clean-output.mjs",
+    "lint": "tsc -p tsconfig.build.json && eslint .",
+    "prepack": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dal-go/dalgo-http-adapters.git",
+    "directory": "packages/http"
+  },
+  "bugs": {
+    "url": "https://github.com/dal-go/dalgo-http-adapters/issues"
+  },
+  "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/http#readme",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@dalgo/core": ">=0.8.0 <0.9.0"
+  },
+  "devDependencies": {
+    "@dalgo/core": "^0.8.0",
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1",
+    "jsdom": "26.1.0",
+    "@types/jsdom": "21.1.7"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
+}

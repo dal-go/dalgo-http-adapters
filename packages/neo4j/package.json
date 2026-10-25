@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2neo4j",
+  "private": true,
   "version": "0.1.0",
   "description": "Neo4j Query API v2 adapter for DALgo TypeScript",
   "type": "module",

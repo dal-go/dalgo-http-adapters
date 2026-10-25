@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2cosmosdb",
+  "private": true,
   "version": "0.1.0",
   "description": "Azure Cosmos DB for NoSQL REST adapter for DALgo TypeScript",
   "type": "module",

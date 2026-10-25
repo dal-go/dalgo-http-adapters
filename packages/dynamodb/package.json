@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2dynamodb",
+  "private": true,
   "version": "0.1.0",
   "description": "Amazon DynamoDB adapter for DALgo TypeScript",
   "type": "module",

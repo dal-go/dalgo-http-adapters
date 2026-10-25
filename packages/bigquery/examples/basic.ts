@@ -1,4 +1,4 @@
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { BigQueryDatabase } from "../src/index.js";
 
 interface Item {

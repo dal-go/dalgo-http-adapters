@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2snowflake",
+  "private": true,
   "version": "0.1.0",
   "description": "Read-only DALGO TypeScript adapter for the Snowflake SQL API",
   "type": "module",

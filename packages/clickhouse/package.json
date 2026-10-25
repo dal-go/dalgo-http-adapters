@@ -1,5 +1,6 @@
 {
   "name": "@dal-go/dalgo2clickhouse",
+  "private": true,
   "version": "0.1.0",
   "description": "DALgo read/query adapter for ClickHouse HTTP",
   "type": "module",

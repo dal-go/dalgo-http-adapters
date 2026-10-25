@@ -2,9 +2,31 @@ packages:
   - "packages/*"
 
 overrides:
+  "@dalgo/http>@dalgo/core": "0.8.0"
+  "@dalgo/d1>@dalgo/core": "0.8.0"
+  "@dalgo/firestore>@dalgo/core": "0.8.0"
   "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d"
+  "@dalgo/bigquery>@dalgo/core": "0.1.0"
+  "@dalgo/core": "github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336"
+  "@dalgo/indexeddb>@dalgo/core": "0.8.0"
+  # dalgo-js 24eb5b7 builds as @dalgo/core 0.7.4 and includes the capabilities
+  # types. The 0.7.4 on npm lacks them, so ovdb (GitHub-path client) is pinned
+  # to this commit until a core release published with them replaces it.
+  "@dalgo/ovdb>@dalgo/core": "github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42"
+  # sqlite-wasm needs the same capabilities.ts (dalgo-js PR #32); same pin,
+  # same swap for a published release (and drop the allowBuilds entry).
+  "@dalgo/sqlite-wasm>@dalgo/core": "github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42"
 
 allowBuilds:
   "@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d": true
+  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336": true
+  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42": true
   "@firebase/util@1.15.3": false
+  "esbuild@0.28.2": false
   "protobufjs@7.6.6": false
+
+minimumReleaseAgeExclude:
+  - '@dalgo/core@0.1.0'
+  - '@dalgo/core@0.2.0'
+  - '@dalgo/core@0.6.0'
+  - '@dalgo/core@0.8.0'

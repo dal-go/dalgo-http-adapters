@@ -2,32 +2,47 @@
 
 Qualification matrix and delivery catalog for database data planes that can be used over HTTP/HTTPS from JavaScript.
 
-The reference implementation is [`@dal-go/dalgo2firestore`](packages/firestore). Every adapter targets the contracts from [`dalgo-js`](https://github.com/dal-go/dalgo-js), exposes only DALgo semantics it can preserve, and fails explicitly for unsupported operations. The complete qualification evidence is in [`qualification-matrix.md`](qualification-matrix.md).
+The reference implementation is [`@dalgo/firestore`](packages/firestore). Every adapter targets the contracts from [`@dalgo/core`](https://www.npmjs.com/package/@dalgo/core), exposes only DALgo semantics it can preserve, and fails explicitly for unsupported operations. The complete qualification evidence is in [`qualification-matrix.md`](qualification-matrix.md).
 
 ## Packages
 
 | Adapter | Local package |
 |---|---|
-| BigQuery | [`@dal-go/dalgo2bigquery`](packages/bigquery) |
+| Algolia | [`@dal-go/dalgo2algolia`](packages/algolia) |
+| Appwrite | [`@dal-go/dalgo2appwrite`](packages/appwrite) |
+| Azure Table Storage | [`@dal-go/dalgo2azure-table`](packages/azure-table) |
+| BigQuery | [`@dalgo/bigquery`](packages/bigquery) |
 | ClickHouse | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) |
 | Cosmos DB | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) |
 | Couchbase | [`@dal-go/dalgo2couchbase`](packages/couchbase) |
 | CouchDB | [`@dal-go/dalgo2couchdb`](packages/couchdb) |
 | Databricks | [`@dal-go/dalgo2databricks`](packages/databricks) |
+| Google Cloud Datastore | [`@dal-go/dalgo2datastore`](packages/datastore) |
 | DynamoDB | [`@dal-go/dalgo2dynamodb`](packages/dynamodb) |
 | Elasticsearch | [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) |
 | Firebase Realtime Database | [`@dal-go/dalgo2firebase-rtdb`](packages/firebase-rtdb) |
-| Firestore | [`@dal-go/dalgo2firestore`](packages/firestore) |
-| IndexedDB | [`@dal-go/dalgo2indexeddb`](packages/indexeddb) |
+| Firestore | [`@dalgo/firestore`](packages/firestore) |
+| IndexedDB | [`@dalgo/indexeddb`](packages/indexeddb) |
 | InfluxDB | [`@dal-go/dalgo2influxdb`](packages/influxdb) |
+| Azure Data Explorer / Kusto | [`@dal-go/dalgo2kusto`](packages/kusto) |
+| libSQL | [`@dal-go/dalgo2libsql`](packages/libsql) |
 | Neo4j | [`@dal-go/dalgo2neo4j`](packages/neo4j) |
+| Amazon Neptune | [`@dal-go/dalgo2neptune`](packages/neptune) |
 | OpenSearch | [`@dal-go/dalgo2opensearch`](packages/opensearch) |
-| OpenVaultDB | [`@dal-go/dalgo2ovdb`](packages/ovdb) |
+| ECB daily XML | [`@dalgo/http`](packages/http) |
+| OpenVaultDB | [`@dalgo/ovdb`](packages/ovdb) |
+| Pinecone | [`@dal-go/dalgo2pinecone`](packages/pinecone) |
+| PocketBase | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) |
+| PostgREST | [`@dal-go/dalgo2postgrest`](packages/postgrest) |
+| Qdrant | [`@dal-go/dalgo2qdrant`](packages/qdrant) |
+| AWS RDS Data API | [`@dal-go/dalgo2rds-data`](packages/rds-data) |
 | Redshift | [`@dal-go/dalgo2redshift`](packages/redshift) |
 | Snowflake | [`@dal-go/dalgo2snowflake`](packages/snowflake) |
 | Solr | [`@dal-go/dalgo2solr`](packages/solr) |
+| Google Cloud Spanner | [`@dal-go/dalgo2spanner`](packages/spanner) |
+| Amazon Timestream | [`@dal-go/dalgo2timestream`](packages/timestream) |
 
-Import revisions and the archive plan for standalone repositories are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
+Import revisions and the completed standalone-repository cutover are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
 
 ## Development
 
@@ -37,11 +52,18 @@ root, then run the complete adapter gate or select one package:
 ```sh
 pnpm install --frozen-lockfile
 pnpm check
-pnpm --filter @dal-go/dalgo2firestore check
+pnpm --filter @dalgo/firestore check
 ```
 
-All packages use the same pinned DALgo contract revision. No adapter is
-published to npm by this repository yet.
+Firestore, IndexedDB and BigQuery are configured as public packages under
+the `@dalgo` npm scope. Public manifests and source versions do not establish
+that a version is available on npm. The remaining adapters are private workspace
+packages.
+
+Package changes are versioned and published independently with Changesets.
+See [the release procedure](docs/RELEASING.md). The existing
+[tagging workflow](.github/workflows/tag-published-package.yml) remains
+available to reconcile a published version if automated tagging fails.
 
 ## Classification
 
@@ -80,16 +102,16 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | 13 | Azure Cosmos DB for NoSQL REST | HTTP-capable / ephemeral-token browser | Yes | Yes | Yes | Yes | Cosmos SQL | Yes | Partition-scoped batch / stored procedures | Change feed | Master/account keys are never browser-safe; browser use requires a backend-issued resource token or carefully designed Entra/network setup. | `dalgo2cosmosdb-js`; partition key is explicit; do not claim browser-native auth. |
 | 14 | Amazon Redshift Data API | HTTP-capable | Yes | Yes | Yes | Yes | SQL | Yes | Transactional batch | Async statements, not CDC | IAM/Secrets Manager; server-side. | `dalgo2redshift-js`; analytical SQL semantics. |
 | 15 | Couchbase HTTP data services | HTTP-capable | Yes | Yes | Yes | Yes | SQL++ / search | Yes | Limited | Eventing/change mechanisms vary | Cluster/service credentials and CORS need deployment review. | Separate SQL++ and key-value capability mapping; do not wrap management REST. |
-| 16 | Google Firestore | Browser-ready | Yes | Yes | Yes | Yes | Structured query | Count/sum/average | Batched writes / transactions | Realtime listeners | Firebase Auth and Security Rules are designed for public clients. | Implemented: [`@dal-go/dalgo2firestore`](packages/firestore). |
+| 16 | Google Firestore | Browser-ready | Yes | Yes | Yes | Yes | Structured query | Count/sum/average | Batched writes / transactions | Realtime listeners | Firebase Auth and Security Rules are designed for public clients. | Implemented: [`@dalgo/firestore`](packages/firestore). |
 | 17 | Firebase Realtime Database REST/Web SDK | Browser-ready | Yes | Yes | Yes | Yes | Key/range query | No server aggregation | Atomic updates / client transaction retries | SSE/WebSocket | Firebase Auth and Security Rules; browser-first. | `dalgo2firebase-rtdb-js`; tree/path semantics and limited query composition. |
 | 18 | Apache CouchDB HTTP | Browser-ready | Yes | Yes | Yes | Yes | Mango / views | Views | Per-document MVCC, bulk is not ACID | `_changes` feeds | CORS configurable; use scoped users/proxy as appropriate. | `dalgo2couchdb-js`; expose revision/conflict semantics. |
-| 19 | PostgREST protocol / Supabase | Browser-ready | Yes | Yes | Yes | Yes | URL filters / embedding / RPC | Yes | One request; multi-step logic via PostgreSQL functions | Provider-specific realtime is separate | CORS plus JWT/RLS enables public clients when policies are correct. | `dalgo2postgrest-js`, not a Supabase-only adapter. |
-| 20 | libSQL protocol / Turso | HTTP-capable (browser contract pending) | Yes | Yes | Yes | Yes | SQL | Yes | Yes | Replication/watch capabilities vary | Do not classify as browser-ready until the current official web transport, CORS, and token-scope contract is verified; broad database tokens are never browser-safe. | `dalgo2libsql-js` only after the browser/auth contract is verified; otherwise trusted runtime. |
-| 21 | Qdrant REST | HTTP-capable | Yes | Yes | Yes | Yes | Vector/filter search | Vector/search aggregation features | Limited | Updates/streaming are not general CDC | Official JS client and CORS exist; API keys normally require proxy/scoping. | `dalgo2qdrant-js`; vector semantics only. |
-| 22 | Pinecone data API | HTTP-capable | Yes | Upsert | Update | Delete | Vector/filter search | Limited | No | No generic CDC | API keys are server credentials; use a proxy. | `dalgo2pinecone-js`; vector semantics only. |
-| 23 | Algolia Search API | Browser-ready | Yes | Server-side indexing | Server-side indexing | Server-side indexing | Search/filter | Facets | No | Browse/task polling, not CDC | Search-only keys are browser-safe; admin/index keys are not. | `dalgo2algolia-js`; browser read/search, trusted-runtime writes. |
-| 24 | Appwrite Databases API | Browser-ready | Yes | Yes | Yes | Yes | Queries | Limited | Product-specific | Realtime API | Session auth and permissions are public-client-oriented. | `dalgo2appwrite-js`. |
-| 25 | PocketBase records API | Browser-ready | Yes | Yes | Yes | Yes | Filter/sort/expand | Limited | No public multi-operation transaction | Realtime subscriptions | Browser SDK, collection rules, and user tokens. | `dalgo2pocketbase-js`. |
+| 19 | PostgREST protocol / Supabase | Browser-ready | Yes | Yes | Yes | Yes | URL filters / embedding / RPC | Yes | One request; multi-step logic via PostgreSQL functions | Provider-specific realtime is separate | CORS plus JWT/RLS enables public clients when policies are correct. | [`@dal-go/dalgo2postgrest`](packages/postgrest), not a Supabase-only adapter. |
+| 20 | libSQL protocol / Turso | HTTP-capable | Yes | Yes | Yes | Yes | SQL | Yes | Hrana batches and batons; DALgo callback transactions unsupported | Replication/watch capabilities vary | Hrana v3 uses HTTP, but broad database tokens are not browser-safe; use a trusted runtime or narrowly scoped token broker. | Implemented: [`@dal-go/dalgo2libsql`](packages/libsql), a provider-neutral Hrana v3 adapter rather than a Turso-only wrapper. |
+| 21 | Qdrant REST | HTTP-capable | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Vector/filter search | Vector/search aggregation features | No DALgo-equivalent transactions | Updates/streaming are not general CDC | CORS may be deployment-specific and API keys normally require a trusted runtime or proxy. | Implemented: [`@dal-go/dalgo2qdrant`](packages/qdrant), with explicit vector search and no fake conditional-write semantics. |
+| 22 | Pinecone data API | HTTP-capable | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Vector/filter search | Limited | No | No generic CDC | API keys are server credentials; use a trusted runtime or proxy. | Implemented: [`@dal-go/dalgo2pinecone`](packages/pinecone), with explicit collection-to-namespace isolation. |
+| 23 | Algolia Search/Records APIs | Browser-ready for search; trusted-runtime writes | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Search/filter | Facets | No | Async indexing task receipts, not CDC | Restricted search-only keys are browser-safe; writes require an explicit trusted mode and a write-capable key. | Implemented: [`@dal-go/dalgo2algolia`](packages/algolia), with separate DSN read and write hosts. |
+| 24 | Appwrite TablesDB rows API | Browser-ready | Yes | Yes | Yes | Yes | JSON queries | Limited | No DALgo callback transactions | Realtime is a separate API | Browser sessions/JWT and row permissions are public-client-oriented; API keys require explicit trusted-server mode. | Implemented: [`@dal-go/dalgo2appwrite`](packages/appwrite), against the current TablesDB rows HTTP API. |
+| 25 | PocketBase records API | Browser-ready | Yes | Yes | Yes | Yes | Filter/sort | Limited | No public multi-operation transaction | Realtime subscriptions are separate | Stateless user-token auth, collection rules, and CORS support public clients; superuser credentials remain server-only. | Implemented: [`@dal-go/dalgo2pocketbase`](packages/pocketbase), with explicit collection mappings and no fake atomic upsert. |
 
 ## Hyperscaler coverage
 
@@ -98,11 +120,11 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | Product | Class | Qualifying data plane and decision |
 |---|---|---|
 | Firestore native mode | Browser-ready | Existing Firestore Web SDK adapter; REST provides CRUD, queries, aggregation, transactions, and a streaming Listen RPC, while normal browser realtime listeners use the Firebase Web SDK. |
-| Firestore in Datastore mode | HTTP-capable | REST lookup/commit/query/aggregation and transactions; candidate `dalgo2datastore-js`. Browser use needs user OAuth or a token broker, never a service-account key. |
-| Firebase Realtime Database | Browser-ready | REST and Web SDK; candidate `dalgo2firebase-rtdb-js`. |
+| Firestore in Datastore mode | HTTP-capable | Implemented: [`@dal-go/dalgo2datastore`](packages/datastore), using REST lookup/commit/runQuery with explicit key/schema mappings and instance-owned cursors. Browser use needs user OAuth or a token broker, never a service-account key. |
+| Firebase Realtime Database | Browser-ready | Implemented: [`@dal-go/dalgo2firebase-rtdb`](packages/firebase-rtdb), using the browser-oriented Firebase Web SDK with explicit tree/query limitations. |
 | Firebase Data Connect | Not applicable | Generated, typed application GraphQL operations are not a generic database data plane for arbitrary DALgo collections. |
-| BigQuery | HTTP-capable | REST jobs/query/table data; candidate analytical adapter. |
-| Spanner | HTTP-capable | REST read, SQL, mutations, sessions and read-write transactions; candidate `dalgo2spanner-js`. |
+| BigQuery | HTTP-capable | Implemented: [`@dalgo/bigquery`](packages/bigquery), a bounded analytical read/query adapter rather than OLTP parity. |
+| Spanner | HTTP-capable | Implemented: [`@dal-go/dalgo2spanner`](packages/spanner), with session-backed parameterized reads/query and single-use atomic commits; callback transactions and silent continuation are rejected. |
 | Bigtable | Not applicable | Useful data API is gRPC rather than a general browser JSON/HTTP surface. |
 | AlloyDB | Not applicable | Administration is REST; data plane is PostgreSQL wire protocol. |
 | Cloud SQL PostgreSQL / MySQL / SQL Server | Not applicable | Administration is REST; data plane uses native database protocols/connectors. |
@@ -112,13 +134,13 @@ An official SDK using HTTP internally does not by itself make a product browser-
 
 | Product | Class | Qualifying data plane and decision |
 |---|---|---|
-| DynamoDB | Browser-ready | HTTPS JSON API and browser-capable AWS SDK with temporary IAM credentials; high-priority adapter. |
-| Redshift | HTTP-capable | Redshift Data API; server-oriented analytical adapter. |
-| Aurora PostgreSQL / MySQL | HTTP-capable where Data API is enabled | RDS Data API provides SQL, batches, and explicit transactions using IAM plus Secrets Manager; candidate trusted-runtime adapter. |
+| DynamoDB | Browser-ready | Implemented: [`@dal-go/dalgo2dynamodb`](packages/dynamodb), using AWS SDK v3 with temporary, narrowly scoped IAM credentials for browser deployments. |
+| Redshift | HTTP-capable | Implemented: [`@dal-go/dalgo2redshift`](packages/redshift), a bounded server-oriented analytical adapter over the Redshift Data API. |
+| Aurora PostgreSQL / MySQL | HTTP-capable where Data API is enabled | Implemented: [`@dal-go/dalgo2rds-data`](packages/rds-data), a trusted-runtime adapter with explicit dialect/table/key mappings, bounded reads/query, guarded update/delete, and intentionally unsupported insert/set/callback transactions. |
 | RDS PostgreSQL / MySQL / MariaDB / SQL Server / Oracle | Not applicable | RDS HTTP APIs manage instances; data uses native wire protocols. |
 | DocumentDB | Not applicable | MongoDB wire protocol; no generic HTTP data API. |
-| Neptune | HTTP-capable | HTTPS openCypher, SPARQL, and Neptune data APIs; specialized graph adapter with SigV4/VPC constraints. |
-| Timestream | HTTP-capable | HTTPS WriteRecords and Query; specialized time-series adapter. |
+| Neptune | HTTP-capable | Implemented as [`@dal-go/dalgo2neptune`](packages/neptune): bounded node CRUD/query over the parameterized openCypher HTTPS endpoint, with explicit collection/label/ID namespaces. IAM deployments require final-payload SigV4 signing; browser access is not practical for normal VPC endpoints. |
+| Timestream | HTTP-capable | Implemented as [`@dal-go/dalgo2timestream`](packages/timestream): signed, bounded Query/WriteRecords access with required per-service cell endpoint discovery and TTL caches; trusted-runtime only. |
 | Keyspaces for Apache Cassandra | Not applicable | The HTTPS AWS API manages keyspaces/tables; row CRUD uses CQL over TLS on port 9142, so there is no qualifying HTTP data plane. |
 | MemoryDB / ElastiCache Redis or Valkey | Not applicable | Data plane uses RESP in a VPC; HTTP APIs are management-only. |
 | OpenSearch Service | HTTP-capable | Signed REST search/document data plane; normally proxy/server. |
@@ -128,13 +150,13 @@ An official SDK using HTTP internally does not by itself make a product browser-
 
 | Product | Class | Qualifying data plane and decision |
 |---|---|---|
-| Cosmos DB for NoSQL | HTTP-capable / ephemeral-token browser | HTTPS document CRUD, SQL query, change feed, and partition-scoped transactions; browser use requires a backend-issued resource token or carefully designed Entra/network setup; candidate `dalgo2cosmosdb-js`. |
+| Cosmos DB for NoSQL | HTTP-capable / ephemeral-token browser | Implemented: [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb), with explicit partition mappings and an ephemeral-token/trusted-proxy authentication boundary. |
 | Cosmos DB MongoDB / Cassandra / Gremlin APIs | Not applicable to generic HTTP DALgo | Data uses MongoDB, CQL, or Gremlin driver protocols; keep separate protocol adapters if pursued. |
-| Cosmos DB Table API / Azure Table Storage | Browser + ephemeral SAS | Table REST/OData CRUD and query, same-partition entity-group transactions, documented CORS; only narrowly scoped short-lived SAS is suitable for browser use, never account keys; candidate `dalgo2azure-table-js`. |
+| Cosmos DB Table API / Azure Table Storage | HTTP-capable; browser support differs | The shared Table REST data protocol is implemented as [`@dal-go/dalgo2azure-table`](packages/azure-table): REST/OData CRUD/query, ETag concurrency, and query-bound continuation cursors. Storage Tables can use configured CORS plus safely brokered credentials; Cosmos DB for Table does not support CORS and therefore requires a trusted runtime/proxy with a Cosmos-compatible authorization provider. |
 | Azure SQL Database / Managed Instance | Not applicable | ARM is management-only; data plane is TDS unless a separate application gateway is introduced. |
 | Azure Database for PostgreSQL / MySQL | Not applicable | ARM is management-only; data uses native protocols. |
 | Azure Managed Redis | Not applicable | ARM is management-only; data uses RESP. |
-| Azure Data Explorer / Kusto | HTTP-capable | Query/management HTTP endpoint and SDKs; analytical, trusted-runtime adapter rather than CRUD parity. |
+| Azure Data Explorer / Kusto | HTTP-capable | Implemented as [`@dal-go/dalgo2kusto`](packages/kusto): bounded, typed, parameterized KQL queries over the HTTPS query endpoint; analytical reads only, with browser access dependent on deployment CORS/network policy and safe OAuth token brokerage. |
 | Microsoft Fabric databases / warehouses | Not applicable directly | REST manages Fabric items; data access is SQL connectivity or a separately deployed gateway. |
 
 ## Primary official sources
@@ -153,21 +175,32 @@ An official SDK using HTTP internally does not by itself make a product browser-
 - [Azure Table Service REST API](https://learn.microsoft.com/rest/api/storageservices/table-service-rest-api)
 - [CouchDB changes feed](https://docs.couchdb.org/en/stable/api/database/changes.html)
 - [PostgREST API](https://docs.postgrest.org/en/stable/references/api.html)
+- [libSQL Hrana over HTTP v3 specification](https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md)
 - [Qdrant interfaces](https://qdrant.tech/documentation/interfaces/)
+- [Pinecone data-plane API](https://docs.pinecone.io/reference/api/latest/data-plane)
 - [Algolia JavaScript API](https://www.algolia.com/developers/search-api-javascript)
+- [Appwrite TablesDB rows API](https://appwrite.io/docs/references/cloud/client-web/tablesDB)
+- [PocketBase records API](https://pocketbase.io/docs/api-records/)
+- [Cloud Datastore v1 REST data API](https://cloud.google.com/datastore/docs/reference/data/rest)
+- [Cloud Spanner v1 REST data API](https://cloud.google.com/spanner/docs/reference/rest)
+- [AWS RDS Data API](https://docs.aws.amazon.com/rdsdataservice/latest/APIReference/Welcome.html)
+- [Azure Data Explorer REST API](https://learn.microsoft.com/en-us/kusto/api/rest/)
+- [Amazon Neptune openCypher HTTPS endpoint](https://docs.aws.amazon.com/neptune/latest/userguide/access-graph-opencypher-queries.html)
+- [Amazon Timestream endpoint discovery](https://docs.aws.amazon.com/timestream/latest/developerguide/Using-API.endpoint-discovery.how-it-works.html)
 
 ## Delivery status
 
 | Adapter | Status |
 |---|---|
-| [`@dal-go/dalgo2firestore`](packages/firestore) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
-| [`@dal-go/dalgo2indexeddb`](packages/indexeddb) | Implemented local browser adapter. |
-| [`@dal-go/dalgo2ovdb`](packages/ovdb) | Implemented OpenVaultDB HTTP adapter. |
+| [`@dalgo/firestore`](packages/firestore) | Existing reference adapter validated at its current main: Firestore Web SDK CRUD, structured queries, multi-document reads, and transactions with mocked contract tests and a separate emulator integration test. |
+| [`@dalgo/indexeddb`](packages/indexeddb) | Implemented local browser adapter. |
+| [`@dalgo/http`](packages/http) | ECB daily XML query slice with detached rights/read evidence, reviewed synthetic validation and registry-only release gates; npm publication and live CORS/rights admission remain separate. |
+| [`@dalgo/ovdb`](packages/ovdb) | Bounded query-only OpenVaultDB TugQL adapter; public activation requires separate admission. |
 | [`@dal-go/dalgo2snowflake`](packages/snowflake) | Implemented read/query SQL API adapter; writes and DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2databricks`](packages/databricks) | Implemented read/query Statement Execution API adapter with complete inline chunk validation; writes and DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) | Implemented HTTP document CRUD/query adapter; DALgo callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2dynamodb`](packages/dynamodb) | Implemented browser-capable AWS SDK v3 adapter for the documented two-key table layout; requires temporary scoped credentials. |
-| [`@dal-go/dalgo2bigquery`](packages/bigquery) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
+| [`@dalgo/bigquery`](packages/bigquery) | Implemented bounded read/query REST adapter with parameterized GoogleSQL; mutations and callback transactions remain explicitly unsupported. |
 | [`@dal-go/dalgo2neo4j`](packages/neo4j) | Implemented configured-label CRUD/query adapter over Query API v2, with explicit transactions limited to Aura affinity or declared single-instance deployments. |
 | [`@dal-go/dalgo2solr`](packages/solr) | Implemented bounded document CRUD/query adapter over Solr JSON Request and Update APIs; deployments must keep Solr behind a trusted proxy or equivalent access control. |
 | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) | Implemented bounded parameterized read/query support over the ClickHouse HTTP interface plus an explicit append-only JSONEachRow helper; OLTP-style DALgo mutations and callback transactions remain unsupported. |
@@ -175,6 +208,20 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2opensearch`](packages/opensearch) | Implemented bounded provider-neutral OpenSearch REST CRUD/query adapter with direct-index and string-ID contracts; AWS SigV4 signing remains an injected trusted-runtime responsibility. |
 | [`@dal-go/dalgo2redshift`](packages/redshift) | Implemented bounded read/query adapter over the asynchronous Redshift Data API with explicit table/key/projection mappings; writes and DALgo callback transactions remain unsupported. |
 | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) | Implemented bounded, partition-scoped Cosmos DB for NoSQL REST CRUD/query adapter with opaque continuation cursors and an explicit ephemeral-token/trusted-proxy authentication boundary. |
+| [`@dal-go/dalgo2libsql`](packages/libsql) | Implemented provider-neutral CRUD/query adapter over the libSQL Hrana v3 HTTP pipeline, with explicit table/key/projection mappings, bounded response handling, and no claim of DALgo callback-transaction support. |
+| [`@dal-go/dalgo2postgrest`](packages/postgrest) | Implemented bounded top-level CRUD/query adapter for the provider-neutral PostgREST protocol; callback transactions, cursors, embedding, and RPC remain explicitly unsupported. |
+| [`@dal-go/dalgo2qdrant`](packages/qdrant) | Implemented bounded point get/upsert/delete, filtered reads, and explicit vector search over Qdrant REST; atomic insert/update, transactions, generic ordering, and DALgo cursors remain explicitly unsupported. |
+| [`@dal-go/dalgo2appwrite`](packages/appwrite) | Implemented bounded TablesDB row CRUD/query with current JSON query encoding, explicit browser-session and trusted-server credential modes, and no claim of DALgo callback-transaction support. |
+| [`@dal-go/dalgo2algolia`](packages/algolia) | Implemented bounded object reads/search plus explicit trusted-runtime upsert/delete; atomic conditional writes, DALgo cursors, generic ordering, nesting, and transactions remain unsupported. |
+| [`@dal-go/dalgo2pinecone`](packages/pinecone) | Implemented bounded fetch/upsert/delete and explicit vector search with collision-free collection namespaces; conditional writes, DALgo transactions, and generic queries remain unsupported. |
+| [`@dal-go/dalgo2pocketbase`](packages/pocketbase) | Implemented bounded records CRUD/query with validated paging envelopes and stateless browser token auth; atomic upsert and callback transactions remain unsupported. |
+| [`@dal-go/dalgo2datastore`](packages/datastore) | Implemented bounded Datastore-mode lookup/commit/query with explicit namespace/key mapping and query-bound instance-local cursors; partial update and callback transactions remain unsupported. |
+| [`@dal-go/dalgo2azure-table`](packages/azure-table) | Implemented bounded PartitionKey/RowKey CRUD and OData query with ETag concurrency and query-bound continuation cursors; browser use requires configured CORS plus narrowly scoped ephemeral SAS/token brokerage. |
+| [`@dal-go/dalgo2spanner`](packages/spanner) | Implemented bounded, typed, parameterized Spanner reads/query and single-use atomic commits with explicit schema/key mappings; callback transactions and paginated continuation remain unsupported. |
+| [`@dal-go/dalgo2rds-data`](packages/rds-data) | Implemented bounded parameterized reads/query and guarded update/delete for Data-API-enabled Aurora PostgreSQL/MySQL; insert, set, and DALgo callback transactions remain unsupported rather than faking database-error semantics. |
+| [`@dal-go/dalgo2kusto`](packages/kusto) | Implemented bounded, typed, parameterized KQL reads/query over the v2 REST query endpoint; mutations, callback transactions, cursors, joins, grouping, and nested collection paths remain explicitly unsupported. |
+| [`@dal-go/dalgo2neptune`](packages/neptune) | Implemented bounded parameterized openCypher node CRUD/query with collision-free custom-ID namespaces, capped request/response transport, and injected final-payload signing; relationships, nested collections, and callback transactions remain unsupported. |
+| [`@dal-go/dalgo2timestream`](packages/timestream) | Implemented bounded signed Timestream reads/query plus explicit WriteRecords ingestion, with required Query/Write cell discovery and independent TTL caches; generic DALgo mutations, callback transactions, and browser execution remain unsupported. |
 
 ## Adapter acceptance bar
 

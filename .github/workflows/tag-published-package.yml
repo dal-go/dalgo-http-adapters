@@ -1,0 +1,113 @@
+name: Tag published package
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Published adapter name
+        required: true
+        type: choice
+        options:
+          - firestore
+          - indexeddb
+          - bigquery
+          - http
+          - sqlite-sql
+          - sqlite-wasm
+          - d1
+      version:
+        description: Published version, without v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: tag-${{ inputs.package }}-${{ inputs.version }}
+      cancel-in-progress: false
+    steps:
+      # GITHUB_TOKEN cannot create a tag whose commit has workflow files that
+      # differ from main (a retry, or main moving mid-release), so the tag push
+      # uses a Sneat Releaser token that can. Minted first: a missing permission
+      # fails before the package is verified or tagged. Checkout keeps no
+      # credential; the token is set only just before the push.
+      - name: Mint tag-push token
+        id: tag-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23li26w131Kv6u3IdM
+          private-key: ${{ secrets.SNEAT_RELEASER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-workflows: write
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Verify npm release and source commit
+        id: release
+        env:
+          PACKAGE: ${{ inputs.package }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            firestore|indexeddb|bigquery) name="@dalgo/$PACKAGE" ;;
+            http) name='@dalgo/http' ;;
+            sqlite-sql|sqlite-wasm|d1) name="@dalgo/$PACKAGE" ;;
+            *) exit 1 ;;
+          esac
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo 'version must be a SemVer release without a leading v' >&2
+            exit 1
+          fi
+          metadata=$(npm view "$name@$VERSION" name version gitHead --json)
+          [[ "$(jq -r '.name' <<< "$metadata")" == "$name" ]] || exit 1
+          [[ "$(jq -r '.version' <<< "$metadata")" == "$VERSION" ]] || exit 1
+          source_sha=$(jq -r '.gitHead' <<< "$metadata")
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          git fetch origin main
+          git cat-file -e "$source_sha^{commit}"
+          git merge-base --is-ancestor "$source_sha" origin/main
+          manifest=$(git show "$source_sha:packages/$PACKAGE/package.json")
+          [[ "$(jq -r '.name' <<< "$manifest")" == "$name" ]] || exit 1
+          [[ "$(jq -r '.version' <<< "$manifest")" == "$VERSION" ]] || exit 1
+          {
+            echo "source_sha=$source_sha"
+            echo "package_name=$name"
+            echo "tag=$PACKAGE@v$VERSION"
+          } >> "$GITHUB_OUTPUT"
+      - name: Set tag-push credential
+        env:
+          TAG_PUSH_TOKEN: ${{ steps.tag-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git remote set-url --push origin "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+      - name: Create package tag without overwriting an existing tag
+        env:
+          PACKAGE_NAME: ${{ steps.release.outputs.package_name }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch origin tag "$TAG" 2>/dev/null || true
+          if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
+            [[ "$(git rev-list -n 1 "$TAG")" == "$SOURCE_SHA" ]] || exit 1
+            echo "$TAG already points to $SOURCE_SHA"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" "$SOURCE_SHA" -m "$PACKAGE_NAME $TAG"
+          git push origin "refs/tags/$TAG"

@@ -1,24 +1,34 @@
 {
-  "name": "@dal-go/dalgo2ovdb",
-  "version": "0.1.0",
-  "description": "OpenVaultDB HTTP adapter for DALgo TypeScript",
+  "name": "@dalgo/ovdb",
+  "private": false,
+  "version": "0.3.0",
+  "description": "Completed read-only OpenVaultDB TugQL executor for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "sideEffects": false,
   "exports": {
     ".": {
+      "types": "./dist-tugql/index.d.ts",
+      "import": "./dist-tugql/index.js"
+    },
+    "./tugql": {
+      "types": "./dist-tugql/index.d.ts",
+      "import": "./dist-tugql/index.js"
+    },
+    "./client": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
   "files": [
     "dist",
+    "dist-tugql",
     "LICENSE",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "check": "eslint . && vitest run && tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.tugql.json",
+    "check": "npm run build && eslint . && vitest run",
     "lint": "eslint .",
     "prepack": "npm run build",
     "test": "vitest run",
@@ -38,14 +48,21 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dal-go/dalgo": "^0.1.0"
+    "@dalgo/core": ">=0.6.0 <0.9.0"
   },
   "devDependencies": {
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d",
+    "@dalgo/core": "^0.7.4",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
     "vitest": "5.0.1"
+  },
+  "dependencies": {
+    "yaml": "2.8.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   }
 }

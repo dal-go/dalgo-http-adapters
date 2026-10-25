@@ -1,0 +1,54 @@
+{
+  "name": "@dalgo/sqlite-sql",
+  "version": "0.1.0",
+  "description": "Shared DALgo structured-query to SQLite SQL compiler for DALgo TypeScript adapters",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "eslint . && tsc -p tsconfig.json --noEmit && vitest run --coverage && tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "prepack": "npm run build",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dal-go/dalgo-http-adapters.git",
+    "directory": "packages/sqlite-sql"
+  },
+  "bugs": {
+    "url": "https://github.com/dal-go/dalgo-http-adapters/issues"
+  },
+  "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/sqlite-sql#readme",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@dalgo/core": ">=0.2.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@dalgo/core": "^0.2.0",
+    "@eslint/js": "10.0.1",
+    "@vitest/coverage-v8": "5.0.1",
+    "eslint": "10.11.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1"
+  }
+}

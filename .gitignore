@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.tgz
 .pnpm-store/
+.browser-fixture-dist/
+
+dist-tugql/
