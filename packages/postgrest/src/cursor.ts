@@ -1,5 +1,6 @@
 import { UnsupportedError } from "@dalgo/core";
 
+import { postgrestFieldKey } from "./fields.js";
 import { isUnsafeNativeNumber, parseLosslessJson } from "./json.js";
 
 /** Stable, adapter-owned cursor identity. A cursor from another adapter is foreign. */
@@ -59,7 +60,7 @@ function cursorValue(value: unknown): PostgrestCursorValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value) || Object.is(value, -0) || isUnsafeNativeNumber(value)) {
-      throw new TypeError("PostgREST query cursor numbers must be lossless safe integers and not -0");
+      throw new TypeError("PostgREST query cursor numbers must be finite, lossless and not -0");
     }
     return value;
   }
@@ -68,16 +69,21 @@ function cursorValue(value: unknown): PostgrestCursorValue {
 
 function scalar(value: PostgrestCursorValue): string {
   if (value === null) return "null";
+  // Keyset terms live inside the `or=(...)` expression, a PostgREST list
+  // context, so a string operand must be quoted and escaped there.
   if (typeof value === "string") return `"${value.replaceAll(/(["\\])/gu, "\\$1")}"`;
   if (typeof value === "number") {
-    if (isUnsafeNativeNumber(value)) throw new TypeError("PostgREST query cursor numbers must be lossless safe integers");
+    if (!Number.isFinite(value) || Object.is(value, -0) || isUnsafeNativeNumber(value)) {
+      throw new TypeError("PostgREST query cursor numbers must be finite, lossless and not -0");
+    }
     return String(value);
   }
   return String(value);
 }
 
 function equality(order: PostgrestCursorOrder, value: PostgrestCursorValue): string {
-  return value === null ? `${order.field}.is.null` : `${order.field}.eq.${scalar(value)}`;
+  const field = postgrestFieldKey(order.field);
+  return value === null ? `${field}.is.null` : `${field}.eq.${scalar(value)}`;
 }
 
 function encodedTextLength(value: string): number {
@@ -266,6 +272,7 @@ export function postgrestKeysetFilter(
     const order = orders[index];
     const value = values[index];
     if (order === undefined || value === undefined) throw new PostgrestCursorError("malformed");
+    const field = postgrestFieldKey(order.field);
     const prefix = orders.slice(0, index).map((item, prefixIndex) => {
       const prefixValue = values[prefixIndex];
       if (prefixValue === undefined) throw new PostgrestCursorError("malformed");
@@ -274,12 +281,12 @@ export function postgrestKeysetFilter(
     const nullsLast = order.direction === "asc";
     const after: string[] = [];
     if (value === null) {
-      if (!nullsLast) after.push(`${order.field}.not.is.null`);
+      if (!nullsLast) after.push(`${field}.not.is.null`);
     } else {
-      after.push(`${order.field}.${order.direction === "asc" ? "gt" : "lt"}.${scalar(value)}`);
+      after.push(`${field}.${order.direction === "asc" ? "gt" : "lt"}.${scalar(value)}`);
       // The final order key is the non-null primary-key tie-breaker, so a
       // null branch would only add a term that can never match.
-      if (nullsLast && index < orders.length - 1) after.push(`${order.field}.is.null`);
+      if (nullsLast && index < orders.length - 1) after.push(`${field}.is.null`);
     }
     for (const condition of after) {
       const term = [...prefix, condition];

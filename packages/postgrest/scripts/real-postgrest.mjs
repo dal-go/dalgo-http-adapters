@@ -55,8 +55,48 @@ insert into api.items (id, title, priority, done, score, tags) values
 
 create view api.items_view as select id, title from api.items;
 
+-- Control-named columns: PostgREST would read an unquoted filter key such as
+-- limit as its own parameter, so these prove the quoted-key rendering.
+create table api.reserved_words (
+  id bigint primary key,
+  "select" text,
+  "columns" text,
+  "on_conflict" integer,
+  "order" integer,
+  "limit" integer,
+  "offset" integer,
+  "and" integer,
+  "or" integer,
+  ordinary integer
+);
+
+insert into api.reserved_words values
+  (1, 'alpha', 'c1', 2, 2, 10, null, 3, 4, 5),
+  (2, 'beta',  'c2', 1, 1, null, 100, 1, 5, 6);
+
+-- A control name as the configured primary key, exercised through point reads.
+create table api.reserved_ids ("offset" bigint primary key, title text not null);
+insert into api.reserved_ids values (7, 'seven'), (70, 'seventy');
+
+-- Canonical numeric keys: every literal below survives the JavaScript round
+-- trip exactly, so keyset paging must keep working for numeric order values.
+create table api.numeric_items (id numeric primary key, title text not null);
+insert into api.numeric_items values
+  (0.1, 'tenth'),
+  (0.2, 'fifth'),
+  (0.30000000000000004, 'exact-sum');
+
+-- Two PostgreSQL numeric keys that are distinct in the database but collapse
+-- to the same JavaScript double. Paginating these would repeat a row, so the
+-- adapter must refuse the response instead of emitting a changed token.
+create table api.numeric_precise (id numeric primary key, title text not null);
+insert into api.numeric_precise values
+  (0.1, 'plain'),
+  (0.10000000000000001, 'precise');
+
 grant usage on schema api to anon, app_user;
-grant select on api.items, api.items_view to app_user;
+grant select on api.items, api.items_view, api.reserved_words, api.reserved_ids,
+  api.numeric_items, api.numeric_precise to app_user;
 `;
 
 const compose = `

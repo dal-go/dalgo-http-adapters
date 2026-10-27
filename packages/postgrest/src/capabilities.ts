@@ -45,7 +45,7 @@ export const POSTGREST_READ_CAPABILITIES = {
     },
     filter: {
       status: "native",
-      detail: "simple column identifiers or DOCUMENT_ID; null only for equality and inequality; reserved query fields select/order/limit/offset/or/and are refused before HTTP",
+      detail: "simple column identifiers or DOCUMENT_ID; null only for equality and inequality; PostgREST control names select/columns/on_conflict/order/limit/offset/and/or are quoted as field keys so the predicate is preserved",
     },
     sort: {
       status: "native",

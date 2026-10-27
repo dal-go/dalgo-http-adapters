@@ -84,6 +84,44 @@ describe("PostgrestDatabase queryWithSignal cursor", () => {
     expect(url(fetch, 1).searchParams.get("or")).toBe("(item_id.gt.10)");
   });
 
+  it("quotes a control name used as the configured primary key in order and keyset terms", async () => {
+    const { database: db, fetch } = database({ idColumn: "order" });
+    fetch.mockResolvedValueOnce(response(200, [{ order: "a", priority: 1, score: null, done: false }]));
+    const page = await db.queryWithSignal(items.query().limit(1).build(), new AbortController().signal);
+    expect(url(fetch).searchParams.get("order")).toBe("\"order\".asc");
+    expect(page.nextCursor).toBeDefined();
+    expect(page.records[0]?.key).toEqual(key("items", "a"));
+    const cursor = page.nextCursor?.values[0];
+    if (typeof cursor !== "string") throw new Error("cursor missing");
+
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.queryWithSignal(
+      items.query().limit(1).startAfter(cursor).build(),
+      new AbortController().signal,
+    );
+    expect(url(fetch, 1).searchParams.get("or")).toBe("(\"order\".gt.\"a\")");
+    expect(url(fetch, 1).searchParams.get("order")).toBe("\"order\".asc");
+  });
+
+  it("quotes a control name used as an order field in the keyset expression", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, [{ id: "z", priority: 1, score: null, done: false, order: 5 }]));
+    const page = await db.queryWithSignal(
+      items.query().orderBy("order").limit(1).build(),
+      new AbortController().signal,
+    );
+    expect(url(fetch).searchParams.get("order")).toBe("\"order\".asc,id.asc");
+    const cursor = page.nextCursor?.values[0];
+    if (typeof cursor !== "string") throw new Error("cursor missing");
+
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.queryWithSignal(
+      items.query().orderBy("order").limit(1).startAfter(cursor).build(),
+      new AbortController().signal,
+    );
+    expect(url(fetch, 1).searchParams.get("or")).toBe("(\"order\".gt.5,\"order\".is.null,and(\"order\".eq.5,id.gt.\"z\"))");
+  });
+
   it("does not duplicate an explicit primary-key order", async () => {
     const { database: db, fetch } = database();
     fetch.mockResolvedValueOnce(response(200, [{ id: "z", priority: 1, score: null, done: false }]));
@@ -179,6 +217,67 @@ describe("PostgrestDatabase queryWithSignal cursor", () => {
       new AbortController().signal,
     )).rejects.toBeInstanceOf(TypeError);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a high-precision decimal order value and emits no continuation cursor", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(rawResponse(200, "[{\"id\":\"a\",\"priority\":1,\"score\":0.10000000000000001,\"done\":false}]"));
+    const error = await db.queryWithSignal(
+      items.query().orderBy("score").limit(1).build(),
+      new AbortController().signal,
+    ).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "PostgrestRequestError" });
+    expect(String(error)).not.toContain("0.10000000000000001");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an underflowing exponent token in a row instead of emitting zero", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(rawResponse(200, "[{\"id\":\"a\",\"priority\":1,\"score\":1e-400,\"done\":false}]"));
+    const error = await db.queryWithSignal(
+      items.query().orderBy("score").limit(1).build(),
+      new AbortController().signal,
+    ).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "PostgrestRequestError" });
+    expect(String(error)).not.toContain("1e-400");
+  });
+
+  it("refuses a crafted cursor containing a high-precision decimal as malformed", async () => {
+    const { database: db, fetch } = database();
+    const payload = Buffer.from(
+      "{\"adapter\":\"@dal-go/dalgo2postgrest\",\"version\":1,"
+      + "\"endpoint\":\"https://api.example.com/rest/v1/\","
+      + "\"collection\":\"items\",\"relation\":\"items\",\"idColumn\":\"id\",\"select\":\"*\","
+      + "\"filters\":[],\"orders\":[{\"field\":\"score\",\"direction\":\"asc\"}],"
+      + "\"limit\":1,\"page\":2,\"values\":[0.10000000000000001]}",
+      "utf8",
+    ).toString("base64url");
+
+    await expect(db.queryWithSignal(
+      items.query().orderBy("score").limit(1).startAfter(payload).build(),
+      new AbortController().signal,
+    )).rejects.toMatchObject({ name: "PostgrestCursorError", reason: "malformed" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps a canonical decimal cursor literal exactly as the row reported it", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(rawResponse(200, "[{\"id\":\"a\",\"priority\":1,\"score\":0.1,\"done\":false}]"));
+    const page = await db.queryWithSignal(
+      items.query().orderBy("score").limit(1).build(),
+      new AbortController().signal,
+    );
+    expect(page.records[0]?.data.score).toBe(0.1);
+    const cursor = page.nextCursor?.values[0];
+    if (typeof cursor !== "string") throw new Error("cursor missing");
+
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.queryWithSignal(
+      items.query().orderBy("score").limit(1).startAfter(cursor).build(),
+      new AbortController().signal,
+    );
+    expect(url(fetch, 1).searchParams.get("or"))
+      .toBe("(score.gt.0.1,score.is.null,and(score.eq.0.1,id.gt.\"a\"))");
   });
 
   it("rejects a crafted cursor containing an unsafe integer as malformed", async () => {

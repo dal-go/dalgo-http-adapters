@@ -1,4 +1,4 @@
-import { UnsupportedError, collection, key } from "@dalgo/core";
+import { DOCUMENT_ID, UnsupportedError, collection, key } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 
 import { PostgrestCursorError, PostgrestDatabase, PostgrestHttpError } from "../src/index.js";
@@ -33,10 +33,11 @@ describe.skipIf(baseUrl === undefined || jwt === undefined)("real PostgREST v16 
       status: "available",
       protocol: "postgrest-openapi",
       schema,
-      relationCount: 2,
+      relationCount: 6,
       truncated: false,
     });
-    expect(discovery.relations.map((relation) => relation.name).sort()).toEqual(["items", "items_view"]);
+    expect(discovery.relations.map((relation) => relation.name).sort())
+      .toEqual(["items", "items_view", "numeric_items", "numeric_precise", "reserved_ids", "reserved_words"]);
 
     const itemRelation = discovery.relations.find((relation) => relation.name === "items");
     expect(itemRelation).toMatchObject({
@@ -66,7 +67,7 @@ describe.skipIf(baseUrl === undefined || jwt === undefined)("real PostgREST v16 
     await expect(db.testConnection()).resolves.toMatchObject({
       ok: true,
       status: "connected",
-      relationCount: 2,
+      relationCount: 6,
       schema,
     });
   });
@@ -221,6 +222,87 @@ describe.skipIf(baseUrl === undefined || jwt === undefined)("real PostgREST v16 
       items.query().orderBy("priority").limit(2).offset(1).startAfter(cursor).build(),
       new AbortController().signal,
     )).rejects.toBeInstanceOf(UnsupportedError);
+  });
+
+  it("quotes every PostgREST control name as a filter and as a configured key", async () => {
+    const db = database({ maxQueryLimit: 10 });
+    const words = collection<Record<string, unknown>>("reserved_words");
+    const cases: readonly (readonly [string, "==" | ">=", unknown, readonly number[]])[] = [
+      ["select", "==", "alpha", [1]],
+      ["columns", "==", "c1", [1]],
+      ["on_conflict", "==", 2, [1]],
+      ["order", "==", 2, [1]],
+      ["limit", "==", 10, [1]],
+      ["offset", ">=", 100, [2]],
+      ["and", "==", 3, [1]],
+      ["or", "==", 4, [1]],
+      ["ordinary", "==", 5, [1]],
+    ];
+    for (const [field, operator, value, expected] of cases) {
+      const page = await db.queryWithSignal(
+        words.query().where(field, operator, value).orderBy("id").limit(10).build(),
+        new AbortController().signal,
+      );
+      expect(page.records.map((record) => record.key.id), field).toEqual(expected);
+    }
+
+    // A control name as the configured primary key must survive quoted point
+    // reads and a DOCUMENT_ID filter instead of being read as a control.
+    const ids = database({ idColumn: "offset" });
+    await expect(ids.get<{ title: string }>(key("reserved_ids", 7))).resolves.toEqual({
+      key: key("reserved_ids", 7), exists: true, data: { title: "seven" },
+    });
+    await expect(ids.get<{ title: string }>(key("reserved_ids", 70)))
+      .resolves.toMatchObject({ exists: true, data: { title: "seventy" } });
+    const filtered = await ids.queryWithSignal(
+      collection<{ title: string }>("reserved_ids").query().where(DOCUMENT_ID, "==", 70).limit(1).build(),
+      new AbortController().signal,
+    );
+    expect(filtered.records.map((record) => record.key.id)).toEqual([70]);
+  });
+
+  it("pages a real canonical numeric key by exact keyset literals without repeating a row", async () => {
+    const db = database({ maxQueryLimit: 2 });
+    const numeric = collection<{ title: string }>("numeric_items");
+    const seen: number[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const builder = numeric.query().orderBy("id").limit(2);
+      const page = await db.queryWithSignal(
+        cursor === undefined ? builder.build() : builder.startAfter(cursor).build(),
+        new AbortController().signal,
+      );
+      seen.push(...page.records.map((record) => record.key.id as number));
+      cursor = page.nextCursor?.values[0] as string | undefined;
+      if (cursor === undefined) break;
+    }
+    expect(seen).toEqual([0.1, 0.2, 0.30000000000000004]);
+    expect(new Set(seen).size).toBe(3);
+  });
+
+  it("refuses a real numeric key whose JSON literal would change through JavaScript", async () => {
+    if (baseUrl === undefined || jwt === undefined) throw new Error("real PostgREST test environment is not configured");
+    // The service itself reports two distinct numeric keys as two JSON tokens
+    // that JavaScript collapses to one value; a cursor over them would repeat
+    // the second row. Prove the collapse from the raw protocol response, then
+    // prove the adapter refuses instead of emitting a changed record/cursor.
+    const raw = await globalThis.fetch(`${baseUrl}/numeric_precise?select=id&order=id.asc`, {
+      headers: { authorization: `Bearer ${jwt}`, "accept-profile": schema },
+    });
+    expect(raw.status).toBe(200);
+    const text = await raw.text();
+    expect(text).toContain("0.10000000000000001");
+    expect((JSON.parse(text) as { id: number }[]).map((row) => row.id)).toEqual([0.1, 0.1]);
+
+    const db = database();
+    const precise = collection<{ title: string }>("numeric_precise");
+    const error = await db.queryWithSignal(
+      precise.query().orderBy("id").limit(2).build(),
+      new AbortController().signal,
+    ).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "PostgrestRequestError" });
+    expect(String(error)).not.toContain("0.10000000000000001");
+    expect(String(error)).not.toContain("precise");
   });
 
   it("maps bad auth and a read-only role to explicit, redacted failures", async () => {

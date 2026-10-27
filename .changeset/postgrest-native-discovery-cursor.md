@@ -14,8 +14,12 @@ unsupported because the current core `StructuredQuery` cannot express it.
 
 Cursor continuation is returned for every non-empty page (including a short
 page caused by `db-max-rows`) and ends only on an empty page. Lossless JSON
-number checks refuse unsafe integers before emitting records or cursors.
-Filters on reserved PostgREST query fields are refused before HTTP. Discovery
+number checks refuse unsafe integers and any decimal or exponent literal whose
+exact value would change when serialized back through JavaScript, before a
+record or cursor is emitted. Filters on PostgREST control parameter names are
+quoted at the URL key using the documented identifier quoting, so the
+predicate is preserved; control-named configured ID columns also work through
+quoted point reads. Discovery
 reports the complete declared primary key independently of the field budget
 and separates `idColumn.uniqueStatus` from `readable`. A real Chromium ->
 disposable PostgREST Playwright suite covers CORS, headers, native rows,

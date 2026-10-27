@@ -37,6 +37,7 @@ import {
   type PostgrestDiscoveryBounds,
   type PostgrestDiscoveryReason,
 } from "./discovery.js";
+import { postgrestFieldKey } from "./fields.js";
 import { isUnsafeNativeNumber, parseLosslessJson } from "./json.js";
 
 const DEFAULT_MAX_GET_MANY = 100;
@@ -52,14 +53,6 @@ const DEFAULT_MAX_DISCOVERY_BYTES = 524_288;
 const DEFAULT_MAX_CURSOR_BYTES = 8_192;
 const DEFAULT_MAX_SCHEMA_DEPTH = 4;
 const DEFAULT_TIMEOUT_MS = 15_000;
-
-/**
- * PostgREST query-string parameters owned by the adapter/protocol. A filter on
- * a column with one of these names would be appended and then replaced (or
- * joined ambiguously) by a control parameter, silently dropping a predicate.
- * The adapter refuses such filters before HTTP instead of guessing at quoting.
- */
-const RESERVED_QUERY_FIELDS = new Set(["select", "order", "limit", "offset", "or", "and"]);
 
 export type PostgrestFetch = typeof globalThis.fetch;
 export type PostgrestHeaders = Readonly<Record<string, string>>;
@@ -145,7 +138,7 @@ function validateJson(value: unknown, seen = new Set<object>()): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
     if (!Number.isFinite(value) || Object.is(value, -0) || isUnsafeNativeNumber(value)) {
-      throw new TypeError("PostgREST JSON numbers must be finite, lossless safe integers and not -0");
+      throw new TypeError("PostgREST JSON numbers must be finite, lossless and not -0");
     }
     return;
   }
@@ -204,10 +197,15 @@ function identityScopeName(value: string | undefined): string | undefined {
 }
 
 function scalar(value: unknown): string {
-  if (typeof value === "string") return `"${value.replaceAll(/(["\\])/gu, "\\$1")}"`;
+  if (typeof value === "string") {
+    // A top-level single-value filter is not a PostgREST list context: the
+    // protocol compares the operand bytes as written, so double quotes would
+    // become part of the compared value (`eq."Alpha"` does not match `Alpha`).
+    return value;
+  }
   if (typeof value === "number") {
     if (!Number.isFinite(value) || Object.is(value, -0) || isUnsafeNativeNumber(value)) {
-      throw new TypeError("PostgREST filter numbers must be finite, lossless safe integers and not -0");
+      throw new TypeError("PostgREST filter numbers must be finite, lossless and not -0");
     }
     return String(value);
   }
@@ -215,44 +213,44 @@ function scalar(value: unknown): string {
   throw new UnsupportedError("PostgREST filter value types");
 }
 
+function quotedScalar(value: unknown): string {
+  if (typeof value !== "string") return scalar(value);
+  return `"${value.replaceAll(/(["\\])/gu, "\\$1")}"`;
+}
+
 function filterValue(value: unknown): string {
-  if (Array.isArray(value)) return `{${value.map(scalar).join(",")}}`;
+  // An array literal is a list context, so its members are quoted.
+  if (Array.isArray(value)) return `{${value.map(quotedScalar).join(",")}}`;
   return scalar(value);
 }
 
 function filterParameter<T>(filter: QueryFilter<T>, idColumn: string): readonly [string, string] {
   const field = filter.field === DOCUMENT_ID ? idColumn : identifier(String(filter.field), "query field");
-  if (RESERVED_QUERY_FIELDS.has(field)) {
-    // Quoting a column called e.g. `limit` is not part of the adapter's
-    // supported URL grammar, so refuse rather than append a predicate that
-    // PostgREST would read as its own control parameter.
-    throw new UnsupportedError(`PostgREST filter on reserved query field ${field}`);
-  }
   if (filter.value === undefined) throw new UnsupportedError("PostgREST undefined query filters");
   if (filter.value === null) {
-    if (filter.operator === "==") return [field, "is.null"];
-    if (filter.operator === "!=") return [field, "not.is.null"];
+    if (filter.operator === "==") return [postgrestFieldKey(field), "is.null"];
+    if (filter.operator === "!=") return [postgrestFieldKey(field), "not.is.null"];
     throw new UnsupportedError(`PostgREST ${filter.operator} null query filters`);
   }
   switch (filter.operator) {
-    case "==": return [field, `eq.${filterValue(filter.value)}`];
-    case "!=": return [field, `neq.${filterValue(filter.value)}`];
-    case "<": return [field, `lt.${scalar(filter.value)}`];
-    case "<=": return [field, `lte.${scalar(filter.value)}`];
-    case ">": return [field, `gt.${scalar(filter.value)}`];
-    case ">=": return [field, `gte.${scalar(filter.value)}`];
+    case "==": return [postgrestFieldKey(field), `eq.${filterValue(filter.value)}`];
+    case "!=": return [postgrestFieldKey(field), `neq.${filterValue(filter.value)}`];
+    case "<": return [postgrestFieldKey(field), `lt.${scalar(filter.value)}`];
+    case "<=": return [postgrestFieldKey(field), `lte.${scalar(filter.value)}`];
+    case ">": return [postgrestFieldKey(field), `gt.${scalar(filter.value)}`];
+    case ">=": return [postgrestFieldKey(field), `gte.${scalar(filter.value)}`];
     case "in":
       if (!Array.isArray(filter.value) || filter.value.length === 0) throw new TypeError("PostgREST in filters require a non-empty array");
-      return [field, `in.(${filter.value.map(scalar).join(",")})`];
+      return [postgrestFieldKey(field), `in.(${filter.value.map(quotedScalar).join(",")})`];
     case "not-in":
       if (!Array.isArray(filter.value) || filter.value.length === 0) throw new TypeError("PostgREST not-in filters require a non-empty array");
-      return [field, `not.in.(${filter.value.map(scalar).join(",")})`];
+      return [postgrestFieldKey(field), `not.in.(${filter.value.map(quotedScalar).join(",")})`];
     case "array-contains":
       if (!Array.isArray(filter.value)) throw new TypeError("PostgREST array-contains filters require an array");
-      return [field, `cs.${filterValue(filter.value)}`];
+      return [postgrestFieldKey(field), `cs.${filterValue(filter.value)}`];
     case "array-contains-any":
       if (!Array.isArray(filter.value) || filter.value.length === 0) throw new TypeError("PostgREST array-contains-any filters require a non-empty array");
-      return [field, `ov.${filterValue(filter.value)}`];
+      return [postgrestFieldKey(field), `ov.${filterValue(filter.value)}`];
     default: throw new UnsupportedError(`PostgREST ${String(filter.operator)} query filters`);
   }
 }
@@ -344,9 +342,6 @@ export class PostgrestDatabase implements Database, WriteSession {
     this.#schema = profileName(options.profile ?? options.schema);
     this.#identityScope = identityScopeName(options.identityScope);
     this.#idColumn = identifier(options.idColumn ?? "id", "id column");
-    if (RESERVED_QUERY_FIELDS.has(this.#idColumn)) {
-      throw new UnsupportedError(`PostgREST reserved query field as idColumn: ${this.#idColumn}`);
-    }
     this.#relationName = options.relationName ?? ((collection) => collection);
     this.#headers = options.headers;
     this.#fetch = options.fetch ?? globalThis.fetch;
@@ -492,7 +487,7 @@ export class PostgrestDatabase implements Database, WriteSession {
     }
     const orders = cursorMode ? this.cursorOrders(query.orders) : this.legacyOrders(query.orders);
     if (orders.length > 0) {
-      url.searchParams.set("order", orders.map((order) => `${order.field}.${order.direction}`).join(","));
+      url.searchParams.set("order", orders.map((order) => `${postgrestFieldKey(order.field)}.${order.direction}`).join(","));
     }
     const limit = query.limit ?? this.#maxQueryLimit;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#maxQueryLimit) {
@@ -723,13 +718,13 @@ export class PostgrestDatabase implements Database, WriteSession {
 
   private keyUrl(key: Key): URL {
     const url = this.relationUrl(key);
-    url.searchParams.set(this.#idColumn, `eq.${scalar(key.id)}`);
+    url.searchParams.set(postgrestFieldKey(this.#idColumn), `eq.${scalar(key.id)}`);
     return url;
   }
 
   private payload<T>(key: Key, data: T, codec?: Codec<T>): Record<string, unknown> {
     if (typeof key.id === "number" && (!Number.isFinite(key.id) || Object.is(key.id, -0) || isUnsafeNativeNumber(key.id))) {
-      throw new TypeError("PostgREST write keys must have a finite, lossless safe integer or string ID");
+      throw new TypeError("PostgREST write keys must have a finite, lossless number or string ID");
     }
     return { [this.#idColumn]: key.id, ...encodedRecord(data, codecOrIdentity(codec), this.#idColumn) };
   }

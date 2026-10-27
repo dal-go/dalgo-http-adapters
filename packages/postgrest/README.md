@@ -283,19 +283,33 @@ bounds.
 - Supported filters are equality/inequality, comparisons, `in`, `not-in`, and
   PostgreSQL-array containment/overlap; relation and field names are limited to
   simple SQL identifiers. No resource embedding, JSON paths, full-text search,
-  aggregates, RPC, or server management API is exposed.
-- Filters on the reserved PostgREST query fields `select`, `order`, `limit`,
-  `offset`, `or` and `and` are refused before HTTP, as is a configured
-  `idColumn` with one of those names. Appending such a filter would be
-  overwritten by, or joined ambiguously with, an adapter control parameter and
-  silently drop a predicate instead of filtering it.
+  aggregates, RPC, or server management API is exposed. A string used with a
+  single-value operator (`eq`, `neq`, `lt`, `lte`, `gt`, `gte`) is sent raw,
+  because PostgREST compares that operand literally and would include the
+  double quotes otherwise. Strings in a membership list (`in`, `not-in`) or an
+  array literal (`cs`, `ov`) are quoted and escaped, which is the documented
+  reserved-character context.
+- Reserved PostgREST control parameters (`select`, `columns`, `on_conflict`,
+  `order`, `limit`, `offset`, `and`, `or`) are quoted when they are used as
+  filter keys, order fields, or the configured `idColumn`, using PostgREST's
+  documented identifier quoting. Appending them unquoted would let PostgREST
+  consume the predicate as its own control and silently drop it. Names that
+  merely resemble a control (`order_id`, `limiters`, `ordinary`) stay unquoted
+  and keep working.
 - JSON numbers are checked against the raw response text before `JSON.parse`.
-  An integer (or integer-valued decimal/exponent) outside the lossless
-  JavaScript safe range is refused with a redacted error before any record or
-  cursor is emitted, rather than silently rounded. Outgoing filter, record and
-  cursor values are checked the same way. This prevents an ID such as
-  `9007199254740993` from becoming `9007199254740992` in data or a cursor
-  boundary.
+  A number literal is accepted only when the decimal value it denotes is the
+  exact decimal value the adapter would serialize back. A high-precision
+  decimal such as `0.10000000000000001`, an exponent token that underflows to
+  zero (`1e-400`) or overflows to a non-finite value (`1e400`), `-0`, and any
+  integer (including an integer-valued decimal or exponent) outside the
+  lossless JavaScript safe range are refused with a redacted error before any
+  record or cursor is emitted. Canonical decimals such as `0.1`,
+  `0.30000000000000004` or `1.0`/`1e0` remain supported because their
+  serialized literal preserves the same decimal value. Outgoing filter,
+  record and cursor values are checked the same way. This prevents an ID such
+  as `9007199254740993` from becoming `9007199254740992`, and a keyset boundary
+  such as `0.10000000000000001` from being sent as `0.1`, which could repeat
+  the same actual numeric row.
 - `set` is full replacement, not merge-upsert: the supplied DALgo value is the
   complete replacement record (apart from the adapter-owned ID). Fields omitted
   from it are not sent for merge. PostgREST must expose a relation for which its
