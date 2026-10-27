@@ -89,6 +89,26 @@ describe("CouchDbDatabase", () => {
     await expect(db.get(key("items", "milk"))).rejects.toThrow("maxResponseBytes");
   });
 
+  it("keeps the legacy body timeout error and never awaits a hostile cancellation", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const cancel = vi.fn(() => new Promise<void>(() => undefined));
+    const stream = new ReadableStream<Uint8Array>({
+      pull: () => new Promise<void>(() => undefined),
+      cancel,
+    });
+    fetch.mockResolvedValueOnce(new Response(stream, { status: 200 }));
+    const db = new CouchDbDatabase({ databaseUrl: "https://couch.example.com/app", fetch, timeoutMs: 50 });
+    const items = collection<{ done: boolean }>("items");
+    const query = db.query(items.query().build());
+    const settled = query.catch((reason: unknown) => reason);
+    await vi.waitFor(() => {
+      expect(stream.locked).toBe(true);
+    }, { interval: 1 });
+
+    await expect(settled).resolves.toMatchObject({ message: "CouchDB response timed out" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["https://couch.example.com/app", "https://localhost/app", "http://localhost:5984/app", "http://127.0.0.1:5984/app", "http://[::1]:5984/app"])("accepts supported database endpoint %s without eager I/O", databaseUrl => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     expect(() => new CouchDbDatabase({ databaseUrl, fetch })).not.toThrow();

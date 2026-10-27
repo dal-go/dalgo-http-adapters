@@ -325,6 +325,9 @@ export class CouchDbDatabase implements Database, WriteSession {
     const cancelled = (): Error => callerSignal === undefined
       ? new DOMException("The operation was aborted.", "AbortError")
       : new QueryCancelledError(scope.deadlineExceeded ? "deadline" : "caller");
+    const bodyCancelled = (): Error => callerSignal === undefined
+      ? new Error("CouchDB response timed out")
+      : cancelled();
     try {
       let supplied: CouchDbHeaders;
       try {
@@ -354,9 +357,12 @@ export class CouchDbDatabase implements Database, WriteSession {
       }
       let text: string;
       try {
-        text = await readResponse(response, this.#maxResponseBytes, scope.signal, cancelled);
+        text = await readResponse(response, this.#maxResponseBytes, scope.signal, bodyCancelled);
       } catch (error) {
-        if (scope.signal.aborted) { cancelQuietly(response.body); throw cancelled(); }
+        if (scope.signal.aborted) {
+          if (callerSignal === undefined) throw error;
+          cancelQuietly(response.body); throw cancelled();
+        }
         if (callerSignal !== undefined && !(error instanceof RangeError)) throw new CouchDbRequestError();
         throw error;
       }
