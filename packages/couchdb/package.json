@@ -1,6 +1,5 @@
 {
   "name": "@dal-go/dalgo2couchdb",
-  "private": true,
   "version": "0.1.0",
   "description": "Apache CouchDB HTTP document and Mango adapter for DALgo TypeScript",
   "type": "module",
@@ -34,14 +33,20 @@
   },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/couchdb#readme",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "engines": {
     "node": ">=22.13"
   },
   "peerDependencies": {
-    "@dal-go/dalgo": "^0.1.0"
+    "@dalgo/adapter-runtime": ">=0.1.0 <1.0.0",
+    "@dalgo/core": ">=0.7.4 <0.9.0"
   },
   "devDependencies": {
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d",
+    "@dalgo/adapter-runtime": "workspace:^",
+    "@dalgo/core": "^0.7.4",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",

@@ -1,7 +1,7 @@
 # DALgo adapter for PostgREST
 
 `@dal-go/dalgo2postgrest` is a deliberately bounded, dependency-free TypeScript
-adapter from [`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) to exposed
+adapter from [`@dalgo/core`](https://github.com/dal-go/dalgo-js) to exposed
 PostgREST tables or updatable views. It uses the platform `fetch` API only and
 does not call PostgreSQL, PostgREST administration, OpenAPI, or RPC endpoints.
 
@@ -21,16 +21,40 @@ proxy boundaries for the deployment. Direct browser access is an application
 decision; this package cannot make an overly broad CORS policy or a token with
 the wrong audience safe.
 
+The package source is browser-safe and imports no Node built-in. A real browser
+journey, deployed PostgREST CORS policy and the DataTug web UI are separate
+verification gates and are not claimed by the package tests.
+
 ## Install
 
-This package is developed in this workspace and is not yet published to npm.
-From the repository root, run `pnpm install --frozen-lockfile` and
-`pnpm --filter @dal-go/dalgo2postgrest build`.
+`@dalgo/core` and `@dalgo/adapter-runtime` are peers. This package is not yet
+published to npm. First-wave consumers can pin a reviewed monorepo commit as a
+pnpm subdirectory dependency, the same pattern used by `@dalgo/sqlite-wasm`:
+
+```jsonc
+// package.json
+"@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559",
+"@dalgo/adapter-runtime": "github:dal-go/dalgo-http-adapters#<sha>&path:/packages/adapter-runtime",
+"@dal-go/dalgo2postgrest": "github:dal-go/dalgo-http-adapters#<sha>&path:/packages/postgrest"
+```
+
+```yaml
+# pnpm-workspace.yaml: GitHub tarballs build themselves on install
+allowBuilds:
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559': true
+  '@dalgo/adapter-runtime@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<sha>#path:/packages/adapter-runtime': true
+  '@dal-go/dalgo2postgrest@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<sha>#path:/packages/postgrest': true
+```
+
+The `@dalgo/core` peer range is `>=0.7.4 <0.9.0`; the workspace tests against the
+exact `0.7.4` commit the web UI pins, so the browser contains one `Key`/query
+identity. From the repository root, `pnpm install --frozen-lockfile` and
+`pnpm --filter @dal-go/dalgo2postgrest check` run the workspace gate.
 
 ## Minimal setup
 
 ```ts
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { PostgrestDatabase } from "@dal-go/dalgo2postgrest";
 
 const db = new PostgrestDatabase({
@@ -60,10 +84,67 @@ have only the needed database permissions.
 | `update` | `PATCH /relation?id=eq.value` with strict `max-affected=1`; an empty returned representation becomes `NotFoundError`. |
 | `delete` | `DELETE /relation?id=eq.value` with strict `max-affected=1`; an empty returned representation is an idempotent missing delete. |
 | `query` | Direct top-level relation `GET` with PostgREST filters, ordering, bounded `limit`, and `offset`. |
+| `queryWithSignal` | The same query with caller cancellation and one end-to-end deadline. |
 
 The adapter-owned ID column is removed before codec decoding. Consequently,
 codec-encoded record data must not contain that column. Query records construct
-top-level DALgo keys from its value.
+top-level DALgo keys from its value. This is the **native-rows** storage mode:
+the adapter reads existing relations and never rewrites them into a DALgo
+envelope.
+
+## Cancellation and capability admission
+
+```ts
+import { QueryCancelledError } from "@dalgo/adapter-runtime";
+import { POSTGREST_READ_CAPABILITIES, PostgrestDatabase } from "@dal-go/dalgo2postgrest";
+import { collection } from "@dalgo/core";
+
+const capabilities = POSTGREST_READ_CAPABILITIES;
+const built = collection<{ done: boolean }>("items").query().orderBy("done").limit(25).build();
+if (capabilities.query.sort.status === "unsupported" && built.orders.length > 0) {
+  throw new Error("PostgREST does not support ordering");
+}
+
+const controller = new AbortController();
+try {
+  const page = await db.queryWithSignal(built, controller.signal);
+  return page;
+} catch (error) {
+  if (error instanceof QueryCancelledError) {
+    // error.reason is "caller" or "deadline"; no token or abort reason leaks.
+    return undefined;
+  }
+  throw error;
+}
+```
+
+The caller signal covers header acquisition, `fetch` and response-body reading.
+The adapter combines it with the configured `timeoutMs` (15 seconds by default,
+maximum 120) as one end-to-end deadline. A pre-aborted signal does no header or
+HTTP work; a late response body is cancelled and a late result is never returned.
+`queryWithSignal` rejects with `QueryCancelledError` for caller abort/deadline and
+with the existing redacted `PostgrestRequestError` for header/fetch/body
+transport failures. Deliberate query/unsupported errors are raised before any
+request and keep their messages. Legacy `query` keeps its interface and success
+behaviour.
+
+### Capability rows
+
+| Feature | Status | Bound / reason |
+| --- | --- | --- |
+| read/get, read/getMany | native | `getMany` max 100 keys, 8 parallel reads by default |
+| projection | unsupported | `select=*` only |
+| filter | native | simple column identifiers or `DOCUMENT_ID`; all DALgo operators; null only for `==`/`!=` |
+| sort | native | `asc`/`desc` on simple column identifiers |
+| pagination | native | `limit` and `offset`; DALgo query cursors are refused |
+| joins, aggregation, grouping, subquery, fulltext, timeseries | unsupported | refused before HTTP |
+| native query | unsupported | no raw PostgREST query parameters |
+| discovery | unsupported | no OpenAPI/schema/relation discovery |
+| bounds | enforced | `maxQueryLimit` 100/1000, request/response 1 MiB/16 MiB |
+
+The exported constant is `POSTGREST_READ_CAPABILITIES`; `storage` is
+`"native-rows"` and `bounds` contains the constructor default and hard maximum
+for each numeric limit.
 
 ## Intentional limitations
 
@@ -112,8 +193,23 @@ top-level DALgo keys from its value.
 ## Verification
 
 `pnpm check` runs ESLint, deterministic Vitest HTTP-contract tests, declaration
-build, and type checks of the minimal example. No network PostgREST instance is
-contacted.
+build, and type checks of the minimal example. Tests inject `fetch` and
+in-memory streams; no network PostgREST instance is contacted. They cover caller
+abort before headers, while headers are pending, in flight, and while the body is
+hanging, the deadline in the same phases, late-response cleanup, no later page
+request, redaction, bounds, oversized query-page rejection before decoding, and
+legacy query behaviour. `pnpm check:packed-consumer` additionally packs the
+published artifacts into a fresh directory outside the repository, installs
+only those tarballs plus the exact modern `@dalgo/core` commit, and type-checks
+and runs the packed declarations with no `@dal-go/dalgo` package available. A
+real PostgREST instance, CORS/RLS configuration and the DataTug UI remain
+separate gates.
+
+The package manifest, exports, `prepack`, `publishConfig` and changeset are ready
+for the repository's Changesets pattern, but no npm publication or DataTug UI
+integration is claimed. Remaining owner gates include adding this package to the
+release workflow, npm bootstrap/trusted publishing, an `.changeset` version PR,
+and a real application consumer installation.
 
 ## License
 
