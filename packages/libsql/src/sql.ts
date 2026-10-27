@@ -54,7 +54,8 @@ export function libSQLNativeKey(value: unknown, type: LibSQLKeyType, label: stri
   return value;
 }
 
-function libSQLCursorScalar(value: unknown, label: string, maximum = MAX_CURSOR_CHARS): LibSQLCursorScalar {
+/** Validates one cursor position exactly, including the configured byte budget. */
+export function libSQLCursorPosition(value: unknown, maximum: number, label: string): LibSQLCursorScalar {
   if (value === null) return null;
   if (typeof value === "string") {
     if (value.length > maximum) throw new UnsupportedError(`libSQL ${label} cursor values exceed maxCursorBytes`);
@@ -114,7 +115,13 @@ function orderSql<T>(orders: readonly QueryOrder<T>[], columns: readonly LibSQLC
   }).join(", ");
 }
 
-function cursorSql<T>(query: StructuredQuery<T>, table: LibSQLTable, columns: readonly LibSQLColumn[], args: LibSQLScalar[]): string | undefined {
+function cursorSql<T>(
+  query: StructuredQuery<T>,
+  table: LibSQLTable,
+  columns: readonly LibSQLColumn[],
+  args: LibSQLScalar[],
+  maxCursorChars: number,
+): string | undefined {
   if (query.startAt !== undefined || query.endAt !== undefined || query.endBefore !== undefined) throw new UnsupportedError("libSQL inclusive or end cursors");
   if (query.startAfter === undefined) return undefined;
   if (query.orders.length === 0) throw new UnsupportedError("libSQL startAfter without an explicit order");
@@ -124,13 +131,15 @@ function cursorSql<T>(query: StructuredQuery<T>, table: LibSQLTable, columns: re
     const column = columns[index];
     const value = query.startAfter.values[index];
     if (column === undefined) throw new Error("libSQL cursor column missing");
-    if (column.nullable !== false) throw new UnsupportedError(`libSQL paginated order requires nullable: false for ${column.column}`);
+    const isKey = column.column === table.keyColumn.column;
+    if (!isKey && column.nullable !== false) throw new UnsupportedError(`libSQL paginated order requires nullable: false for ${column.column}`);
     if (value === undefined || value === null) throw new UnsupportedError("libSQL null or undefined cursor values");
-    if (column.column === table.keyColumn.column) {
+    if (isKey) {
       if (typeof value !== "string" && typeof value !== "number") throw new UnsupportedError("libSQL key cursor position must be a string or number");
       if (typeof value === "number" && (!Number.isFinite(value) || Object.is(value, -0))) throw new UnsupportedError("libSQL key cursor numbers must be finite and not negative zero");
+      if (typeof value === "string" && value.length > maxCursorChars) throw new UnsupportedError("libSQL key cursor values exceed maxCursorBytes");
     } else {
-      libSQLCursorScalar(value, "legacy");
+      libSQLCursorPosition(value, maxCursorChars, "legacy");
     }
     const previous = columns.slice(0, index).map((prior, priorIndex) => {
       const priorValue = query.startAfter?.values[priorIndex];
@@ -144,15 +153,29 @@ function cursorSql<T>(query: StructuredQuery<T>, table: LibSQLTable, columns: re
 }
 
 /** Compile one bounded top-level DALgo query to SQLite SQL with positional bindings. */
-export function compileLibSQLQuery<T>(table: LibSQLTable, query: StructuredQuery<T>, limit: number): CompiledLibSQLQuery {
+export function compileLibSQLQuery<T>(
+  table: LibSQLTable,
+  query: StructuredQuery<T>,
+  limit: number,
+  maxCursorChars = MAX_CURSOR_CHARS,
+): CompiledLibSQLQuery {
   if (query.source.kind !== "collection" || query.source.parent !== undefined) throw new UnsupportedError("libSQL nested or collection-group queries");
   if (query.offset !== undefined) throw new UnsupportedError("libSQL query offsets");
   if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError("libSQL query limit must be a positive safe integer");
   const args: LibSQLScalar[] = [];
   const clauses = query.filters.map((filter) => filterSql(filter, table, args));
   const columns = orderedColumns(query.orders, table);
-  if (query.orders.length > 0) for (const column of columns) if (column.nullable !== false) throw new UnsupportedError(`libSQL ordered query requires nullable: false for ${column.column}`);
-  const cursor = cursorSql(query, table, columns, args);
+  // A DALgo key is a non-null identity; only explicit order fields need the
+  // caller's nullable: false assertion. The implicit key tie-breaker (and an
+  // unordered modern page ordered by that key) stays usable without it.
+  if (query.orders.length > 0) {
+    for (const column of columns) {
+      if (column.column !== table.keyColumn.column && column.nullable !== false) {
+        throw new UnsupportedError(`libSQL ordered query requires nullable: false for ${column.column}`);
+      }
+    }
+  }
+  const cursor = cursorSql(query, table, columns, args, maxCursorChars);
   if (cursor !== undefined) clauses.push(cursor);
   const projection = [
     `${expression(table.keyColumn)} AS "__dalgo_key"`,
@@ -240,13 +263,17 @@ function nativeCursorSql<T>(
     if (order === undefined) throw new Error("libSQL native cursor column missing");
     const value = order.column === table.key.column
       ? libSQLNativeKey(raw, table.key.type, "cursor")
-      : libSQLCursorScalar(raw, "native", maxCursorChars);
+      : libSQLCursorPosition(raw, maxCursorChars, "native");
     if (order.column === table.key.column && value === null) throw new UnsupportedError("libSQL native key cursor values cannot be null");
+    if (typeof value === "string" && value.length > maxCursorChars) throw new UnsupportedError("libSQL native cursor values exceed maxCursorBytes");
     const prefix = orders.slice(0, index).map((prior, priorIndex) => {
       const priorValue = query.startAfter?.values[priorIndex];
       const priorScalar = prior.column === table.key.column
         ? libSQLNativeKey(priorValue, table.key.type, "cursor")
-        : libSQLCursorScalar(priorValue, "native", maxCursorChars);
+        : libSQLCursorPosition(priorValue, maxCursorChars, "native");
+      if (typeof priorScalar === "string" && priorScalar.length > maxCursorChars) {
+        throw new UnsupportedError("libSQL native cursor values exceed maxCursorBytes");
+      }
       return nativeEquality(prior, priorScalar, args);
     });
     const expr = nativeExpression(order.column);

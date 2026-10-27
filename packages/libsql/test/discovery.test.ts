@@ -28,6 +28,8 @@ interface ColumnSpec {
 interface IndexSpec {
   readonly name: string;
   readonly unique?: boolean;
+  /** `c` for CREATE INDEX, `u` for a UNIQUE constraint, `pk` for a PRIMARY KEY index. */
+  readonly origin?: "c" | "u" | "pk";
   readonly partial?: boolean;
   readonly columns: readonly string[];
 }
@@ -44,13 +46,13 @@ function columnRows(columns: readonly ColumnSpec[]): readonly (readonly unknown[
   ]);
 }
 
+/** Mirrors the real six-column pragma_index_list/pragma_index_info projection exactly. */
 function indexRows(indexes: readonly IndexSpec[]): readonly (readonly unknown[])[] {
   return indexes.flatMap((index) => index.columns.map((column, seqno) => [
     text(index.name),
     integer(index.unique === false ? 0 : 1),
-    text("c"),
+    text(index.origin ?? "c"),
     integer(index.partial === true ? 1 : 0),
-    integer(seqno),
     integer(seqno),
     text(column),
   ]));
@@ -256,5 +258,66 @@ describe("libSQL bounded schema discovery", () => {
       unique: { status: "unavailable" },
       adapterQueryable: false,
     });
+  });
+
+  it("uses real pk-index facts instead of assuming an INTEGER key is a rowid alias", async () => {
+    const db = new LibSQLDatabase({
+      serverUrl: "https://libsql.example.test",
+      tables: {
+        desc_pk: { table: "desc_pk", keyColumn: { column: "id", nullable: false }, columns: { label: { column: "label" } } },
+        desc_contract: { table: "desc_contract", uniqueKey: true, keyColumn: { column: "id", nullable: false }, columns: { label: { column: "label" } } },
+        wr: { table: "wr", keyColumn: { column: "code", nullable: false }, columns: { label: { column: "label" } } },
+        rowid: { table: "rowid", uniqueKey: true, keyColumn: { column: "id", nullable: false }, columns: { label: { column: "label" } } },
+      },
+      fetch: mockFetch(discoveryResponses([
+        {
+          name: "desc_pk",
+          columns: [{ name: "id", type: "INTEGER", pk: 1 }, { name: "label", type: "TEXT" }],
+          indexes: [{ name: "sqlite_autoindex_desc_pk_1", origin: "pk", columns: ["id"] }],
+        },
+        {
+          name: "desc_contract",
+          columns: [{ name: "id", type: "INTEGER", pk: 1 }, { name: "label", type: "TEXT" }],
+          indexes: [{ name: "sqlite_autoindex_desc_contract_1", origin: "pk", columns: ["id"] }],
+        },
+        {
+          name: "wr",
+          withoutRowid: true,
+          columns: [{ name: "code", type: "TEXT", notNull: true, pk: 1 }, { name: "label", type: "TEXT" }],
+          indexes: [{ name: "sqlite_autoindex_wr_1", origin: "pk", columns: ["code"] }],
+        },
+        {
+          name: "rowid",
+          columns: [{ name: "id", type: "INTEGER", pk: 1 }, { name: "label", type: "TEXT" }],
+        },
+      ]), []),
+    });
+    const discovery = await db.discover();
+    const desc = discovery.tables.find((table) => table.name === "desc_pk");
+    expect(desc).toMatchObject({
+      primaryKey: { status: "declared", columns: ["id"] },
+      unique: { status: "not-unique", columns: ["id"] },
+      adapterQueryable: false,
+    });
+    expect(desc?.unique.detail).toContain("not a rowid alias");
+    expect(desc?.adapterQueryableReason).toContain("uniqueKey");
+
+    const contract = discovery.tables.find((table) => table.name === "desc_contract");
+    expect(contract).toMatchObject({
+      unique: { status: "configured-contract", columns: ["id"] },
+      adapterQueryable: true,
+    });
+    expect(contract?.unique.detail).toContain("contract");
+
+    const withoutRowid = discovery.tables.find((table) => table.name === "wr");
+    expect(withoutRowid).toMatchObject({
+      unique: { status: "declared-primary-key", columns: ["code"] },
+      adapterQueryable: true,
+    });
+    expect(withoutRowid?.unique.detail).toBe("single non-null PRIMARY KEY column");
+
+    const rowid = discovery.tables.find((table) => table.name === "rowid");
+    expect(rowid).toMatchObject({ unique: { status: "declared-primary-key" }, adapterQueryable: true });
+    expect(rowid?.unique.detail).toContain("no pk index");
   });
 });

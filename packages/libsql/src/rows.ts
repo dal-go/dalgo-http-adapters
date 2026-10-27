@@ -18,7 +18,7 @@ export function decodeRows(
   if (result.rows.length > maximumRows) throw new RangeError(`libSQL ${label} response returned more rows than its limit`);
   return result.rows.map((entry, rowIndex) => {
     if (!Array.isArray(entry) || entry.length !== expected.length) throw new TypeError(`malformed libSQL ${label} row ${String(rowIndex)}`);
-    const output: Record<string, LibSQLScalar> = {};
+    const output = Object.create(null) as Record<string, LibSQLScalar>;
     for (let index = 0; index < expected.length; index += 1) {
       const name = expected[index];
       if (name === undefined) throw new Error(`libSQL ${label} projection name missing`);

@@ -64,6 +64,18 @@ const nativeTables: NativeLibSQLDatabaseOptions["tables"] = {
     key: { column: "id", type: "integer" },
     columns: { title: { column: "title", nullable: false }, rank: { column: "rank", nullable: true } },
   },
+  indexed_only: {
+    table: "indexed_only",
+    uniqueKey: true,
+    key: { column: "slug", type: "text" },
+    columns: { label: { column: "label", nullable: true } },
+  },
+  wr_items: {
+    table: "wr_items",
+    uniqueKey: true,
+    key: { column: "code", type: "text" },
+    columns: { label: { column: "label", nullable: true } },
+  },
   blobs: {
     table: "blobs",
     uniqueKey: true,
@@ -115,11 +127,11 @@ describe.skipIf(url === undefined || readerToken === undefined)("real commit-pin
     expect(discovery).toMatchObject({
       status: "available",
       protocol: "sqlite-hrana-pipeline",
-      tableCount: 8,
+      tableCount: 11,
       truncated: false,
     });
     expect(discovery.tables.map((table) => table.name).sort())
-      .toEqual(["bigints", "blobs", "composite", "items", "items_view", "labels", "metrics", "nullable_pk"]);
+      .toEqual(["bigints", "blobs", "composite", "indexed_only", "items", "items_view", "labels", "metrics", "nullable_pk", "pk_desc", "wr_items"]);
 
     const itemsTable = discovery.tables.find((table) => table.name === "items");
     expect(itemsTable).toMatchObject({
@@ -132,8 +144,29 @@ describe.skipIf(url === undefined || readerToken === undefined)("real commit-pin
       adapterQueryable: true,
     });
     expect(itemsTable?.fields.find((field) => field.name === "id")).toMatchObject({ declaredType: "INTEGER", affinity: "integer", primaryKeyPosition: 1 });
+    expect(itemsTable?.unique).toMatchObject({ status: "declared-primary-key" });
+    expect(itemsTable?.unique.detail).toContain("no pk index");
     expect(itemsTable?.fields.find((field) => field.name === "rank")).toMatchObject({ declaredType: "INTEGER", nullable: true });
     expect(itemsTable?.fields.find((field) => field.name === "score")).toMatchObject({ declaredType: "REAL", affinity: "real", nullable: true });
+
+    expect(discovery.tables.find((table) => table.name === "indexed_only")).toMatchObject({
+      primaryKey: { status: "not-declared", columns: [] },
+      unique: { status: "unique-index", columns: ["slug"], indexName: "indexed_only_slug_u" },
+      configuredKey: { collection: "indexed_only", column: "slug", type: "text" },
+      adapterQueryable: true,
+    });
+    const descTable = discovery.tables.find((table) => table.name === "pk_desc");
+    expect(descTable).toMatchObject({
+      primaryKey: { status: "declared", columns: ["id"] },
+      unique: { status: "not-unique", columns: ["id"] },
+      adapterQueryable: false,
+    });
+    expect(descTable?.unique.detail).toContain("not a rowid alias");
+    expect(discovery.tables.find((table) => table.name === "wr_items")).toMatchObject({
+      unique: { status: "declared-primary-key", columns: ["code"] },
+      configuredKey: { collection: "wr_items", column: "code", type: "text" },
+      adapterQueryable: true,
+    });
 
     expect(discovery.tables.find((table) => table.name === "labels")).toMatchObject({
       unique: { status: "configured-contract" },
@@ -159,7 +192,7 @@ describe.skipIf(url === undefined || readerToken === undefined)("real commit-pin
     expect(discovery.tables.find((table) => table.name === "blobs")?.fields.find((field) => field.name === "payload"))
       .toMatchObject({ declaredType: "BLOB", affinity: "blob" });
 
-    await expect(db.testConnection()).resolves.toMatchObject({ ok: true, status: "connected", tableCount: 8 });
+    await expect(db.testConnection()).resolves.toMatchObject({ ok: true, status: "connected", tableCount: 11 });
     const description = await db.describe();
     expect(description.readOnly).toBe(true);
     expect(description.storage).toBe("native-rows");
@@ -306,6 +339,80 @@ describe.skipIf(url === undefined || readerToken === undefined)("real commit-pin
     const discovery = await configMismatch.discover();
     expect(discovery.tables.find((table) => table.name === "labels")?.adapterQueryable).toBe(false);
     await expect(configMismatch.get(key("labels", "a1"))).rejects.toThrow("numbers for a integer key column");
+  });
+
+  it("addresses a unique-index-only table and a WITHOUT ROWID key without inventing a rowid", async () => {
+    const db = native();
+    await expect(db.get(key("indexed_only", "beta"))).resolves.toEqual({
+      key: key("indexed_only", "beta"),
+      exists: true,
+      data: { label: "two" },
+      metadata: { id: "beta" },
+    });
+    const withoutRowid = collection<{ label: string | null }, string>("wr_items");
+    const page = await db.queryWithSignal(
+      withoutRowid.query().orderBy(DOCUMENT_ID).limit(3).build(),
+      new AbortController().signal,
+    );
+    expect(page.records.map((record) => record.key.id)).toEqual(["wa", "wb"]);
+    expect(page.records.map((record) => record.data)).toEqual([{ label: "A" }, { label: "B" }]);
+  });
+
+  it("pages an unordered query in deterministic configured-key order on both adapters", async () => {
+    const managedDb = managed();
+    const managedIds: number[] = [];
+    let managedToken: string | undefined;
+    let managedPages = 0;
+    for (;;) {
+      const builder = items.query().limit(5);
+      const page = await managedDb.queryWithSignal(
+        managedToken === undefined ? builder.build() : builder.startAfter(managedToken).build(),
+        new AbortController().signal,
+      );
+      managedPages += 1;
+      if (page.records.length === 0) {
+        expect(page.nextCursor).toBeUndefined();
+        break;
+      }
+      expect(page.nextCursor).toBeDefined();
+      managedIds.push(...page.records.map((record) => record.key.id as number));
+      managedToken = page.nextCursor?.values[0] as string;
+      if (managedPages > 10) throw new Error("unordered managed paging did not terminate");
+    }
+    expect(managedPages).toBe(4);
+    expect(managedIds).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+
+    const nativeDb = native();
+    const nativeIds: number[] = [];
+    let nativeToken: string | undefined;
+    for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+      const builder = items.query().limit(5);
+      const page = await nativeDb.queryWithSignal(
+        nativeToken === undefined ? builder.build() : builder.startAfter(nativeToken).build(),
+        new AbortController().signal,
+      );
+      if (page.records.length === 0) break;
+      expect(page.nextCursor).toBeDefined();
+      nativeIds.push(...page.records.map((record) => record.key.id as number));
+      nativeToken = page.nextCursor?.values[0] as string;
+    }
+    expect(nativeIds).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it("reports a nullable DESC primary key as unusable unless an explicit contract exists", async () => {
+    const db = managed({
+      tables: {
+        pk_desc: {
+          table: "pk_desc",
+          keyColumn: { column: "id", nullable: true },
+          columns: { label: { column: "label", nullable: true } },
+        },
+      },
+    });
+    const discovery = await db.discover();
+    const table = discovery.tables.find((entry) => entry.name === "pk_desc");
+    expect(table).toMatchObject({ unique: { status: "not-unique" }, adapterQueryable: false });
+    expect(table?.adapterQueryableReason).toContain("uniqueKey");
   });
 
   it("proves the real reader token cannot write and keeps adapter mutation refusal separate", async () => {

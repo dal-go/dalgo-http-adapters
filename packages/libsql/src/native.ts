@@ -40,9 +40,11 @@ import {
 import { decodeRows, rowKey } from "./rows.js";
 import {
   compileNativeLibSQLQuery,
+  libSQLCursorPosition,
   libSQLNativeKey,
   validateIdentifier,
   type CompiledNativeLibSQLQuery,
+  type LibSQLCursorScalar,
   type LibSQLScalar,
 } from "./sql.js";
 import {
@@ -71,6 +73,7 @@ const DEFAULT_MAX_METADATA_FIELDS = 256;
 const DEFAULT_MAX_METADATA_STATEMENTS = 512;
 const DEFAULT_MAX_METADATA_BYTES = 1_048_576;
 const DEFAULT_MAX_QUERY_PAGES = 10_000;
+const DEFAULT_MAX_CURSOR_BYTES = 8_192;
 const DEFAULT_MAX_ISSUED_CURSORS = 1_000;
 const DEFAULT_MAX_CONSERVED_CURSORS = 1_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -84,6 +87,15 @@ function positive(value: number | undefined, fallback: number, name: string, max
 }
 
 function identityOr<T>(codec?: Codec<T>): Codec<T> { return (codec ?? identityCodec) as Codec<T>; }
+
+/** Own-property maps: no prototype can shadow or silently swallow a configured name. */
+function ownRecord<T>(): Record<string, T> { return Object.create(null) as Record<string, T>; }
+
+/** `__proto__` is a valid SQL identifier but never a safe object key. */
+function assertObjectKeyName(value: string, label: string): void {
+  validateIdentifier(value, label);
+  if (value === "__proto__") throw new TypeError(`${label} must not be __proto__`);
+}
 
 function controlFree(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -107,20 +119,20 @@ function keyType(value: unknown): LibSQLKeyType {
 }
 
 function freezeTables(tables: Readonly<Record<string, NativeLibSQLTable>>): Readonly<Record<string, NativeLibSQLTable>> {
-  const result: Record<string, NativeLibSQLTable> = {};
+  const result = ownRecord<NativeLibSQLTable>();
   const physical = new Set<string>();
   for (const [collection, table] of Object.entries(tables)) {
-    validateIdentifier(collection, "collection name");
+    assertObjectKeyName(collection, "collection name");
     validateIdentifier(table.table, "table");
     if (physical.has(table.table)) throw new TypeError(`duplicate native libSQL table mapping: ${table.table}`);
     physical.add(table.table);
     validateIdentifier(table.key.column, "native key column");
     const type = keyType(table.key.type);
-    const columns: Record<string, { column: string; nullable: boolean }> = {};
+    const columns = ownRecord<{ column: string; nullable: boolean }>();
     const names = new Set<string>([table.key.column]);
     for (const [field, column] of Object.entries(table.columns)) {
       if (field === "__dalgo_key") throw new TypeError("__dalgo_key is reserved by the libSQL adapter");
-      validateIdentifier(field, "mapped field");
+      assertObjectKeyName(field, "mapped field");
       validateIdentifier(column.column, "mapped column");
       if (typeof column.nullable !== "boolean") throw new TypeError("native column nullable must be an explicit boolean");
       if (names.has(column.column)) throw new TypeError(`duplicate native libSQL mapped column: ${column.column}`);
@@ -162,6 +174,7 @@ export class NativeLibSQLDatabase implements Database {
   readonly #maxResponseBytes: number;
   readonly #timeoutMs: number;
   readonly #maxQueryPages: number;
+  readonly #maxCursorBytes: number;
   readonly #maxMetadataTables: number;
   readonly #maxMetadataFields: number;
   readonly #maxMetadataStatements: number;
@@ -190,6 +203,7 @@ export class NativeLibSQLDatabase implements Database {
     this.#maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
     this.#timeoutMs = positive(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs", 120_000);
     this.#maxQueryPages = positive(options.maxQueryPages, DEFAULT_MAX_QUERY_PAGES, "maxQueryPages", 1_000_000);
+    this.#maxCursorBytes = positive(options.maxCursorBytes, DEFAULT_MAX_CURSOR_BYTES, "maxCursorBytes", 65_536);
     this.#maxMetadataTables = positive(options.maxMetadataTables, DEFAULT_MAX_METADATA_TABLES, "maxMetadataTables", 10_000);
     this.#maxMetadataFields = positive(options.maxMetadataFieldsPerTable, DEFAULT_MAX_METADATA_FIELDS, "maxMetadataFieldsPerTable", 10_000);
     this.#maxMetadataStatements = positive(options.maxMetadataStatements, DEFAULT_MAX_METADATA_STATEMENTS, "maxMetadataStatements", 10_000);
@@ -313,6 +327,7 @@ export class NativeLibSQLDatabase implements Database {
         maxMetadataStatements: this.#maxMetadataStatements,
         maxMetadataBytes: this.#maxMetadataBytes,
         maxQueryPages: this.#maxQueryPages,
+        maxCursorBytes: this.#maxCursorBytes,
         maxIssuedCursors: this.#cursors.maxIssued,
         maxConservedCursors: this.#cursors.maxConserved,
       },
@@ -437,9 +452,14 @@ export class NativeLibSQLDatabase implements Database {
     const limit = query.limit ?? this.#maxQueryLimit;
     if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError("Native libSQL query limit must be positive");
     if (limit > this.#maxQueryLimit) throw new UnsupportedError(`Native libSQL query above maxQueryLimit (${String(this.#maxQueryLimit)})`);
-    const base: StructuredQuery<T> = { source: query.source, filters: query.filters, orders: query.orders, limit };
-    const baseCompiled = compileNativeLibSQLQuery(table, base, limit);
-    const fingerprint = this.fingerprint(table, query, baseCompiled, limit);
+    // Unordered native pages get the same honest deterministic key order that
+    // the cursor continuation compiles, so every non-empty page is resumable.
+    const ordered: StructuredQuery<T> = query.orders.length === 0
+      ? { ...query, orders: [{ field: DOCUMENT_ID, direction: "asc" }] }
+      : query;
+    const base: StructuredQuery<T> = { source: query.source, filters: query.filters, orders: ordered.orders, limit };
+    const baseCompiled = compileNativeLibSQLQuery(table, base, limit, this.#maxCursorBytes);
+    const fingerprint = this.fingerprint(table, ordered, baseCompiled, limit);
     let stored: PreviewCursor | undefined;
     let token: string | undefined;
     let observed: Record<string, string> | undefined;
@@ -457,7 +477,7 @@ export class NativeLibSQLDatabase implements Database {
     const nextPage = stored === undefined ? 1 : stored.page + 1;
     const continuation = stored === undefined
       ? undefined
-      : compileNativeLibSQLQuery(table, { ...base, startAfter: { values: stored.values } }, limit);
+      : compileNativeLibSQLQuery(table, { ...base, startAfter: { values: stored.values } }, limit, this.#maxCursorBytes);
     let committed = false;
     try {
       const outcome = await this.#transport.pipeline(
@@ -479,10 +499,12 @@ export class NativeLibSQLDatabase implements Database {
       const records = rows.map((row) => this.record(query.source.name, row, query.source.codec));
       this.assertDistinctKeys(records);
       if (observed === undefined) throw new TypeError("Native libSQL request headers were not observed");
-      if (rows.length === 0 || baseCompiled.orders.length === 0) return { records };
+      if (rows.length === 0) return { records };
       const scope = stored?.scope ?? this.scopeFor(observed);
       const last = rows[rows.length - 1];
-      const values = baseCompiled.orders.map((order) => this.positionOf(table, last, order.column));
+      // Positions are checked against this instance's cursor budget BEFORE a
+      // handle exists, so a published native cursor is always consumable.
+      const values = baseCompiled.orders.map((order) => this.cursorPosition(table, last, order.column));
       const issued = this.#cursors.issue({ query: fingerprint, scope }, nextPage, values);
       return { records, nextCursor: { values: [issued] } };
     } catch (error) {
@@ -512,14 +534,12 @@ export class NativeLibSQLDatabase implements Database {
     return this.#cursors.scope(`headers:${libSQLCanonicalJson(entries)}`);
   }
 
-  private positionOf(table: NativeLibSQLTable, row: Readonly<Record<string, LibSQLScalar>> | undefined, column: string): string | number | null {
+  private cursorPosition(table: NativeLibSQLTable, row: Readonly<Record<string, LibSQLScalar>> | undefined, column: string): LibSQLCursorScalar {
     if (row === undefined) throw new Error("Native libSQL cursor row missing");
     const value = column === table.key.column ? row.__dalgo_key : row[this.fieldForColumn(table, column)];
     if (value === undefined) throw new TypeError("Native libSQL cursor column is not projected");
-    if (value !== null && typeof value !== "string" && typeof value !== "number") {
-      throw new UnsupportedError("Native libSQL cursor positions must be null, strings, or numbers");
-    }
-    return value;
+    if (column === table.key.column) libSQLNativeKey(value, table.key.type, "cursor");
+    return libSQLCursorPosition(value, this.#maxCursorBytes, "native");
   }
 
   private assertDistinctKeys<T>(records: readonly ExistingRecord<T>[]): void {

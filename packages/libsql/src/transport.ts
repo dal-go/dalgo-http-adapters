@@ -75,9 +75,9 @@ export function validBaseUrl(value: string, allowInsecureLoopbackHttp: boolean):
 }
 
 export function headersFrom(value: Readonly<Record<string, string>>): Record<string, string> {
-  const headers: Record<string, string> = {};
+  const headers = Object.create(null) as Record<string, string>;
   for (const [name, headerValue] of Object.entries(value)) {
-    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(name) || typeof headerValue !== "string" || /[\r\n]/u.test(headerValue)) {
+    if (name === "__proto__" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(name) || typeof headerValue !== "string" || /[\r\n]/u.test(headerValue)) {
       throw new TypeError("headers must have valid names and newline-free values");
     }
     headers[name] = headerValue;
@@ -91,6 +91,27 @@ export function safeCode(value: unknown): string | undefined {
 
 function parsePipelineJson(body: string): unknown {
   try { return JSON.parse(body) as unknown; } catch { throw new TypeError("malformed libSQL JSON response"); }
+}
+
+const RESPONSE_SIZE_REFUSAL = Symbol("libSQL.responseSizeRefusal");
+
+/**
+ * Adapter-generated size refusal. The class and marker stay private to this
+ * module: an external reader, fetch or header provider can throw any
+ * `RangeError` it likes (including one with a secret message or cause), and
+ * only this exact marker is ever re-thrown to the caller.
+ */
+class LibSQLResponseSizeError extends RangeError {
+  public readonly [RESPONSE_SIZE_REFUSAL] = true;
+  public constructor() {
+    super("libSQL response exceeds maxResponseBytes");
+    this.name = "RangeError";
+  }
+}
+
+function isResponseSizeRefusal(error: unknown): error is LibSQLResponseSizeError {
+  return error instanceof LibSQLResponseSizeError
+    && (error as unknown as Record<symbol, unknown>)[RESPONSE_SIZE_REFUSAL] === true;
 }
 
 function pipelineOutcomes(value: unknown, statements: number): readonly HranaStatementOutcome[] {
@@ -216,7 +237,7 @@ export class LibSQLTransport {
     const length = response.headers.get("content-length");
     if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximumResponseBytes)) {
       cancelQuietly(response.body);
-      throw new RangeError("libSQL response exceeds maxResponseBytes");
+      throw new LibSQLResponseSizeError();
     }
     const bodyAndBytes = await this.readBoundedBody(response, context, maximumResponseBytes);
     return { outcomes: pipelineOutcomes(parsePipelineJson(bodyAndBytes.text), statements.length), headers, bytes: bodyAndBytes.bytes };
@@ -234,13 +255,17 @@ export class LibSQLTransport {
         size += next.value.byteLength;
         if (size > maximum) {
           cancelQuietly(reader);
-          throw new RangeError("libSQL response exceeds maxResponseBytes");
+          throw new LibSQLResponseSizeError();
         }
         chunks.push(next.value);
       }
     } catch (error) {
       if (context.signal.aborted) throw context.cancelled();
-      if (error instanceof RangeError) throw error;
+      // Clean up the stream on every failure path, then rethrow only this
+      // adapter's own size refusal. Any external reader error is redacted:
+      // its message, cause and body never reach the caller.
+      cancelQuietly(reader);
+      if (isResponseSizeRefusal(error)) throw error;
       throw context.failed();
     } finally {
       if (context.signal.aborted) cancelQuietly(reader);

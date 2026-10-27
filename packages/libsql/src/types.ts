@@ -118,6 +118,8 @@ export interface NativeLibSQLDatabaseOptions {
   readonly maxResponseBytes?: number;
   readonly timeoutMs?: number;
   readonly maxQueryPages?: number;
+  /** Maximum characters in one native cursor position (keyset value). Defaults to 8192. */
+  readonly maxCursorBytes?: number;
   readonly maxIssuedCursors?: number;
   readonly maxConservedCursors?: number;
   readonly maxMetadataTables?: number;
@@ -254,6 +256,7 @@ export interface NativeLibSQLDescribe {
     readonly maxMetadataStatements: number;
     readonly maxMetadataBytes: number;
     readonly maxQueryPages: number;
+    readonly maxCursorBytes: number;
     readonly maxIssuedCursors: number;
     readonly maxConservedCursors: number;
   };

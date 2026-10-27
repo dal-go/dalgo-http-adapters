@@ -34,7 +34,7 @@ const LIST_SQL = "SELECT name, type, wr FROM pragma_table_list "
 const COLUMN_SQL = "SELECT cid, name, type, \"notnull\", dflt_value, pk, hidden FROM pragma_table_xinfo(?) ORDER BY cid";
 const INDEX_SQL = "SELECT il.name AS index_name, il.\"unique\" AS is_unique, il.origin, il.partial, "
   + "ii.seqno, ii.name AS column_name FROM pragma_index_list(?) AS il "
-  + "JOIN pragma_index_info(il.name) AS ii";
+  + "JOIN pragma_index_info(il.name) AS ii ORDER BY il.name, ii.seqno";
 
 interface ParsedColumn {
   readonly name: string;
@@ -45,10 +45,14 @@ interface ParsedColumn {
   readonly defaultValue: string | null;
 }
 
-interface UniqueIndexGroup {
+interface ParsedIndex {
   readonly name: string;
+  readonly unique: boolean;
+  /** SQLite's index origin: `c` (CREATE INDEX), `u` (UNIQUE constraint) or `pk` (PRIMARY KEY). */
+  readonly origin: string;
   readonly partial: boolean;
-  readonly columns: string[];
+  /** `null` marks an expression or rowid term that cannot be a plain column key. */
+  readonly columns: readonly (string | null)[];
 }
 
 function discoveryBounds(value: DiscoveryBounds): LibSQLDiscoveryBounds {
@@ -117,27 +121,48 @@ function parseColumns(columnRows: readonly (readonly unknown[])[]): ParsedColumn
   }));
 }
 
-function parseIndexes(indexRows: readonly (readonly unknown[])[]): readonly UniqueIndexGroup[] {
-  const groups = new Map<string, { partial: boolean; unique: boolean; columns: string[]; simple: boolean }>();
+function parseIndexes(indexRows: readonly (readonly unknown[])[]): readonly ParsedIndex[] {
+  const groups = new Map<string, { unique: boolean; origin: string; partial: boolean; columns: (string | null)[] }>();
   for (const entry of indexRows) {
+    // The real statement projects exactly six columns:
+    // index_name, is_unique, origin, partial, seqno, column_name.
     const name = text(entry[0]);
     const unique = integer(entry[1]) === 1;
+    const origin = text(entry[2]);
     const partial = integer(entry[3]) === 1;
-    const column = entry[6];
+    const column = entry[5];
     if (column !== null && typeof column !== "string") throw new TypeError("malformed libSQL index column");
     const current = groups.get(name);
-    if (current === undefined) groups.set(name, { partial, unique, columns: column === null ? [] : [column], simple: column !== null });
-    else {
-      if (column === null) current.simple = false;
-      else current.columns.push(column);
-    }
+    if (current === undefined) groups.set(name, { unique, origin, partial, columns: [column] });
+    else current.columns.push(column);
   }
-  const candidates: UniqueIndexGroup[] = [];
-  for (const [name, group] of groups) {
-    if (!group.unique || group.partial || !group.simple) continue;
-    candidates.push({ name, partial: group.partial, columns: group.columns });
-  }
-  return candidates.sort((left, right) => left.name.localeCompare(right.name));
+  return [...groups].map(([name, group]) => ({
+    name,
+    unique: group.unique,
+    origin: group.origin,
+    partial: group.partial,
+    columns: group.columns,
+  })).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/**
+ * SQLite reports an index with `origin = 'pk'` for every PRIMARY KEY that is
+ * not a rowid alias: non-INTEGER primary keys, `INTEGER PRIMARY KEY DESC` and
+ * WITHOUT ROWID keys. An actual `INTEGER PRIMARY KEY` rowid alias creates no
+ * index at all, so its absence is the fact that proves the rowid contract.
+ */
+function hasPrimaryKeyIndex(indexes: readonly ParsedIndex[]): boolean {
+  return indexes.some((index) => index.origin === "pk");
+}
+
+function uniqueIndexForKey(indexes: readonly ParsedIndex[], allColumns: readonly ParsedColumn[]): ParsedIndex | undefined {
+  return indexes.find((candidate) => {
+    if (!candidate.unique || candidate.partial || candidate.columns.length !== 1) return false;
+    const key = candidate.columns[0];
+    if (key === null || key === undefined) return false;
+    const column = allColumns.find((entry) => entry.name === key);
+    return column !== undefined && !column.nullable;
+  });
 }
 
 function fieldOf(column: ParsedColumn): LibSQLFieldDiscovery {
@@ -176,6 +201,7 @@ function tableDiscovery(
 ): LibSQLTableDiscovery {
   const allColumns = parseColumns(columnRows);
   const primaryKey = primaryKeyOf(allColumns);
+  const indexes = parseIndexes(indexRows);
   const truncated = allColumns.length > bounds.maxFieldsPerTable;
   const fields = Object.freeze(allColumns.slice(0, bounds.maxFieldsPerTable).map(fieldOf));
   const omittedFields = Math.max(0, allColumns.length - fields.length);
@@ -189,21 +215,27 @@ function tableDiscovery(
     };
   } else if (primaryKey.status === "declared" && primaryKey.columns.length === 1) {
     const keyColumn = allColumns.find((column) => column.name === primaryKey.columns[0]);
+    const declaredInteger = keyColumn !== undefined && keyColumn.declaredType.trim().toUpperCase() === "INTEGER";
+    // Only an index-free INTEGER PRIMARY KEY is the rowid alias. `INTEGER
+    // PRIMARY KEY DESC` and WITHOUT ROWID keys create a `pk` index and may hold
+    // NULL, so they must never inherit the rowid non-null claim.
     const rowidAlias = table.kind === "table" && !table.withoutRowid
-      && keyColumn !== undefined && keyColumn.declaredType.trim().toUpperCase() === "INTEGER";
+      && declaredInteger && !hasPrimaryKeyIndex(indexes);
     if (keyColumn !== undefined && (!keyColumn.nullable || rowidAlias)) {
       uniqueness = {
         status: "declared-primary-key",
         columns: primaryKey.columns,
         detail: rowidAlias
-          ? "single INTEGER PRIMARY KEY on a rowid table; SQLite assigns a non-null unique rowid"
+          ? "single INTEGER PRIMARY KEY on a rowid table with no pk index; SQLite assigns a non-null unique rowid"
           : "single non-null PRIMARY KEY column",
       };
     } else {
       uniqueness = {
         status: "not-unique",
         columns: primaryKey.columns,
-        detail: "the declared primary key column is nullable, so it is not a proof of one non-null native ID",
+        detail: declaredInteger
+          ? "the declared primary key is nullable and is not a rowid alias (for example INTEGER PRIMARY KEY DESC or WITHOUT ROWID), so it is not a proof of one non-null native ID"
+          : "the declared primary key column is nullable, so it is not a proof of one non-null native ID",
       };
     }
   } else if (primaryKey.status === "declared") {
@@ -213,14 +245,11 @@ function tableDiscovery(
       detail: "the declared primary key is composite and cannot be used as one native ID",
     };
   } else {
-    const index = parseIndexes(indexRows).find((candidate) => {
-      const column = allColumns.find((entry) => entry.name === candidate.columns[0]);
-      return candidate.columns.length === 1 && column !== undefined && !column.nullable;
-    });
-    if (index !== undefined) {
+    const index = uniqueIndexForKey(indexes, allColumns);
+    if (index !== undefined && index.columns[0] !== null && index.columns[0] !== undefined) {
       uniqueness = {
         status: "unique-index",
-        columns: index.columns,
+        columns: [index.columns[0]],
         indexName: index.name,
         detail: "a complete non-partial single-column UNIQUE index on a non-null column",
       };

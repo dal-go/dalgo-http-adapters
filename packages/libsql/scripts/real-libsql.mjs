@@ -49,15 +49,20 @@ try {
   exitCode = 1;
 } finally {
   if (fixture !== undefined) {
+    let teardown;
     try {
-      fixture.stop();
+      teardown = fixture.stop();
     } catch (error) {
       console.error(`fixture teardown failed: ${error instanceof Error ? error.message : String(error)}`);
       exitCode = 1;
     }
     fixture.detachSignalHandlers();
-    if (exitCode === 0) fixture.discardWork();
-    else fixture.keepWork();
+    if (exitCode === 0) {
+      if (teardown !== undefined) {
+        console.log(`real libSQL fixture teardown verified: container=${fixture.name} volumes=[${teardown.volumesVerified.join(",")}]`);
+      }
+      fixture.discardWork();
+    } else fixture.keepWork();
   }
 }
 process.exitCode = exitCode;

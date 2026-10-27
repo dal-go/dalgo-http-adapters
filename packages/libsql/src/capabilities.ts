@@ -49,11 +49,11 @@ export const LIBSQL_READ_CAPABILITIES = {
     },
     sort: {
       status: "native",
-      detail: "ascending or descending mapped columns; every ordered query appends the configured unique key as the final tie-breaker",
+      detail: "ascending or descending mapped columns; an order-less modern page uses the configured unique key as an honest deterministic order, and every ordered query appends that key as the final tie-breaker",
     },
     pagination: {
       status: "native",
-      detail: "legacy query returns open keyset position values; queryWithSignal returns an adapter-issued, single-use, query/credential-bound handle; SQL LIMIT makes each page explicit and an empty page is the only end signal",
+      detail: "legacy query returns open keyset position values and never mints a cursor for an unordered query; queryWithSignal returns an adapter-issued, single-use, query/credential-bound handle, including for an unordered query continued in configured key order; SQL LIMIT makes each page explicit and an empty page is the only end signal",
     },
     joins: { status: "unsupported" },
     aggregation: { status: "unsupported" },
@@ -99,7 +99,7 @@ export const NATIVE_LIBSQL_READ_CAPABILITIES = {
     ...LIBSQL_READ_CAPABILITIES.query,
     pagination: {
       status: "native",
-      detail: "every non-empty native page carries an adapter-issued single-use cursor bound to the endpoint, table, query, page size and credential scope; only an empty page ends the stream",
+      detail: "every non-empty native page carries an adapter-issued single-use cursor bound to the endpoint, table, query, page size and credential scope, with the configured key as the deterministic order when the caller supplies none; only an empty page ends the stream",
     },
     filter: {
       status: "native",

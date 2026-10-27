@@ -5,10 +5,12 @@ import {
   LibSQLRequestError,
   NativeLibSQLDatabase,
   type NativeLibSQLDatabaseOptions,
+  type NativeLibSQLTable,
 } from "../src/index.js";
 import {
   blob,
   executed,
+  failingBody,
   firstStatement,
   float,
   integer,
@@ -17,6 +19,7 @@ import {
   nullValue,
   ok,
   response,
+  streamedBody,
   text,
   type Call,
 } from "./helpers.js";
@@ -324,6 +327,146 @@ describe("NativeLibSQLDatabase", () => {
     const view = description.discovery.tables.find((table) => table.name === "items_view");
     expect(view).toMatchObject({ allowlisted: false, adapterQueryable: false });
     expect(description.limits.maxQueryLimit).toBe(5);
+  });
+
+  it("refuses a NULL native key instead of inventing or coercing an ID", async () => {
+    const db = database([
+      response([ok(executed(itemProjection, [[nullValue(), text("No id"), nullValue(), nullValue()]]))]),
+    ], []);
+    await expect(db.queryWithSignal(items.query().limit(1).build(), new AbortController().signal))
+      .rejects.toThrow("string or a finite number");
+  });
+
+  it("bounds native cursor positions against the instance budget before issuing a handle", async () => {
+    const atCeiling = database([
+      response([ok(executed(textProjection, [[text("a1"), text("x".repeat(65_537))]]))]),
+    ], [], { maxCursorBytes: 65_536, maxResponseBytes: 1_000_000 });
+    await expect(atCeiling.queryWithSignal(
+      collection<{ label: string | null }, string>("labels").query().orderBy("label").limit(1).build(),
+      new AbortController().signal,
+    )).rejects.toThrow("maxCursorBytes");
+
+    const smallBudget = database([
+      response([ok(executed(textProjection, [[text("a1"), text("abcde")]]))]),
+    ], [], { maxCursorBytes: 4 });
+    await expect(smallBudget.queryWithSignal(
+      collection<{ label: string | null }, string>("labels").query().orderBy("label").limit(1).build(),
+      new AbortController().signal,
+    )).rejects.toThrow("maxCursorBytes");
+
+    const withinBudget = database([
+      response([ok(executed(textProjection, [[text("a1"), text("abcd")]]))]),
+      response([ok(executed(textProjection, []))]),
+    ], [], { maxCursorBytes: 4 });
+    const first = await withinBudget.queryWithSignal(
+      collection<{ label: string | null }, string>("labels").query().orderBy("label").limit(1).build(),
+      new AbortController().signal,
+    );
+    expect(first.nextCursor).toBeDefined();
+    await expect(withinBudget.queryWithSignal(
+      collection<{ label: string | null }, string>("labels").query().orderBy("label").limit(1).startAfter(first.nextCursor?.values[0]).build(),
+      new AbortController().signal,
+    )).resolves.toEqual({ records: [] });
+  });
+
+  it("pages an unordered native query by its key instead of truncating the stream", async () => {
+    const calls: Call[] = [];
+    const db = database([
+      response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+      response([ok(executed(itemProjection, []))]),
+    ], calls);
+    const first = await db.queryWithSignal(items.query().limit(1).build(), new AbortController().signal);
+    expect(first.nextCursor).toBeDefined();
+    expect(firstStatement(calls[0]).sql).toContain('ORDER BY t."id" ASC NULLS FIRST LIMIT 1');
+    await expect(db.queryWithSignal(
+      items.query().limit(1).startAfter(first.nextCursor?.values[0]).build(),
+      new AbortController().signal,
+    )).resolves.toEqual({ records: [] });
+    expect(firstStatement(calls[1]).sql).toContain('t."id" > ?');
+  });
+
+  it("rejects __proto__ before I/O and keeps ordinary native field names as own output fields", async () => {
+    expect(() => new NativeLibSQLDatabase({
+      ...options(),
+      tables: {
+        items: {
+          table: "items",
+          uniqueKey: true,
+          key: { column: "id", type: "integer" },
+          columns: { ["__proto__"]: { column: "value", nullable: false } },
+        },
+      },
+    })).toThrow("__proto__");
+    expect(() => new NativeLibSQLDatabase({
+      ...options(),
+      tables: {
+        ["__proto__"]: {
+          table: "items",
+          uniqueKey: true,
+          key: { column: "id", type: "integer" },
+          columns: { title: { column: "title", nullable: false } },
+        },
+      },
+    })).toThrow("__proto__");
+
+    const calls: Call[] = [];
+    const weirdTable: NativeLibSQLTable = {
+      table: "weird",
+      uniqueKey: true,
+      key: { column: "id", type: "text" },
+      columns: { constructor: { column: "value", nullable: false } },
+    };
+    const db = new NativeLibSQLDatabase({
+      ...options(),
+      tables: { toString: weirdTable },
+      fetch: mockFetch([
+        response([ok(executed(["__dalgo_key", "constructor"], [[text("k"), text("v")]]))]),
+      ], calls),
+    });
+    const snapshot = await db.get(key("toString", "k"));
+    expect(snapshot).toMatchObject({ exists: true, key: key("toString", "k"), metadata: { id: "k" } });
+    const data = snapshot.data as { constructor: string };
+    expect(Object.hasOwn(data, "constructor")).toBe(true);
+    expect(data.constructor).toBe("v");
+    expect(Object.keys(data)).toEqual(["constructor"]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("redacts external body-reader, fetch and header failures on the native path", async () => {
+    for (const error of [
+      new RangeError("synthetic secret"),
+      new RangeError("synthetic secret", { cause: new Error("inner secret") }),
+    ]) {
+      const { response: broken, state } = failingBody(error);
+      const db = new NativeLibSQLDatabase({ ...options(), fetch: async () => broken });
+      const failure = await db.get(items.key(1)).catch((caught: unknown) => caught);
+      expect(failure).toBeInstanceOf(LibSQLRequestError);
+      expect(String(failure)).not.toContain("secret");
+      expect(failure).not.toHaveProperty("cause");
+      expect(state.cancelled).toBe(1);
+      expect(state.released).toBe(1);
+    }
+
+    const fetchFailure = await new NativeLibSQLDatabase({
+      ...options(),
+      fetch: () => Promise.reject(new RangeError("synthetic secret")),
+    }).get(items.key(1)).catch((caught: unknown) => caught);
+    expect(fetchFailure).toBeInstanceOf(LibSQLRequestError);
+    expect(String(fetchFailure)).not.toContain("secret");
+
+    const headerFailure = await new NativeLibSQLDatabase({
+      ...options(),
+      headers: () => Promise.reject(new RangeError("synthetic secret", { cause: new Error("inner secret") })),
+    }).get(items.key(1)).catch((caught: unknown) => caught);
+    expect(headerFailure).toBeInstanceOf(LibSQLRequestError);
+    expect(String(headerFailure)).not.toContain("secret");
+    expect(headerFailure).not.toHaveProperty("cause");
+
+    const streamed = await database([streamedBody(32)], [], { maxResponseBytes: 10 })
+      .get(items.key(1)).catch((caught: unknown) => caught);
+    expect(streamed).toBeInstanceOf(RangeError);
+    expect(streamed).not.toBeInstanceOf(LibSQLRequestError);
+    expect(String(streamed)).toBe("RangeError: libSQL response exceeds maxResponseBytes");
   });
 
   it("rejects a configured key type that contradicts metadata", async () => {

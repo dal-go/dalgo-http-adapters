@@ -43,6 +43,7 @@ import {
 import { affectedRows, decodeRows, rowKey } from "./rows.js";
 import {
   compileLibSQLQuery,
+  libSQLCursorPosition,
   libSQLScalar,
   validateIdentifier,
   type LibSQLKeyValue,
@@ -89,6 +90,20 @@ function positive(value: number | undefined, fallback: number, name: string, max
 
 function identityOr<T>(codec?: Codec<T>): Codec<T> { return (codec ?? identityCodec) as Codec<T>; }
 
+/** Own-property maps: no prototype can shadow or silently swallow a configured name. */
+function ownRecord<T>(): Record<string, T> { return Object.create(null) as Record<string, T>; }
+
+/**
+ * `__proto__` is a valid SQL identifier but never a safe object key: plain
+ * property assignment would silently change a prototype instead of storing the
+ * field. It is refused at configuration time, before any I/O, rather than
+ * dropping data from a projection.
+ */
+function assertObjectKeyName(value: string, label: string): void {
+  validateIdentifier(value, label);
+  if (value === "__proto__") throw new TypeError(`${label} must not be __proto__`);
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -116,20 +131,20 @@ function freezeColumn(column: LibSQLColumn, label: string): LibSQLColumn {
 }
 
 function freezeTables(tables: Readonly<Record<string, LibSQLTable>>): Readonly<Record<string, LibSQLTable>> {
-  const result: Record<string, LibSQLTable> = {};
+  const result = ownRecord<LibSQLTable>();
   const physical = new Set<string>();
   for (const [collection, table] of Object.entries(tables)) {
-    validateIdentifier(collection, "collection name");
+    assertObjectKeyName(collection, "collection name");
     validateIdentifier(table.table, "table");
     if (physical.has(table.table)) throw new TypeError(`duplicate libSQL table mapping: ${table.table}`);
     physical.add(table.table);
     const names = new Set<string>();
     const keyColumn = freezeColumn(table.keyColumn, "mapped column");
     names.add(keyColumn.column);
-    const columns: Record<string, LibSQLColumn> = {};
+    const columns = ownRecord<LibSQLColumn>();
     for (const [field, column] of Object.entries(table.columns)) {
       if (field === "__dalgo_key") throw new TypeError("__dalgo_key is reserved by the libSQL adapter");
-      validateIdentifier(field, "mapped field");
+      assertObjectKeyName(field, "mapped field");
       const copied = freezeColumn(column, "mapped column");
       if (names.has(copied.column)) throw new TypeError(`duplicate libSQL mapped column: ${copied.column}`);
       names.add(copied.column);
@@ -420,7 +435,7 @@ export class LibSQLDatabase implements Database {
   private async runLegacyQuery<T>(query: StructuredQuery<T>, context: RequestContext): Promise<QueryPage<T>> {
     const table = this.tableForCollection(query.source.name);
     const requested = this.legacyLimit(query);
-    const compiled = compileLibSQLQuery(table, query, requested + 1);
+    const compiled = compileLibSQLQuery(table, query, requested + 1, this.#maxCursorBytes);
     const { rows } = await this.select(compiled.sql, compiled.args, table, requested + 1, context);
     const selected = rows.slice(0, requested);
     const records = selected.map((row) => this.record(query.source.name, row, query.source.codec));
@@ -442,14 +457,20 @@ export class LibSQLDatabase implements Database {
     const limit = query.limit ?? this.#maxRows;
     if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError("libSQL query limit must be positive");
     if (limit > this.#maxRows) throw new UnsupportedError(`libSQL query above configured maxRows (${String(this.#maxRows)})`);
+    // An unordered modern page must still be deterministic. The configured key
+    // is the only stable total order available, so it becomes the honest
+    // implicit order instead of issuing a cursor that no continuation can use.
+    const ordered: StructuredQuery<T> = query.orders.length === 0
+      ? { ...query, orders: [{ field: DOCUMENT_ID, direction: "asc" }] }
+      : query;
     const base: StructuredQuery<T> = {
       source: query.source,
       filters: query.filters,
-      orders: query.orders,
+      orders: ordered.orders,
       limit,
     };
-    const baseCompiled = compileLibSQLQuery(table, base, limit);
-    const fingerprint = this.queryFingerprint(table, query, baseCompiled.cursorColumns, limit);
+    const baseCompiled = compileLibSQLQuery(table, base, limit, this.#maxCursorBytes);
+    const fingerprint = this.queryFingerprint(table, ordered, baseCompiled.cursorColumns, limit);
     let stored: PreviewCursor | undefined;
     let token: string | undefined;
     let observed: Record<string, string> | undefined;
@@ -467,7 +488,7 @@ export class LibSQLDatabase implements Database {
     const nextPage = stored === undefined ? 1 : stored.page + 1;
     const continuation = stored === undefined
       ? undefined
-      : compileLibSQLQuery(table, { ...base, startAfter: { values: stored.values } }, limit);
+      : compileLibSQLQuery(table, { ...base, startAfter: { values: stored.values } }, limit, this.#maxCursorBytes);
     let committed = false;
     try {
       const outcome = await this.#transport.pipeline(
@@ -491,9 +512,12 @@ export class LibSQLDatabase implements Database {
       const records = rows.map((row) => this.record(query.source.name, row, query.source.codec));
       this.assertDistinctKeys(records);
       if (observed === undefined) throw new TypeError("libSQL request headers were not observed");
-      if (rows.length === 0 || baseCompiled.cursorColumns.length === 0) return { records };
+      if (rows.length === 0) return { records };
       const scope = stored?.scope ?? this.scopeFor(observed);
-      const values = baseCompiled.cursorColumns.map((column) => this.positionOf(table, rows[rows.length - 1], column));
+      // Positions are checked against this instance's cursor budget BEFORE a
+      // handle exists: an over-budget or unsafe position fails the whole
+      // operation instead of publishing a cursor that can never be consumed.
+      const values = baseCompiled.cursorColumns.map((column) => this.cursorPosition(table, rows[rows.length - 1], column));
       const issued = this.#cursors.issue({ query: fingerprint, scope }, nextPage, values);
       return { records, nextCursor: { values: [issued] } };
     } catch (error) {
@@ -547,16 +571,13 @@ export class LibSQLDatabase implements Database {
     return this.#cursors.scope(`headers:${libSQLCanonicalJson(entries)}`);
   }
 
-  private positionOf(table: LibSQLTable, row: Readonly<Record<string, LibSQLScalar>> | undefined, column: LibSQLColumn): string | number | null {
+  private cursorPosition(table: LibSQLTable, row: Readonly<Record<string, LibSQLScalar>> | undefined, column: LibSQLColumn): string | number | null {
     if (row === undefined) throw new Error("libSQL cursor row missing");
     const value = column.column === table.keyColumn.column
       ? row.__dalgo_key
       : row[this.fieldForColumn(table, column.column)];
     if (value === undefined) throw new TypeError("libSQL cursor column is not projected");
-    if (value !== null && typeof value !== "string" && typeof value !== "number") {
-      throw new UnsupportedError("libSQL cursor positions must be null, strings, or numbers");
-    }
-    return value;
+    return libSQLCursorPosition(value, this.#maxCursorBytes, "query");
   }
 
   private assertDistinctKeys<T>(records: readonly ExistingRecord<T>[]): void {
@@ -644,7 +665,7 @@ export class LibSQLDatabase implements Database {
 
   private partialData(data: unknown, table: LibSQLTable): Record<string, LibSQLScalar> {
     if (!isObject(data)) throw new UnsupportedError("libSQL update data must be a top-level object");
-    const result: Record<string, LibSQLScalar> = {};
+    const result = ownRecord<LibSQLScalar>();
     for (const [field, value] of Object.entries(data)) {
       if (field === "__dalgo_key") throw new UnsupportedError("libSQL updates cannot change the DALgo key");
       if (table.columns[field] === undefined) throw new UnsupportedError(`libSQL field is not declared in the table mapping: ${field}`);

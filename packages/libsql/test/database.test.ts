@@ -11,6 +11,7 @@ import {
   blob,
   executed,
   failed,
+  failingBody,
   firstStatement,
   float,
   integer,
@@ -20,6 +21,7 @@ import {
   nullValue,
   ok,
   response,
+  streamedBody,
   text,
   type Call,
 } from "./helpers.js";
@@ -411,6 +413,175 @@ describe("LibSQLDatabase managed tables", () => {
 
     const malformed = database([response([ok(executed(["name", "type", "wr"], [[text("items"), text("bogus"), integer(0)]]))])], []);
     await expect(malformed.discover()).resolves.toMatchObject({ status: "unavailable", reason: "malformed-metadata" });
+  });
+
+  it("pages an unordered modern query in deterministic key order and keeps duplicate sort values lossless", async () => {
+    const calls: Call[] = [];
+    const db = database([
+      response([ok(executed(projection, [one, two]))]),
+      response([ok(executed(projection, [[text("three"), text("Cocoa"), integer(10)]]))]),
+      response([ok(executed(projection, []))]),
+    ], calls, {
+      tables: { items: { table: "items", uniqueKey: true, keyColumn: { column: "id" }, columns: { title: { column: "title", nullable: false }, rank: { column: "rank", nullable: false } } } },
+    });
+    const first = await db.queryWithSignal(items.query().limit(2).build(), new AbortController().signal);
+    expect(first.records.map((record) => record.key.id)).toEqual(["one", "two"]);
+    expect(first.nextCursor).toBeDefined();
+    const firstSql = firstStatement(calls[0]).sql;
+    expect(firstSql).toContain('ORDER BY t."id" ASC LIMIT 2');
+    expect(firstSql).not.toContain('ORDER BY t."rank"');
+
+    const token = first.nextCursor?.values[0];
+    const second = await db.queryWithSignal(
+      items.query().limit(2).startAfter(token).build(),
+      new AbortController().signal,
+    );
+    expect(second.records.map((record) => record.key.id)).toEqual(["three"]);
+    const continuation = firstStatement(calls[1]).sql;
+    expect(continuation).toContain('t."id" > ?');
+    expect(continuation).toContain('ORDER BY t."id" ASC');
+    expect(firstStatement(calls[1]).args).toEqual([text("two")]);
+
+    const duplicateCalls: Call[] = [];
+    const duplicate = database([
+      response([ok(executed(projection, [
+        [text("one"), text("Milk"), integer(10)],
+        [text("two"), text("Tea"), integer(10)],
+      ]))]),
+      response([ok(executed(projection, [[text("three"), text("Cocoa"), integer(10)]]))]),
+    ], duplicateCalls);
+    const staticTail = items.query().orderBy("rank").limit(2);
+    const duplicateFirst = await duplicate.queryWithSignal(staticTail.build(), new AbortController().signal);
+    const duplicateSecond = await duplicate.queryWithSignal(
+      staticTail.startAfter(duplicateFirst.nextCursor?.values[0]).build(),
+      new AbortController().signal,
+    );
+    expect(duplicateFirst.records.map((record) => record.key.id)).toEqual(["one", "two"]);
+    expect(duplicateSecond.records.map((record) => record.key.id)).toEqual(["three"]);
+    expect(firstStatement(duplicateCalls[0]).sql).toContain('ORDER BY t."rank" ASC, t."id" ASC');
+    expect(firstStatement(duplicateCalls[1]).sql).toContain('t."rank" = ? AND t."id" > ?');
+    expect(firstStatement(duplicateCalls[1]).args).toEqual([integer(10), integer(10), text("two")]);
+  });
+
+  it("validates modern cursor positions against the instance budget before issuing a handle", async () => {
+    // A position beyond the global 65 536-character ceiling used to mint a
+    // handle that no continuation could compile.
+    const giant = "x".repeat(65_537);
+    const atCeiling = database([
+      response([ok(executed(projection, [[text("one"), text(giant), integer(1)]]))]),
+    ], [], { maxCursorBytes: 65_536, maxResponseBytes: 1_000_000 });
+    await expect(atCeiling.queryWithSignal(
+      items.query().orderBy("title").limit(1).build(),
+      new AbortController().signal,
+    )).rejects.toThrow("maxCursorBytes");
+
+    const smallBudget = database([
+      response([ok(executed(projection, [[text("one"), text("abcde"), integer(1)]]))]),
+    ], [], { maxCursorBytes: 4 });
+    await expect(smallBudget.queryWithSignal(
+      items.query().orderBy("title").limit(1).build(),
+      new AbortController().signal,
+    )).rejects.toThrow("maxCursorBytes");
+
+    const withinBudget = database([
+      response([ok(executed(projection, [[text("one"), text("abcd"), integer(1)]]))]),
+      response([ok(executed(projection, []))]),
+    ], [], { maxCursorBytes: 4 });
+    const first = await withinBudget.queryWithSignal(
+      items.query().orderBy("title").limit(1).build(),
+      new AbortController().signal,
+    );
+    await expect(withinBudget.queryWithSignal(
+      items.query().orderBy("title").limit(1).startAfter(first.nextCursor?.values[0]).build(),
+      new AbortController().signal,
+    )).resolves.toEqual({ records: [] });
+  });
+
+  it("rejects __proto__ before I/O and preserves ordinary identifiers as own fields", async () => {
+    expect(() => database([], [], {
+      tables: {
+        items: {
+          table: "items",
+          uniqueKey: true,
+          keyColumn: { column: "id", nullable: false },
+          columns: { ["__proto__"]: { column: "value", nullable: false } },
+        },
+      },
+    })).toThrow("__proto__");
+    expect(() => database([], [], {
+      tables: {
+        ["__proto__"]: { table: "items", uniqueKey: true, keyColumn: { column: "id", nullable: false }, columns: { title: { column: "title", nullable: false } } },
+      },
+    })).toThrow("__proto__");
+
+    const calls: Call[] = [];
+    const wide = new LibSQLDatabase({
+      ...options(),
+      tables: {
+        toString: {
+          table: "weird",
+          uniqueKey: true,
+          keyColumn: { column: "id", nullable: false },
+          columns: { constructor: { column: "value", nullable: false } },
+        },
+      },
+      fetch: mockFetch([
+        response([ok(executed(["__dalgo_key", "constructor"], [[text("k"), text("v")]]))]),
+      ], calls),
+    });
+    const snapshot = await wide.get(collection<{ constructor: string }>("toString").key("k"));
+    expect(snapshot.exists).toBe(true);
+    const data = snapshot.data as { constructor: string };
+    expect(Object.hasOwn(data, "constructor")).toBe(true);
+    expect(data.constructor).toBe("v");
+    expect(Object.keys(data)).toEqual(["constructor"]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("redacts external body-reader, fetch and header failures while keeping genuine size refusals clear", async () => {
+    for (const error of [
+      new RangeError("synthetic secret"),
+      new RangeError("synthetic secret", { cause: new Error("inner secret") }),
+      new TypeError("synthetic secret", { cause: new Error("inner secret") }),
+      new Error("synthetic secret"),
+    ]) {
+      const { response: broken, state } = failingBody(error);
+      const db = new LibSQLDatabase({ ...options(), fetch: async () => broken });
+      const failure = await db.get(items.key("one")).catch((caught: unknown) => caught);
+      expect(failure).toBeInstanceOf(LibSQLRequestError);
+      expect(String(failure)).not.toContain("secret");
+      expect(failure).not.toHaveProperty("cause");
+      expect(state.cancelled).toBe(1);
+      expect(state.released).toBe(1);
+    }
+
+    const fetchFailure = await new LibSQLDatabase({
+      ...options(),
+      fetch: () => Promise.reject(new RangeError("synthetic secret", { cause: new Error("inner secret") })),
+    }).get(items.key("one")).catch((caught: unknown) => caught);
+    expect(fetchFailure).toBeInstanceOf(LibSQLRequestError);
+    expect(String(fetchFailure)).not.toContain("secret");
+    expect(fetchFailure).not.toHaveProperty("cause");
+
+    const headerFailure = await new LibSQLDatabase({
+      ...options(),
+      headers: () => Promise.reject(new RangeError("synthetic secret")),
+    }).get(items.key("one")).catch((caught: unknown) => caught);
+    expect(headerFailure).toBeInstanceOf(LibSQLRequestError);
+    expect(String(headerFailure)).not.toContain("secret");
+    expect(headerFailure).not.toHaveProperty("cause");
+
+    const declared = await database([response([], 200, { "content-length": "10001" })], [])
+      .get(items.key("one")).catch((caught: unknown) => caught);
+    expect(declared).toBeInstanceOf(RangeError);
+    expect(declared).not.toBeInstanceOf(LibSQLRequestError);
+    expect(String(declared)).toBe("RangeError: libSQL response exceeds maxResponseBytes");
+
+    const streamed = await database([streamedBody(32)], [], { maxResponseBytes: 10 })
+      .get(items.key("one")).catch((caught: unknown) => caught);
+    expect(streamed).toBeInstanceOf(RangeError);
+    expect(streamed).not.toBeInstanceOf(LibSQLRequestError);
+    expect(String(streamed)).toBe("RangeError: libSQL response exceeds maxResponseBytes");
   });
 
   it("truncates the table inventory explicitly and never presents it as empty", async () => {

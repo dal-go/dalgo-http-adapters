@@ -26,17 +26,21 @@ now uses a bounded fail-fast worker pool rather than unbounded `Promise.all`.
 Add adapter-issued, single-use opaque keyset cursors bound to the endpoint,
 table, key, filters, order, page size and credential scope, with malformed,
 foreign, replay and changed-query refusal. Every non-empty page (including a
-short one) continues; only an empty page is sticky EOF. Legacy `query` keeps its
-open cursor positions. Add null-aware native keyset paging for nullable order
-columns with a unique-key tie-breaker.
+short one) continues; only an empty page is sticky EOF. An order-less modern or
+native page uses the configured key as its honest deterministic order, so each
+issued cursor is a usable continuation. Legacy `query` keeps its open cursor
+positions and still returns none for an unordered query. Add null-aware native
+keyset paging for nullable order columns with a unique-key tie-breaker.
 
 Add bounded read-only schema discovery over `pragma_table_list`,
 `pragma_table_xinfo` and the index pragmas: fields, declared types/affinity,
 nullability, primary keys, single-column unique-index proof, views and explicit
-configured contracts. Unavailable/truncated metadata is distinct from an empty
-database, and discovery never expands the query allowlist. Composite or
-nullable keys, key-type contradictions and truncated metadata are reported as
-non-queryable rather than guessed.
+configured contracts. The `INTEGER PRIMARY KEY` rowid alias is claimed only when
+SQLite created no `pk` index for it; `INTEGER PRIMARY KEY DESC`, WITHOUT ROWID
+and non-INTEGER keys never inherit that non-null claim. Unavailable/truncated
+metadata is distinct from an empty database, and discovery never expands the
+query allowlist. Composite or nullable keys, key-type contradictions and
+truncated metadata are reported as non-queryable rather than guessed.
 
 Require explicit `allowInsecureLoopbackHttp: true` for loopback HTTP. Keep
 credentials header-only and memory-only, `redirect: "error"`, and redacted HTTP,
@@ -45,7 +49,11 @@ statement, request and cursor errors.
 Verification adds account-free real and Chromium suites against the
 commit-pinned `ghcr.io/tursodatabase/libsql-server:d6c75af` fixture with
 ephemeral Ed25519 keys, an explicit `a: "ro"` reader token, a separate writer
-token only for seeding and a real reader write probe. The packed and
+token only for seeding and a real reader write probe. The public `test:real`
+script builds its workspace dependency outputs before the fixture, so it also
+works from a clean checkout. Teardown removes only the fixture's own container
+and the exact anonymous volumes recorded from it, verifies they are gone and
+fails the suite if an owned resource remains. The packed and
 source-only Git-subdirectory consumer gates now install and typecheck libSQL
 public declarations, assert one `@dalgo/core` identity and reject any legacy
 `@dal-go/dalgo` dependency. The fixture is local Hrana proof, not proof of hosted

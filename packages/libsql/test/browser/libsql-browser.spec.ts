@@ -77,14 +77,14 @@ test.describe("real Chromium -> real libSQL server", () => {
     expect(result.origin).not.toBe(result.serverOrigin);
     expect(result.discovery).toMatchObject({
       status: "available",
-      tableCount: 8,
+      tableCount: 11,
       items: {
         adapterQueryable: true,
         uniqueStatus: "declared-primary-key",
         primaryKey: ["id"],
       },
     });
-    expect(result.connection).toMatchObject({ ok: true, status: "connected", tableCount: 8 });
+    expect(result.connection).toMatchObject({ ok: true, status: "connected", tableCount: 11 });
 
     expect(result.recordsPerPage).toEqual([5, 5, 2, 0]);
     expect(result.pages).toBe(4);

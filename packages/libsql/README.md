@@ -64,7 +64,9 @@ await db.set(items.key(7), { title: "Milk", rank: 10 });
 
 Identifiers come only from this validated configuration and are quoted. Values
 are Hrana positional bindings; no value is interpolated into SQL. A field name
-is exactly the data property a caller sees.
+is exactly the data property a caller sees. `__proto__` is refused as a
+collection or field name before any I/O, because it cannot be stored as an own
+object property; every other simple identifier keeps its exact spelling.
 
 ## Read-only native facade
 
@@ -129,6 +131,10 @@ unsupported and fail before any request.
 Ordered paging is a deterministic SQL keyset:
 
 - the configured unique key is always the final tie-breaker;
+- a `queryWithSignal`/native page without an explicit order uses that key as
+  its honest deterministic order, so the issued cursor is always a usable
+  continuation (the legacy `LibSQLDatabase.query()` keeps its documented
+  open-position behaviour and returns no cursor for an unordered query);
 - nullable order values are handled by the keyset predicate itself
   (`NULLS FIRST` for ascending SQLite order, `NULLS LAST` for descending), not
   silently coerced;
@@ -172,8 +178,10 @@ sent, so rotating a bearer token retires outstanding cursors. Set
 It reports fields, declared type text, SQLite affinity, nullability, primary-key
 position, the `hidden` flag, defaults, and a uniqueness proof:
 
-- `declared-primary-key`: a single non-null primary key, including the SQLite
-  `INTEGER PRIMARY KEY` rowid alias;
+- `declared-primary-key`: a single non-null primary key. The SQLite
+  `INTEGER PRIMARY KEY` rowid alias is claimed only when SQLite itself created
+  no `pk` index for it; `INTEGER PRIMARY KEY DESC`, WITHOUT ROWID keys and
+  non-INTEGER keys never inherit that non-null rowid claim;
 - `unique-index`: a complete, non-partial, single-column `UNIQUE` index on a
   non-null column;
 - `configured-contract`: metadata has no usable single-column non-null key
@@ -207,7 +215,7 @@ configurable:
 | `maxGetManyBytes` | 1 MiB cumulative |
 | `maxRows` (managed) / `maxQueryLimit` (native) | 1000 / 100 |
 | `maxQueryPages` | 10 000 |
-| `maxCursorBytes` (legacy values) | 8 192 |
+| `maxCursorBytes` (legacy values and opaque-cursor keyset positions) | 8 192 |
 | `maxIssuedCursors` / `maxConservedCursors` | 1000 / 1000 |
 | `maxMetadataTables` / `maxMetadataFieldsPerTable` | 100 / 256 |
 | `maxMetadataStatements` / `maxMetadataBytes` | 512 / 1 MiB |
@@ -253,11 +261,13 @@ separately from the native facade's own no-I/O mutation refusal.
 
 - `pnpm --filter @dal-go/dalgo2libsql check`: lint, unit tests, production build
   and strict example/typecheck. No network or Docker.
-- `pnpm --filter @dal-go/dalgo2libsql test:real`: starts its own
-  commit-pinned libSQL container on a random loopback port with ephemeral keys,
-  seeds via the writer token, proves the reader write probe is 403, runs the
-  adapter against real Hrana, and removes only its own container and temporary
-  directory.
+- `pnpm --filter @dal-go/dalgo2libsql test:real`: builds the workspace
+  dependency outputs first (so it works from a clean checkout), then starts its
+  own commit-pinned libSQL container on a random loopback port with ephemeral
+  keys, seeds via the writer token, proves the reader write probe is 403, runs
+  the adapter against real Hrana, and removes **and verifies** its own container
+  plus the exact anonymous data volumes recorded from that container before
+  deletion. A remaining owned resource fails the suite.
 - `pnpm --filter @dal-go/dalgo2libsql test:browser`: the same fixture plus a
   real static page in Chromium. The page bundles the adapter, uses the browser's
   own `fetch`, and reads across a genuinely different origin. No libSQL response

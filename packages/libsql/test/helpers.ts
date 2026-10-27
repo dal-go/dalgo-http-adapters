@@ -84,4 +84,38 @@ export function deferred<T>(): { readonly promise: Promise<T>; readonly resolve:
   return { promise, resolve, reject };
 }
 
+/**
+ * A response whose injected body reader rejects with `error`. It records the
+ * cancel and release calls so a test can prove the adapter cleans the reader up
+ * instead of leaking a locked stream after redacting an external failure.
+ */
+export function failingBody(error: unknown): {
+  readonly response: Response;
+  readonly state: { cancelled: number; released: number };
+} {
+  const state = { cancelled: 0, released: 0 };
+  const reader = {
+    read: () => Promise.reject(error),
+    cancel: () => { state.cancelled += 1; return Promise.resolve(); },
+    releaseLock: () => { state.released += 1; },
+  };
+  const response = {
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "application/json" }),
+    body: { getReader: () => reader },
+  } as unknown as Response;
+  return { response, state };
+}
+
+/** A real streamed response with no content-length, used to prove the byte cap. */
+export function streamedBody(bytes: number, status = 200): Response {
+  return new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(bytes));
+      controller.close();
+    },
+  }), { status, headers: { "content-type": "application/json" } });
+}
+
 export function never<T>(): Promise<T> { return new Promise<T>(() => undefined); }

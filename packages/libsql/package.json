@@ -19,7 +19,7 @@
     "lint": "eslint .",
     "prepack": "npm --prefix ../adapter-runtime run build && npm run build",
     "test": "vitest run",
-    "test:real": "node scripts/real-libsql.mjs",
+    "test:real": "pnpm run build:deps && node scripts/real-libsql.mjs",
     "test:browser": "pnpm run build:deps && node scripts/real-libsql-browser.mjs"
   },
   "repository": {

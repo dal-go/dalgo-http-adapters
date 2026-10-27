@@ -44,6 +44,93 @@ function pipelineBody(sql, args = [], wantRows = false) {
   });
 }
 
+function isMissingDockerObject(error) {
+  return typeof error === "object" && error !== null
+    && error.status === 1
+    && /no such (container|object|volume)/iu.test(String(error.stderr ?? ""));
+}
+
+function dockerRun(run, args, options = {}) {
+  return run(args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...options });
+}
+
+/**
+ * Captures the exact volume mounts this container owns. Anonymous volumes
+ * declared by the image arrive as 64-hex names attached to our own container;
+ * only those are ever removed. The mounts are read while the container still
+ * exists, before `docker rm`, so ownership is recorded rather than guessed.
+ */
+function inspectOwnedVolumes(run, name) {
+  let output;
+  try {
+    output = dockerRun(run, ["inspect", "--format", "{{json .Mounts}}", name]);
+  } catch (error) {
+    if (isMissingDockerObject(error)) return null;
+    throw error;
+  }
+  const mounts = JSON.parse(output);
+  if (mounts === null) return [];
+  if (!Array.isArray(mounts)) throw new Error("unexpected docker inspect mounts for the libSQL fixture");
+  return mounts
+    .filter((mount) => mount?.Type === "volume" && typeof mount.Name === "string")
+    .map((mount) => mount.Name);
+}
+
+function volumeExists(run, volume) {
+  try {
+    dockerRun(run, ["volume", "inspect", volume]);
+    return true;
+  } catch (error) {
+    if (isMissingDockerObject(error)) return false;
+    throw error;
+  }
+}
+
+/**
+ * Removes only this fixture's own container and the exact anonymous volumes
+ * recorded from that container. It verifies the real Docker state after each
+ * step and throws if anything it owns remains, so a caller can fail the suite
+ * instead of silently marking teardown complete. Repeating it is idempotent:
+ * an already-absent container/volume is success, but a real Docker failure is
+ * never swallowed.
+ */
+export function teardownFixtureResources({ name, run }) {
+  const ownedVolumes = inspectOwnedVolumes(run, name);
+  if (ownedVolumes !== null) {
+    try {
+      dockerRun(run, ["rm", "-f", "-v", name]);
+    } catch (error) {
+      if (!isMissingDockerObject(error)) throw error;
+    }
+  }
+  if (inspectOwnedVolumes(run, name) !== null) {
+    throw new Error(`libSQL fixture container still exists after teardown: ${name}`);
+  }
+
+  const removed = [];
+  const remaining = [];
+  for (const volume of ownedVolumes ?? []) {
+    const anonymous = /^[0-9a-f]{64}$/u.test(volume);
+    if (anonymous && volumeExists(run, volume)) {
+      try {
+        dockerRun(run, ["volume", "rm", "-f", volume]);
+      } catch (error) {
+        if (!isMissingDockerObject(error)) throw error;
+      }
+      removed.push(volume);
+    }
+    if (volumeExists(run, volume)) remaining.push(volume);
+  }
+  if (remaining.length > 0) {
+    throw new Error(`libSQL fixture volumes still exist after teardown: ${remaining.join(", ")}`);
+  }
+  return {
+    containerRemoved: ownedVolumes !== null,
+    volumesVerified: ownedVolumes ?? [],
+    volumesRemoved: removed,
+  };
+}
+
 export async function execute(url, token, sql, args = [], wantRows = false) {
   const response = await fetch(`${url}/v3/pipeline`, {
     method: "POST",
@@ -84,16 +171,21 @@ export async function startLibSQLFixture() {
 
   let stopped = false;
   const stop = () => {
-    if (stopped) return;
+    if (stopped) return undefined;
+    const result = teardownFixtureResources({
+      name,
+      run: (args, options) => execFileSync("docker", args, options),
+    });
+    // Marked complete only after every owned resource was removed and verified.
     stopped = true;
-    try {
-      execFileSync("docker", ["rm", "-f", name], { stdio: "ignore" });
-    } catch {
-      // The container may already be gone after a failed start.
-    }
+    return result;
   };
   const onSignal = () => {
-    stop();
+    try {
+      stop();
+    } catch (error) {
+      process.stderr.write(`fixture teardown failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
     process.exit(130);
   };
   process.once("SIGINT", onSignal);
@@ -143,7 +235,11 @@ export async function startLibSQLFixture() {
       },
     };
   } catch (error) {
-    stop();
+    try {
+      stop();
+    } catch (cleanupError) {
+      process.stderr.write(`fixture teardown failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}\n`);
+    }
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
     throw error;
@@ -176,6 +272,17 @@ export async function seedLibSQL(url, writerToken) {
     "INSERT INTO composite (a, b, value) VALUES ('x', '1', 'first'), ('x', '2', 'second')",
     "CREATE TABLE nullable_pk (code TEXT PRIMARY KEY, label TEXT)",
     "INSERT INTO nullable_pk (code, label) VALUES ('n1', 'explicit'), (NULL, 'null-code')",
+    // No PRIMARY KEY at all: only a real single-column UNIQUE index proves the key.
+    "CREATE TABLE indexed_only (slug TEXT NOT NULL, label TEXT)",
+    "CREATE UNIQUE INDEX indexed_only_slug_u ON indexed_only(slug)",
+    "INSERT INTO indexed_only (slug, label) VALUES ('alpha', 'one'), ('beta', 'two'), ('gamma', 'three')",
+    // INTEGER PRIMARY KEY DESC is SQLite's documented exception: it is not a
+    // rowid alias, creates a pk index and permits NULL (including repeated NULLs).
+    "CREATE TABLE pk_desc (id INTEGER PRIMARY KEY DESC, label TEXT)",
+    "INSERT INTO pk_desc (id, label) VALUES (NULL, 'null-first'), (NULL, 'null-second'), (1, 'one'), (2, 'two')",
+    // WITHOUT ROWID has a pk index and a non-null primary key, never a rowid alias.
+    "CREATE TABLE wr_items (code TEXT NOT NULL PRIMARY KEY, label TEXT) WITHOUT ROWID",
+    "INSERT INTO wr_items (code, label) VALUES ('wa', 'A'), ('wb', 'B')",
     "CREATE TABLE blobs (id INTEGER PRIMARY KEY, payload BLOB)",
     "INSERT INTO blobs (id, payload) VALUES (1, x'00ff10')",
     "CREATE TABLE bigints (id INTEGER PRIMARY KEY, label TEXT)",
