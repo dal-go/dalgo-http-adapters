@@ -1,4 +1,10 @@
 import {
+  QueryCancelledError,
+  cancelQuietly,
+  createAbortScope,
+  raceAbort,
+} from "@dalgo/adapter-runtime";
+import {
   AlreadyExistsError,
   DOCUMENT_ID,
   Key,
@@ -14,7 +20,7 @@ import {
   type StructuredQuery,
   type UpdateData,
   type WriteSession,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 
 const DEFAULT_MAX_GET_MANY = 100;
 const DEFAULT_MAX_PARALLEL_READS = 8;
@@ -58,6 +64,14 @@ export class CouchDbHttpError extends Error {
     super(`CouchDB request failed with HTTP ${String(status)}`);
     this.name = "CouchDbHttpError";
     this.status = status;
+  }
+}
+
+/** A redacted failure while obtaining headers, following a request, or consuming a response. */
+export class CouchDbRequestError extends Error {
+  public constructor() {
+    super("CouchDB request could not be completed");
+    this.name = "CouchDbRequestError";
   }
 }
 
@@ -124,26 +138,25 @@ function validateHeaders(headers: CouchDbHeaders): void {
   }
 }
 
-async function readResponse(response: Response, maximum: number, signal: AbortSignal): Promise<string> {
+async function readResponse(response: Response, maximum: number, signal: AbortSignal, cancelled: () => Error): Promise<string> {
   const length = response.headers.get("content-length");
   if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximum)) {
-    await response.body?.cancel(); throw new RangeError("CouchDB response exceeds maxResponseBytes");
+    cancelQuietly(response.body); throw new RangeError("CouchDB response exceeds maxResponseBytes");
   }
   if (response.body === null) return "";
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
-  let rejectAbort: ((error: Error) => void) | undefined;
-  const abort = new Promise<never>((_resolve, reject) => { rejectAbort = reject as (error: Error) => void; });
-  const cancel = () => { rejectAbort?.(new Error("CouchDB response timed out")); void reader.cancel(); };
-  signal.addEventListener("abort", cancel, { once: true });
   try {
     for (;;) {
-      const next = await Promise.race([reader.read(), abort]);
+      const next = await raceAbort(reader.read(), signal, cancelled);
       if (next.done) break;
       total += next.value.byteLength;
-      if (total > maximum) { await reader.cancel(); throw new RangeError("CouchDB response exceeds maxResponseBytes"); }
+      if (total > maximum) { cancelQuietly(reader); throw new RangeError("CouchDB response exceeds maxResponseBytes"); }
       chunks.push(next.value);
     }
-  } finally { signal.removeEventListener("abort", cancel); reader.releaseLock(); }
+  } finally {
+    if (signal.aborted) cancelQuietly(reader);
+    try { reader.releaseLock(); } catch { /* a cancelled stream can retain its lock */ }
+  }
   const joined = new Uint8Array(total); let offset = 0;
   for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
   return new TextDecoder().decode(joined);
@@ -248,6 +261,24 @@ export class CouchDbDatabase implements Database, WriteSession {
   }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
+    const plan = this.prepareQuery(query);
+    const response = await this.request("POST", "/_find", plan.body);
+    return this.queryPage(query, plan.limit, response);
+  }
+
+  /**
+   * Cancellable query entry point. The caller signal covers header acquisition,
+   * fetch and response-body reading, and shares one deadline with `query`.
+   */
+  public async queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
+    if (signal.aborted) throw new QueryCancelledError("caller");
+    const plan = this.prepareQuery(query);
+    const response = await this.request("POST", "/_find", plan.body, [], {}, signal);
+    if (signal.aborted) throw new QueryCancelledError("caller");
+    return this.queryPage(query, plan.limit, response);
+  }
+
+  private prepareQuery<T>(query: StructuredQuery<T>): { readonly body: Record<string, unknown>; readonly limit: number } {
     if (query.source.kind !== "collection" || query.source.parent !== undefined) throw new UnsupportedError("CouchDB collection-group or nested collection queries");
     if (query.orders.length > 0 || query.offset !== undefined || query.startAt !== undefined || query.endAt !== undefined || query.endBefore !== undefined) throw new UnsupportedError("CouchDB ordered, offset, or inclusive/end cursor queries");
     if (query.limit !== undefined && query.limit > this.#maxQueryLimit) throw new UnsupportedError(`CouchDB query limit above maxQueryLimit (${String(this.#maxQueryLimit)})`);
@@ -259,7 +290,10 @@ export class CouchDbDatabase implements Database, WriteSession {
     }
     const limit = query.limit ?? this.#maxQueryLimit;
     const body = { selector: { $and: [{ __dalgo_collection: { $eq: query.source.name } }, ...query.filters.map((filter) => selectorFilter(filter))] }, limit, ...(bookmark === undefined ? {} : { bookmark }) };
-    const response = await this.request("POST", "/_find", body);
+    return { body, limit };
+  }
+
+  private queryPage<T>(query: StructuredQuery<T>, limit: number, response: { readonly status: number; readonly body: unknown }): QueryPage<T> {
     if (!isObject(response.body) || !Array.isArray(response.body.docs) || (response.body.bookmark !== undefined && typeof response.body.bookmark !== "string")) throw new TypeError("malformed CouchDB Mango response");
     const mango = response.body as unknown as MangoResponse;
     const records = mango.docs.map((document): ExistingRecord<T> => {
@@ -286,18 +320,50 @@ export class CouchDbDatabase implements Database, WriteSession {
     return response.status === 404 ? undefined : couchDocument(response.body, key);
   }
 
-  private async request(method: string, path: string, body?: unknown, accepted: readonly number[] = [], extraHeaders: CouchDbHeaders = {}): Promise<{ readonly status: number; readonly body: unknown }> {
-    const supplied = typeof this.#headers === "function" ? await this.#headers() : (this.#headers ?? {});
-    validateHeaders(supplied); validateHeaders(extraHeaders);
-    let serialized: string | undefined;
-    if (body !== undefined) { assertJson(body); serialized = JSON.stringify(body); if (byteLength(serialized) > this.#maxRequestBytes) throw new RangeError("CouchDB request exceeds maxRequestBytes"); }
-    const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
+  private async request(method: string, path: string, body?: unknown, accepted: readonly number[] = [], extraHeaders: CouchDbHeaders = {}, callerSignal?: AbortSignal): Promise<{ readonly status: number; readonly body: unknown }> {
+    const scope = createAbortScope(callerSignal, this.#timeoutMs);
+    const cancelled = (): Error => callerSignal === undefined
+      ? new DOMException("The operation was aborted.", "AbortError")
+      : new QueryCancelledError(scope.deadlineExceeded ? "deadline" : "caller");
     try {
-      const response = await this.#fetch(`${this.#databaseUrl}${path}`, { method, redirect: "error", signal: controller.signal, headers: { ...supplied, ...extraHeaders, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) }, ...(serialized === undefined ? {} : { body: serialized }) });
-      const text = await readResponse(response, this.#maxResponseBytes, controller.signal);
+      let supplied: CouchDbHeaders;
+      try {
+        supplied = await raceAbort(
+          Promise.resolve().then(() => typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {})),
+          scope.signal,
+          cancelled,
+        );
+      } catch (error) {
+        if (scope.signal.aborted) throw cancelled();
+        if (callerSignal !== undefined) throw new CouchDbRequestError();
+        throw error;
+      }
+      validateHeaders(supplied); validateHeaders(extraHeaders);
+      if (scope.signal.aborted) throw cancelled();
+      let serialized: string | undefined;
+      if (body !== undefined) { assertJson(body); serialized = JSON.stringify(body); if (byteLength(serialized) > this.#maxRequestBytes) throw new RangeError("CouchDB request exceeds maxRequestBytes"); }
+      const pending = Promise.resolve().then(() => this.#fetch(`${this.#databaseUrl}${path}`, { method, redirect: "error", signal: scope.signal, headers: { ...supplied, ...extraHeaders, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) }, ...(serialized === undefined ? {} : { body: serialized }) }));
+      void pending.then((late) => { if (scope.signal.aborted) cancelQuietly(late.body); }, () => undefined);
+      let response: Response;
+      try {
+        response = await raceAbort(pending, scope.signal, cancelled);
+      } catch (error) {
+        if (scope.signal.aborted) throw cancelled();
+        if (callerSignal !== undefined) throw new CouchDbRequestError();
+        throw error;
+      }
+      let text: string;
+      try {
+        text = await readResponse(response, this.#maxResponseBytes, scope.signal, cancelled);
+      } catch (error) {
+        if (scope.signal.aborted) { cancelQuietly(response.body); throw cancelled(); }
+        if (callerSignal !== undefined && !(error instanceof RangeError)) throw new CouchDbRequestError();
+        throw error;
+      }
+      if (scope.signal.aborted) throw cancelled();
       if (!response.ok && !accepted.includes(response.status)) throw new CouchDbHttpError(response.status);
       if (text.length === 0) return { status: response.status, body: undefined };
       try { return { status: response.status, body: JSON.parse(text) }; } catch { throw new TypeError("CouchDB returned invalid JSON"); }
-    } finally { clearTimeout(timeout); }
+    } finally { scope.dispose(); }
   }
 }

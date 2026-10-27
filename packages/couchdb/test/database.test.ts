@@ -1,4 +1,4 @@
-import { DOCUMENT_ID, UnsupportedError, collection, key } from "@dal-go/dalgo";
+import { DOCUMENT_ID, UnsupportedError, collection, key } from "@dalgo/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { CouchDbConflictError, CouchDbDatabase, CouchDbHttpError } from "../src/index.js";

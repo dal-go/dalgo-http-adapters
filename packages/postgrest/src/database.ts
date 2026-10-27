@@ -1,4 +1,10 @@
 import {
+  QueryCancelledError,
+  cancelQuietly,
+  createAbortScope,
+  raceAbort,
+} from "@dalgo/adapter-runtime";
+import {
   AlreadyExistsError,
   DOCUMENT_ID,
   Key,
@@ -14,7 +20,7 @@ import {
   type StructuredQuery,
   type UpdateData,
   type WriteSession,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 
 const DEFAULT_MAX_GET_MANY = 100;
 const DEFAULT_MAX_PARALLEL_READS = 8;
@@ -168,27 +174,10 @@ function filterParameter<T>(filter: QueryFilter<T>, idColumn: string): readonly 
   }
 }
 
-function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(new PostgrestRequestError());
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => reject(new PostgrestRequestError());
-    signal.addEventListener("abort", onAbort, { once: true });
-    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-  });
-}
-
-function cancelBody(body: ReadableStream<Uint8Array> | null): void {
-  void body?.cancel().catch(() => undefined);
-}
-
-function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
-  void reader.cancel().catch(() => undefined);
-}
-
-async function readJson(response: Response, maximum: number, signal: AbortSignal): Promise<unknown> {
+async function readJson(response: Response, maximum: number, signal: AbortSignal, cancelled: () => Error): Promise<unknown> {
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) > maximum)) {
-    cancelBody(response.body);
+    cancelQuietly(response.body);
     throw new RangeError("PostgREST response exceeds maxResponseBytes");
   }
   if (response.body === null) return undefined;
@@ -197,17 +186,17 @@ async function readJson(response: Response, maximum: number, signal: AbortSignal
   let total = 0;
   try {
     for (;;) {
-      const item = await abortable(reader.read(), signal);
+      const item = await raceAbort(reader.read(), signal, cancelled);
       if (item.done) break;
       total += item.value.byteLength;
       if (total > maximum) {
-        cancelReader(reader);
+        cancelQuietly(reader);
         throw new RangeError("PostgREST response exceeds maxResponseBytes");
       }
       chunks.push(item.value);
     }
   } finally {
-    if (signal.aborted) cancelReader(reader);
+    if (signal.aborted) cancelQuietly(reader);
     try {
       reader.releaseLock();
     } catch {
@@ -259,7 +248,7 @@ export class PostgrestDatabase implements Database, WriteSession {
     const url = this.keyUrl(key);
     url.searchParams.set("select", "*");
     url.searchParams.set("limit", "1");
-    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal) => this.rows(response, signal));
+    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled));
     const row = rows[0];
     return row === undefined ? { key, exists: false } : this.record(row, key, codec);
   }
@@ -293,24 +282,42 @@ export class PostgrestDatabase implements Database, WriteSession {
 
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const payload = this.payload(key, data, codec);
-    const rows = await this.request(this.keyUrl(key), "PUT", this.writeHeaders("return=representation"), payload, (response, signal) => this.rows(response, signal));
+    const rows = await this.request(this.keyUrl(key), "PUT", this.writeHeaders("return=representation"), payload, (response, signal, cancelled) => this.rows(response, signal, cancelled));
     this.assertExactlyOne(rows);
   }
 
   public async update(key: Key, data: UpdateData): Promise<void> {
     const payload = encodedRecord(data, identityCodec as Codec<UpdateData>, this.#idColumn);
-    const rows = await this.request(this.keyUrl(key), "PATCH", this.writeHeaders("handling=strict, max-affected=1, return=representation"), payload, (response, signal) => this.rows(response, signal));
+    const rows = await this.request(this.keyUrl(key), "PATCH", this.writeHeaders("handling=strict, max-affected=1, return=representation"), payload, (response, signal, cancelled) => this.rows(response, signal, cancelled));
     if (rows.length === 0) throw new NotFoundError(key);
     this.assertExactlyOne(rows);
   }
 
   public async delete(key: Key): Promise<void> {
-    const rows = await this.request(this.keyUrl(key), "DELETE", this.writeHeaders("handling=strict, max-affected=1, return=representation"), undefined, (response, signal) => this.rows(response, signal));
+    const rows = await this.request(this.keyUrl(key), "DELETE", this.writeHeaders("handling=strict, max-affected=1, return=representation"), undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled));
     if (rows.length === 0) return;
     this.assertExactlyOne(rows);
   }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
+    const url = this.prepareQuery(query);
+    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled));
+    return { records: rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
+  }
+
+  /**
+   * Cancellable query entry point. The caller signal covers header acquisition,
+   * fetch and response-body reading, and shares one deadline with `query`.
+   */
+  public async queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
+    if (signal.aborted) throw new QueryCancelledError("caller");
+    const url = this.prepareQuery(query);
+    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, readSignal, cancelled) => this.rows(response, readSignal, cancelled), signal);
+    if (signal.aborted) throw new QueryCancelledError("caller");
+    return { records: rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
+  }
+
+  private prepareQuery<T>(query: StructuredQuery<T>): URL {
     if (query.source.kind !== "collection" || query.source.parent !== undefined) {
       throw new UnsupportedError("PostgREST collection-group or nested-collection queries");
     }
@@ -336,8 +343,7 @@ export class PostgrestDatabase implements Database, WriteSession {
       if (!Number.isSafeInteger(query.offset) || query.offset < 0) throw new TypeError("PostgREST query offset must be a non-negative safe integer");
       url.searchParams.set("offset", String(query.offset));
     }
-    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal) => this.rows(response, signal));
-    return { records: rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
+    return url;
   }
 
   public async runReadwriteTransaction<Result>(
@@ -371,7 +377,7 @@ export class PostgrestDatabase implements Database, WriteSession {
   }
 
   private readonly discard = async (response: Response): Promise<void> => {
-    cancelBody(response.body);
+    cancelQuietly(response.body);
   };
 
   private async request<T>(
@@ -379,39 +385,64 @@ export class PostgrestDatabase implements Database, WriteSession {
     method: string,
     requiredHeaders: Record<string, string>,
     body: unknown | undefined,
-    consume: (response: Response, signal: AbortSignal) => Promise<T>,
+    consume: (response: Response, signal: AbortSignal, cancelled: () => Error) => Promise<T>,
+    callerSignal?: AbortSignal,
   ): Promise<T> {
     const text = body === undefined ? undefined : JSON.stringify(body);
     if (text !== undefined && new TextEncoder().encode(text).byteLength > this.#maxRequestBytes) throw new RangeError("PostgREST request exceeds maxRequestBytes");
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
+    const scope = createAbortScope(callerSignal, this.#timeoutMs);
+    const cancelled = (): Error => callerSignal === undefined
+      ? new PostgrestRequestError()
+      : new QueryCancelledError(scope.deadlineExceeded ? "deadline" : "caller");
+    let response: Response | undefined;
     try {
-      const provided = await abortable(Promise.resolve(typeof this.#headers === "function" ? this.#headers() : this.#headers), controller.signal);
+      let provided: PostgrestHeaders | undefined;
+      try {
+        provided = await raceAbort(
+          Promise.resolve().then(() => typeof this.#headers === "function" ? this.#headers() : this.#headers),
+          scope.signal,
+          cancelled,
+        );
+      } catch {
+        if (scope.signal.aborted) throw cancelled();
+        throw new PostgrestRequestError();
+      }
       if (provided !== undefined) validateHeaders(provided);
       const headers = new Headers(provided);
       for (const [name, value] of Object.entries(requiredHeaders)) headers.set(name, value);
-      const response = await abortable(this.#fetch(url, {
+      if (scope.signal.aborted) throw cancelled();
+      const pending = Promise.resolve().then(() => this.#fetch(url, {
         method,
         headers,
         redirect: "error",
         ...(text === undefined ? {} : { body: text }),
-        signal: controller.signal,
-      }), controller.signal);
-      if (!response.ok) {
-        cancelBody(response.body);
-        throw new PostgrestHttpError(response.status);
+        signal: scope.signal,
+      }));
+      void pending.then((late) => { if (scope.signal.aborted) cancelQuietly(late.body); }, () => undefined);
+      const responseValue = await raceAbort(pending, scope.signal, cancelled);
+      response = responseValue;
+      if (scope.signal.aborted) throw cancelled();
+      if (!responseValue.ok) {
+        cancelQuietly(responseValue.body);
+        throw new PostgrestHttpError(responseValue.status);
       }
-      return await consume(response, controller.signal);
+      const value = await consume(responseValue, scope.signal, cancelled);
+      if (scope.signal.aborted) throw cancelled();
+      return value;
     } catch (error) {
-      if (error instanceof PostgrestHttpError || error instanceof PostgrestRequestError) throw error;
+      if (scope.signal.aborted) {
+        cancelQuietly(response?.body);
+        throw cancelled();
+      }
+      if (error instanceof PostgrestHttpError || error instanceof PostgrestRequestError || error instanceof QueryCancelledError) throw error;
       throw new PostgrestRequestError();
     } finally {
-      clearTimeout(timeout);
+      scope.dispose();
     }
   }
 
-  private async rows(response: Response, signal: AbortSignal): Promise<readonly Record<string, unknown>[]> {
-    const body = await readJson(response, this.#maxResponseBytes, signal);
+  private async rows(response: Response, signal: AbortSignal, cancelled: () => Error): Promise<readonly Record<string, unknown>[]> {
+    const body = await readJson(response, this.#maxResponseBytes, signal, cancelled);
     if (!Array.isArray(body) || !body.every(isPlainObject)) throw new TypeError("PostgREST response must be a JSON array of row objects");
     return body;
   }
