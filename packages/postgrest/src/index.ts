@@ -16,6 +16,7 @@ export {
   type PostgrestDiscoveryReason,
   type PostgrestFieldDiscovery,
   type PostgrestIdColumnDiscovery,
+  type PostgrestIdColumnUniqueness,
   type PostgrestPrimaryKeyDiscovery,
   type PostgrestRelationDiscovery,
 } from "./discovery.js";

@@ -193,6 +193,76 @@ describe("PostgrestDatabase.discover", () => {
     expect(discovery.relations[0]?.primaryKey.status).toBe("declared");
   });
 
+  it("collects the complete composite primary key even outside the returned field budget", async () => {
+    const document = openApi();
+    const definitions = document.definitions as Record<string, Record<string, unknown>>;
+    const items = definitions.items as Record<string, unknown>;
+    items.properties = {
+      id: { type: "string", format: "text", description: "Note:\nThis is a Primary Key.<pk/>" },
+      title: { type: "string", format: "text" },
+      region: { type: "string", format: "text", description: "Note:\nThis is a Primary Key.<pk/>" },
+    };
+    const { database: db, fetch } = database({ maxDiscoveryFieldsPerRelation: 1 });
+    fetch.mockResolvedValueOnce(response(200, document));
+
+    const discovery = await db.discover();
+    const relation = discovery.relations[0];
+    expect(relation?.fieldsStatus).toBe("truncated");
+    expect(relation?.fields).toHaveLength(1);
+    expect(relation?.fields.map((field) => field.name)).toEqual(["id"]);
+    // The key scan is not the field projection: both declared key columns are
+    // reported even though `region` is outside the returned field list.
+    expect(relation?.primaryKey).toEqual({ status: "declared", columns: ["id", "region"] });
+    expect(relation?.idColumn).toMatchObject({
+      name: "id",
+      present: true,
+      declaredPrimaryKey: true,
+      uniqueStatus: "not-unique",
+    });
+    // `readable` is provider authorization; `adapterQueryable` is not a claim
+    // that the configured ID alone identifies a row or a stable page.
+    expect(relation?.readable).toBe(true);
+    expect(relation?.adapterQueryable).toBe(false);
+    expect(relation?.adapterQueryableReason).toContain("composite");
+  });
+
+  it("does not infer uniqueness from ID-column presence when a different primary key is declared", async () => {
+    const document = openApi();
+    const definitions = document.definitions as Record<string, Record<string, unknown>>;
+    const items = definitions.items as Record<string, unknown>;
+    items.properties = {
+      id: { type: "string", format: "text" },
+      title: { type: "string", format: "text" },
+      slug: { type: "string", format: "text", description: "Note:\nThis is a Primary Key.<pk/>" },
+    };
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, document));
+
+    const relation = (await db.discover()).relations[0];
+    expect(relation?.idColumn).toMatchObject({ name: "id", present: true, declaredPrimaryKey: false, uniqueStatus: "not-unique" });
+    expect(relation?.adapterQueryable).toBe(false);
+    expect(relation?.adapterQueryableReason).toContain("primary key");
+  });
+
+  it("reports the configured unique-ID contract for a relation with no declared key", async () => {
+    const document = openApi();
+    const definitions = document.definitions as Record<string, Record<string, unknown>>;
+    definitions.items_view = {
+      type: "object",
+      properties: {
+        id: { type: "string", format: "text" },
+        title: { type: "string", format: "text" },
+      },
+    };
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, document));
+
+    const view = (await db.discover()).relations.find((relation) => relation.name === "items_view");
+    expect(view?.primaryKey).toEqual({ status: "not-declared", columns: [] });
+    expect(view?.idColumn).toMatchObject({ name: "id", present: true, uniqueStatus: "configured-contract" });
+    expect(view?.adapterQueryable).toBe(true);
+  });
+
   it("uses an explicit profile header for writes and refuses missing ID mappings", async () => {
     const { database: db, fetch } = database({ schema: "api", idColumn: "missing_id" });
     fetch.mockResolvedValueOnce(response(201));

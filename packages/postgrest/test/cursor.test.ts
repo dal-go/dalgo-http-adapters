@@ -7,6 +7,11 @@ function response(status: number, body?: unknown): Response {
   return new Response(body === undefined ? undefined : JSON.stringify(body), { status });
 }
 
+/** A body supplied as raw JSON so a 9007199254740993 ID is not rounded by JSON.stringify first. */
+function rawResponse(status: number, text: string): Response {
+  return new Response(text, { status });
+}
+
 function database(options: Partial<ConstructorParameters<typeof PostgrestDatabase>[0]> = {}) {
   const fetch = vi.fn<typeof globalThis.fetch>();
   return {
@@ -89,25 +94,110 @@ describe("PostgrestDatabase queryWithSignal cursor", () => {
     expect(url(fetch).searchParams.get("order")).toBe("score.asc,id.desc");
   });
 
-  it("ends honestly: a short page has no cursor and an empty follow-up has no cursor", async () => {
+  it("continues after a short non-empty page and ends on the empty page", async () => {
     const { database: db, fetch } = database();
+    // A provider cap below the requested limit makes every page short. A
+    // short page must not be mistaken for end-of-data.
     fetch.mockResolvedValueOnce(response(200, [{ id: "a", priority: 1, score: null, done: false }]));
-    const short = await db.queryWithSignal(items.query().limit(2).build(), new AbortController().signal);
-    expect(short.nextCursor).toBeUndefined();
+    const short = await db.queryWithSignal(items.query().orderBy("priority").limit(5).build(), new AbortController().signal);
+    expect(short.records.map((record) => record.key.id)).toEqual(["a"]);
+    const shortCursor = short.nextCursor?.values[0];
+    expect(typeof shortCursor).toBe("string");
+    if (typeof shortCursor !== "string") throw new Error("cursor missing");
 
-    fetch.mockResolvedValueOnce(response(200, [
-      { id: "a", priority: 1, score: null, done: false },
-      { id: "b", priority: 2, score: null, done: false },
-    ]));
-    const full = await db.queryWithSignal(items.query().limit(2).build(), new AbortController().signal);
-    expect(full.nextCursor).toBeDefined();
+    fetch.mockResolvedValueOnce(response(200, [{ id: "b", priority: 2, score: null, done: false }]));
+    const alsoShort = await db.queryWithSignal(
+      items.query().orderBy("priority").limit(5).startAfter(shortCursor).build(),
+      new AbortController().signal,
+    );
+    expect(alsoShort.records.map((record) => record.key.id)).toEqual(["b"]);
+    expect(alsoShort.nextCursor).toBeDefined();
+    expect(url(fetch, 1).searchParams.get("limit")).toBe("5");
+    expect(url(fetch, 1).searchParams.get("or"))
+      .toBe("(priority.gt.1,priority.is.null,and(priority.eq.1,id.gt.\"a\"))");
 
     fetch.mockResolvedValueOnce(response(200, []));
     const empty = await db.queryWithSignal(
-      items.query().limit(2).startAfter(full.nextCursor?.values[0]).build(),
+      items.query().orderBy("priority").limit(5).startAfter(alsoShort.nextCursor?.values[0]).build(),
       new AbortController().signal,
     );
     expect(empty).toEqual({ records: [] });
+  });
+
+  it("keeps the legacy query offset contract as one request without a cursor", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, [{ id: "a", priority: 1, score: null, done: false }]));
+    const page = await db.query(items.query().limit(2).offset(1).build());
+    expect(page).toEqual({
+      records: [{ key: key("items", "a"), exists: true, data: { priority: 1, score: null, done: false } }],
+    });
+    expect(url(fetch).searchParams.get("limit")).toBe("2");
+    expect(url(fetch).searchParams.get("offset")).toBe("1");
+    expect(url(fetch).searchParams.get("or")).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an unsafe integer ID from raw JSON instead of rounding it", async () => {
+    const { database: db, fetch } = database();
+    const decode = vi.fn((value: unknown) => value as { priority: number });
+    const coded = collection<{ priority: number }>("items", { codec: { encode: (value) => ({ ...value }), decode } });
+    // 9007199254740993 is intentionally a raw string: a JS literal would
+    // already have been rounded to ...992 before the adapter saw it.
+    fetch.mockResolvedValueOnce(rawResponse(200, "[{\"id\":9007199254740993,\"priority\":1}]"));
+
+    const error = await db.queryWithSignal(coded.query().limit(1).build(), new AbortController().signal)
+      .catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "PostgrestRequestError" });
+    expect(String(error)).not.toContain("9007199254740993");
+    expect(String(error)).not.toContain("priority");
+    expect(decode).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an unsafe integer order value and emits no continuation cursor", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(rawResponse(200, "[{\"id\":\"a\",\"priority\":9007199254740993,\"score\":null,\"done\":false}]"));
+
+    const error = await db.queryWithSignal(
+      items.query().orderBy("priority").limit(1).build(),
+      new AbortController().signal,
+    ).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "PostgrestRequestError" });
+    expect(String(error)).not.toContain("9007199254740993");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an unsafe native number before emitting a record or cursor", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, [{ id: "a", priority: 2 ** 53, score: null, done: false }]));
+    await expect(db.queryWithSignal(
+      items.query().orderBy("priority").limit(1).build(),
+      new AbortController().signal,
+    )).rejects.toMatchObject({ name: "PostgrestRequestError" });
+    await expect(db.queryWithSignal(
+      items.query().orderBy("priority").limit(1).where("priority", "==", 2 ** 53).build(),
+      new AbortController().signal,
+    )).rejects.toBeInstanceOf(TypeError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a crafted cursor containing an unsafe integer as malformed", async () => {
+    const { database: db, fetch } = database();
+    // Written as raw JSON text: a JS literal would already be rounded.
+    const payload = Buffer.from(
+      "{\"adapter\":\"@dal-go/dalgo2postgrest\",\"version\":1,"
+      + "\"endpoint\":\"https://api.example.com/rest/v1/\","
+      + "\"collection\":\"items\",\"relation\":\"items\",\"idColumn\":\"id\",\"select\":\"*\","
+      + "\"filters\":[],\"orders\":[{\"field\":\"id\",\"direction\":\"asc\"}],"
+      + "\"limit\":1,\"page\":2,\"values\":[9007199254740993]}",
+      "utf8",
+    ).toString("base64url");
+
+    await expect(db.queryWithSignal(
+      items.query().limit(1).startAfter(payload).build(),
+      new AbortController().signal,
+    )).rejects.toMatchObject({ name: "PostgrestCursorError", reason: "malformed" });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("rejects a foreign cursor, a changed query, a changed order, a changed limit and a malformed token", async () => {

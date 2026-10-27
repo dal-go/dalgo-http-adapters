@@ -3,8 +3,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { PostgrestDatabase, PostgrestHttpError } from "../src/index.js";
 
-// The test itself is Node-only. A non-literal dynamic import keeps this file
-// free of Node type dependencies while the adapter source remains browser-only.
+// Node HTTP contract tests only: Node's fetch does not enforce browser CORS
+// and lets this file set Origin manually. These tests check the expected
+// requests, headers and redaction against a local Node HTTP server. The real
+// browser/CORS proof lives in test/browser and runs in Chromium.
+// The test file is Node-only. A non-literal dynamic import keeps it free of
+// Node type dependencies while the adapter source remains browser-only.
 interface TestRequest {
   readonly method: string | undefined;
   readonly headers: Readonly<Record<string, string | undefined>>;
@@ -146,8 +150,8 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map(close));
 });
 
-describe("PostgrestDatabase browser transport", () => {
-  it("uses the real fetch, real headers and an exact-origin CORS preflight against a local origin", async () => {
+describe("PostgrestDatabase Node HTTP transport contract (not a browser CORS proof)", () => {
+  it("sends real headers through Node fetch and can set Origin manually against a local server", async () => {
     const observed: Observed[] = [];
     const instance = server(observed);
     running.push(instance);

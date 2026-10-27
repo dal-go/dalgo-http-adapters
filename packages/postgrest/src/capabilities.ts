@@ -45,7 +45,7 @@ export const POSTGREST_READ_CAPABILITIES = {
     },
     filter: {
       status: "native",
-      detail: "simple column identifiers or DOCUMENT_ID; null only for equality and inequality",
+      detail: "simple column identifiers or DOCUMENT_ID; null only for equality and inequality; reserved query fields select/order/limit/offset/or/and are refused before HTTP",
     },
     sort: {
       status: "native",
@@ -53,7 +53,7 @@ export const POSTGREST_READ_CAPABILITIES = {
     },
     pagination: {
       status: "native",
-      detail: "limit/offset in query and queryWithSignal, plus an adapter-bound opaque keyset cursor in queryWithSignal; legacy query refuses cursors; no count=exact or full scan",
+      detail: "limit/offset in query and queryWithSignal, plus an adapter-bound opaque keyset cursor for every non-empty page in queryWithSignal; a short page is not end-of-data; legacy query refuses cursors; no count=exact or full scan",
     },
     joins: { status: "unsupported" },
     aggregation: { status: "unsupported" },

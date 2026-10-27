@@ -19,10 +19,28 @@ export interface PostgrestPrimaryKeyDiscovery {
   readonly columns: readonly string[];
 }
 
+/**
+ * Why the configured `idColumn` may be treated as identifying one row.
+ *
+ * - `declared-primary-key`: the complete declared primary key is exactly this
+ *   single column.
+ * - `configured-contract`: the request role's metadata declares no primary key
+ *   (commonly a view), so the adapter relies on the caller's configured
+ *   uniqueness contract for this column. Presence alone is not proof.
+ * - `not-unique`: metadata declares a different or composite primary key, so
+ *   this column alone cannot safely address one row, a stable keyset boundary,
+ *   or per-row writes.
+ */
+export type PostgrestIdColumnUniqueness =
+  | "declared-primary-key"
+  | "configured-contract"
+  | "not-unique";
+
 export interface PostgrestIdColumnDiscovery {
   readonly name: string;
   readonly present: boolean;
   readonly declaredPrimaryKey: boolean;
+  readonly uniqueStatus: PostgrestIdColumnUniqueness;
 }
 
 export interface PostgrestRelationDiscovery {
@@ -226,21 +244,34 @@ function relationMetadata(
       fieldsStatus: "unavailable",
       omittedFields: 0,
       primaryKey: { status: "unavailable", columns: [] },
-      idColumn: { name: options.idColumn, present: false, declaredPrimaryKey: false },
+      idColumn: {
+        name: options.idColumn,
+        present: false,
+        declaredPrimaryKey: false,
+        uniqueStatus: "not-unique",
+      },
       adapterQueryable: false,
       adapterQueryableReason: "the OpenAPI document does not declare this relation's fields",
     };
   }
 
   const entries = Object.entries(properties);
-  const included = entries.slice(0, options.maxFieldsPerRelation);
+  // The field budget bounds the returned field list, never the primary-key
+  // scan: slicing first and then collecting markers would report a partial
+  // composite key as a complete single-column key. Every declared property is
+  // inspected for a marker (the document itself is already byte-bounded), and
+  // only the first `maxFieldsPerRelation` fields are materialized in the
+  // result.
   const fields: PostgrestFieldDiscovery[] = [];
   const primaryKeyColumns: string[] = [];
-  for (const [fieldName, rawField] of included) {
+  const declaredFieldNames = new Set<string>();
+  for (const [index, [fieldName, rawField]] of entries.entries()) {
+    declaredFieldNames.add(fieldName);
     const field = propertySchema(document, rawField, options.maxSchemaDepth);
     const description = field !== undefined && typeof field.description === "string" ? field.description : "";
     const declaredPrimaryKey = PRIMARY_KEY_MARKER.test(description);
     if (declaredPrimaryKey) primaryKeyColumns.push(fieldName);
+    if (index >= options.maxFieldsPerRelation) continue;
     const type = field !== undefined && typeof field.type === "string" ? field.type : undefined;
     const format = field !== undefined && typeof field.format === "string" ? field.format : undefined;
     const array = type === "array" || (format !== undefined && format.endsWith("[]"));
@@ -263,19 +294,28 @@ function relationMetadata(
     });
   }
 
-  const truncated = entries.length > included.length;
+  const truncated = entries.length > fields.length;
   const fieldsStatus = truncated ? "truncated" : "declared";
-  const primaryKeyStatus = primaryKeyColumns.length > 0
-    ? "declared"
-    : truncated
-      ? "unavailable"
-      : "not-declared";
-  const idColumnPresent = fields.some((field) => field.name === options.idColumn);
+  const primaryKeyStatus = primaryKeyColumns.length > 0 ? "declared" : "not-declared";
+  const idColumnPresent = declaredFieldNames.has(options.idColumn);
   const simpleName = ADAPTER_IDENTIFIER.test(name);
-  const adapterQueryable = simpleName && idColumnPresent;
+  const uniqueStatus: PostgrestIdColumnUniqueness = primaryKeyColumns.length === 0
+    ? "configured-contract"
+    : primaryKeyColumns.length === 1 && primaryKeyColumns[0] === options.idColumn
+      ? "declared-primary-key"
+      : "not-unique";
+  // Readability is provider authorization (`GET` advertised); it is
+  // deliberately independent from whether the adapter can address one row by
+  // its configured ID column.
+  const adapterQueryable = simpleName && idColumnPresent && uniqueStatus !== "not-unique";
   let adapterQueryableReason: string | undefined;
   if (!simpleName) adapterQueryableReason = "the relation name is not a simple SQL identifier";
   else if (!idColumnPresent) adapterQueryableReason = `the configured ${options.idColumn} column is not declared on this relation`;
+  else if (uniqueStatus === "not-unique") {
+    adapterQueryableReason = primaryKeyColumns.length > 1
+      ? `the declared primary key (${primaryKeyColumns.join(", ")}) is composite; the configured ${options.idColumn} column alone is not unique`
+      : `the declared primary key is not the configured ${options.idColumn} column`;
+  }
 
   return {
     name,
@@ -283,12 +323,13 @@ function relationMetadata(
     readable: methods.includes("get"),
     fields,
     fieldsStatus,
-    omittedFields: entries.length - included.length,
+    omittedFields: entries.length - fields.length,
     primaryKey: { status: primaryKeyStatus, columns: primaryKeyColumns },
     idColumn: {
       name: options.idColumn,
       present: idColumnPresent,
       declaredPrimaryKey: primaryKeyColumns.includes(options.idColumn),
+      uniqueStatus,
     },
     adapterQueryable,
     ...(adapterQueryableReason === undefined ? {} : { adapterQueryableReason }),

@@ -37,6 +37,7 @@ import {
   type PostgrestDiscoveryBounds,
   type PostgrestDiscoveryReason,
 } from "./discovery.js";
+import { isUnsafeNativeNumber, parseLosslessJson } from "./json.js";
 
 const DEFAULT_MAX_GET_MANY = 100;
 const DEFAULT_MAX_PARALLEL_READS = 8;
@@ -51,6 +52,14 @@ const DEFAULT_MAX_DISCOVERY_BYTES = 524_288;
 const DEFAULT_MAX_CURSOR_BYTES = 8_192;
 const DEFAULT_MAX_SCHEMA_DEPTH = 4;
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * PostgREST query-string parameters owned by the adapter/protocol. A filter on
+ * a column with one of these names would be appended and then replaced (or
+ * joined ambiguously) by a control parameter, silently dropping a predicate.
+ * The adapter refuses such filters before HTTP instead of guessing at quoting.
+ */
+const RESERVED_QUERY_FIELDS = new Set(["select", "order", "limit", "offset", "or", "and"]);
 
 export type PostgrestFetch = typeof globalThis.fetch;
 export type PostgrestHeaders = Readonly<Record<string, string>>;
@@ -135,7 +144,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function validateJson(value: unknown, seen = new Set<object>()): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
-    if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError("PostgREST JSON numbers must be finite and not -0");
+    if (!Number.isFinite(value) || Object.is(value, -0) || isUnsafeNativeNumber(value)) {
+      throw new TypeError("PostgREST JSON numbers must be finite, lossless safe integers and not -0");
+    }
     return;
   }
   if (Array.isArray(value)) {
@@ -195,7 +206,9 @@ function identityScopeName(value: string | undefined): string | undefined {
 function scalar(value: unknown): string {
   if (typeof value === "string") return `"${value.replaceAll(/(["\\])/gu, "\\$1")}"`;
   if (typeof value === "number") {
-    if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError("PostgREST filter numbers must be finite and not -0");
+    if (!Number.isFinite(value) || Object.is(value, -0) || isUnsafeNativeNumber(value)) {
+      throw new TypeError("PostgREST filter numbers must be finite, lossless safe integers and not -0");
+    }
     return String(value);
   }
   if (typeof value === "boolean") return String(value);
@@ -209,6 +222,12 @@ function filterValue(value: unknown): string {
 
 function filterParameter<T>(filter: QueryFilter<T>, idColumn: string): readonly [string, string] {
   const field = filter.field === DOCUMENT_ID ? idColumn : identifier(String(filter.field), "query field");
+  if (RESERVED_QUERY_FIELDS.has(field)) {
+    // Quoting a column called e.g. `limit` is not part of the adapter's
+    // supported URL grammar, so refuse rather than append a predicate that
+    // PostgREST would read as its own control parameter.
+    throw new UnsupportedError(`PostgREST filter on reserved query field ${field}`);
+  }
   if (filter.value === undefined) throw new UnsupportedError("PostgREST undefined query filters");
   if (filter.value === null) {
     if (filter.operator === "==") return [field, "is.null"];
@@ -274,7 +293,7 @@ async function readJson(response: Response, maximum: number, signal: AbortSignal
     offset += chunk.byteLength;
   }
   if (bytes.byteLength === 0) return undefined;
-  return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+  return parseLosslessJson(new TextDecoder().decode(bytes));
 }
 
 interface QueryContinuation {
@@ -325,6 +344,9 @@ export class PostgrestDatabase implements Database, WriteSession {
     this.#schema = profileName(options.profile ?? options.schema);
     this.#identityScope = identityScopeName(options.identityScope);
     this.#idColumn = identifier(options.idColumn ?? "id", "id column");
+    if (RESERVED_QUERY_FIELDS.has(this.#idColumn)) {
+      throw new UnsupportedError(`PostgREST reserved query field as idColumn: ${this.#idColumn}`);
+    }
     this.#relationName = options.relationName ?? ((collection) => collection);
     this.#headers = options.headers;
     this.#fetch = options.fetch ?? globalThis.fetch;
@@ -425,7 +447,12 @@ export class PostgrestDatabase implements Database, WriteSession {
   ): QueryPage<T> {
     if (rows.length > limit) throw new RangeError("PostgREST response returned more rows than the requested query limit");
     const records = rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name));
-    if (continuation === undefined || rows.length !== limit) return { records };
+    // A short page is not proof of end-of-data: `db-max-rows` (or a proxy)
+    // can cap every response below the requested limit. Continue after every
+    // non-empty page and let the next request prove the end with an empty
+    // page. Only cursor mode continues; legacy query/offset keeps its exact
+    // single-request contract.
+    if (continuation === undefined || rows.length === 0) return { records };
     const last = rows[rows.length - 1];
     if (last === undefined) return { records };
     const values = continuation.orders.map((order) => {
@@ -701,6 +728,9 @@ export class PostgrestDatabase implements Database, WriteSession {
   }
 
   private payload<T>(key: Key, data: T, codec?: Codec<T>): Record<string, unknown> {
+    if (typeof key.id === "number" && (!Number.isFinite(key.id) || Object.is(key.id, -0) || isUnsafeNativeNumber(key.id))) {
+      throw new TypeError("PostgREST write keys must have a finite, lossless safe integer or string ID");
+    }
     return { [this.#idColumn]: key.id, ...encodedRecord(data, codecOrIdentity(codec), this.#idColumn) };
   }
 
@@ -798,8 +828,9 @@ export class PostgrestDatabase implements Database, WriteSession {
     collection?: string,
   ): ExistingRecord<T> {
     const id = row[this.#idColumn];
-    if ((typeof id !== "string" && typeof id !== "number") || (typeof id === "number" && (!Number.isFinite(id) || Object.is(id, -0)))) {
-      throw new TypeError(`PostgREST response row is missing a valid ${this.#idColumn} column`);
+    if ((typeof id !== "string" && typeof id !== "number")
+      || (typeof id === "number" && (!Number.isFinite(id) || Object.is(id, -0) || isUnsafeNativeNumber(id)))) {
+      throw new TypeError(`PostgREST response row is missing a lossless ${this.#idColumn} column`);
     }
     let key: Key;
     if (requestedKey !== undefined) {

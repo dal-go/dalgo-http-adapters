@@ -83,6 +83,9 @@ services:
       PGRST_DB_ANON_ROLE: anon
       PGRST_JWT_SECRET: ${jwtSecret}
       PGRST_OPENAPI_MODE: follow-privileges
+      # Deliberately below the page sizes used by the test: every response is
+      # a short page, so a consumer must continue on a non-empty page.
+      PGRST_DB_MAX_ROWS: 2
       PGRST_SERVER_CORS_ALLOWED_ORIGINS: ${corsOrigin}
     ports:
       - "127.0.0.1::3000"

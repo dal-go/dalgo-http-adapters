@@ -1,5 +1,7 @@
 import { UnsupportedError } from "@dalgo/core";
 
+import { isUnsafeNativeNumber, parseLosslessJson } from "./json.js";
+
 /** Stable, adapter-owned cursor identity. A cursor from another adapter is foreign. */
 export const POSTGREST_CURSOR_ADAPTER = "@dal-go/dalgo2postgrest";
 export const POSTGREST_CURSOR_VERSION = 1;
@@ -56,8 +58,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function cursorValue(value: unknown): PostgrestCursorValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
-    if (!Number.isFinite(value) || Object.is(value, -0)) {
-      throw new TypeError("PostgREST query cursor numbers must be finite and not -0");
+    if (!Number.isFinite(value) || Object.is(value, -0) || isUnsafeNativeNumber(value)) {
+      throw new TypeError("PostgREST query cursor numbers must be lossless safe integers and not -0");
     }
     return value;
   }
@@ -67,7 +69,10 @@ function cursorValue(value: unknown): PostgrestCursorValue {
 function scalar(value: PostgrestCursorValue): string {
   if (value === null) return "null";
   if (typeof value === "string") return `"${value.replaceAll(/(["\\])/gu, "\\$1")}"`;
-  if (typeof value === "number") return String(value);
+  if (typeof value === "number") {
+    if (isUnsafeNativeNumber(value)) throw new TypeError("PostgREST query cursor numbers must be lossless safe integers");
+    return String(value);
+  }
   return String(value);
 }
 
@@ -153,7 +158,7 @@ function parseValues(value: unknown, expected: number): readonly PostgrestCursor
   if (!Array.isArray(value) || value.length !== expected) throw new PostgrestCursorError("malformed");
   return value.map((item): PostgrestCursorValue => {
     if (item === null || typeof item === "string" || typeof item === "boolean") return item;
-    if (typeof item === "number" && Number.isFinite(item) && !Object.is(item, -0)) return item;
+    if (typeof item === "number" && Number.isFinite(item) && !Object.is(item, -0) && !isUnsafeNativeNumber(item)) return item;
     throw new PostgrestCursorError("malformed");
   });
 }
@@ -198,7 +203,7 @@ export function decodePostgrestCursor(
   if (encodedTextLength(cursor) > maxBytes) throw new PostgrestCursorError("malformed");
   let value: unknown;
   try {
-    value = JSON.parse(base64UrlDecode(cursor)) as unknown;
+    value = parseLosslessJson(base64UrlDecode(cursor));
   } catch (error) {
     if (error instanceof PostgrestCursorError) throw error;
     throw new PostgrestCursorError("malformed");

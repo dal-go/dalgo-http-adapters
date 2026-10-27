@@ -132,6 +132,17 @@ configured `idColumn` is shown per relation as `idColumn`, and
 `adapterQueryable` says whether this adapter can address the relation with the
 configured mapping. This is read-only discovery, not an administration API.
 
+Primary-key markers are collected from the complete declared property set, not
+from the bounded `fields` list, so a truncated field projection cannot turn a
+composite key into a false single-column key. `idColumn.uniqueStatus` separates
+three cases: `declared-primary-key` (the complete declared key is exactly that
+one column), `configured-contract` (the role's metadata declares no key, so the
+adapter relies on the caller's configured uniqueness contract), and
+`not-unique` (a different or composite key is declared, so the configured
+column alone cannot address one row, a stable keyset boundary, or a per-row
+write). `adapterQueryable` is `false` for `not-unique`; `readable` is separate
+provider authorization and never proves uniqueness or pagination stability.
+
 ## Supported DALgo surface
 
 | DALgo operation | PostgREST mapping |
@@ -154,8 +165,11 @@ returned them; no projection is silently applied.
 
 ## Cursor pagination
 
-`queryWithSignal()` returns `nextCursor` when a page is full. Pass that token
-back as `startAfter(...)` to continue. The cursor is opaque base64url and binds:
+`queryWithSignal()` returns `nextCursor` for every non-empty page, including a
+page shorter than the requested limit. A short page is not proof of
+end-of-data: PostgREST's `db-max-rows` (or a proxy) can cap every response below
+the requested `limit`. Pass the token back as `startAfter(...)` until a request
+returns an empty page. The cursor is opaque base64url and binds:
 endpoint, DALgo collection and exposed relation, configured profile and
 `idColumn`, filters, effective order, `select=*`, page size, and an optional
 non-secret `identityScope`. A cursor from another endpoint, relation, query,
@@ -179,9 +193,13 @@ do {
 The effective order always ends in the configured primary key, so a stable page
 has a deterministic tie-breaker even when the user order is not unique. The
 adapter uses keyset continuation (`or=(...)`), not a full scan and not
-`Prefer: count=exact`. A full page may advertise a possible next page; the
-follow-up request that finds no rows ends pagination honestly with
-`{ records: [] }` and no cursor.
+`Prefer: count=exact`. Every non-empty page, short or full, may advertise a
+possible next page; the follow-up request that finds no rows ends pagination
+honestly with `{ records: [] }` and no cursor. A consumer that needs a bounded
+total stops after its own budget or the empty page.
+
+Legacy `query()` keeps its one-request `limit`/`offset` contract and never
+returns a cursor; a short legacy page is returned as-is.
 
 Two limits are intentionally different:
 
@@ -266,6 +284,18 @@ bounds.
   PostgreSQL-array containment/overlap; relation and field names are limited to
   simple SQL identifiers. No resource embedding, JSON paths, full-text search,
   aggregates, RPC, or server management API is exposed.
+- Filters on the reserved PostgREST query fields `select`, `order`, `limit`,
+  `offset`, `or` and `and` are refused before HTTP, as is a configured
+  `idColumn` with one of those names. Appending such a filter would be
+  overwritten by, or joined ambiguously with, an adapter control parameter and
+  silently drop a predicate instead of filtering it.
+- JSON numbers are checked against the raw response text before `JSON.parse`.
+  An integer (or integer-valued decimal/exponent) outside the lossless
+  JavaScript safe range is refused with a redacted error before any record or
+  cursor is emitted, rather than silently rounded. Outgoing filter, record and
+  cursor values are checked the same way. This prevents an ID such as
+  `9007199254740993` from becoming `9007199254740992` in data or a cursor
+  boundary.
 - `set` is full replacement, not merge-upsert: the supplied DALgo value is the
   complete replacement record (apart from the adapter-owned ID). Fields omitted
   from it are not sent for merge. PostgREST must expose a relation for which its
@@ -282,8 +312,12 @@ bounds.
   cardinality. Cancellation is best-effort and never awaited, so a hostile or
   broken stream cannot outlive the request deadline.
 - Cursor pagination assumes the configured primary-key column is non-null and
-  unique. A relation without that declared key can still be read by key and
-  offset, but cursor pagination is not a promise of stable provider ordering.
+  unique. Discovery reports whether that is declared (`declared-primary-key`)
+  or relies on the configured contract (`configured-contract`). When metadata
+  declares a different or composite key, `uniqueStatus` is `not-unique` and
+  `adapterQueryable` is false: the adapter does not promise a unique key or
+  stable cursor boundary. A relation without a declared key can still be read
+  by key and offset, but that is the caller's uniqueness contract.
 - Discovery reflects the OpenAPI document for the current role at the time of
   the request. It can lag a schema-cache reload, and it is not a grant of read
   access to every advertised relation.
@@ -302,22 +336,31 @@ bounds.
 
 `pnpm check` runs ESLint, deterministic Vitest HTTP-contract tests, declaration
 build, and type checks of the minimal example. The unit suite injects `fetch`
-for protocol/error/bound coverage. A separate browser-transport test instantiates
-the real `PostgrestDatabase` and uses the real global `fetch` against a local
-origin with an exact-origin CORS allowlist, synthetic scoped bearer/apikey
-headers, preflight and actual GET requests; it does not intercept responses from
-a vendor SDK.
+for protocol/error/bound coverage. `test/node-http-transport.test.ts` is a Node
+HTTP contract test only: Node does not enforce browser CORS and the test sets
+`Origin` manually, so it does not prove browser behaviour.
+
+`pnpm test:browser` owns a second disposable Compose project named
+`datatug-postgrest-ts-r2-<run>` and a unique loopback static origin. It builds
+the fixture page with esbuild, launches real headless Chromium through
+Playwright, and has the browser bundle use the real `PostgrestDatabase` and
+global `fetch` against that real PostgREST service. The service allows exactly
+the static page origin. The suite proves successful discovery, native rows and
+multi-page continuation across server-capped short pages, a redacted bad
+credential, an actual browser CORS refusal from a different origin, and caller
+abort. It does not intercept any PostgREST response. It removes only its own
+Compose project and fixture directory.
 
 `pnpm test:real` owns one disposable Docker Compose project named
 `datatug-postgrest-ts-<run>`, uses cached `postgrest/postgrest:v16.5` and
 `postgres:17` images, random loopback host ports, a synthetic JWT role, a
-read-only role, native seeded rows and exact-origin CORS. It runs the real
-PostgREST discovery, small-page cursor journey, changed/foreign cursor, bad-auth,
-read-only denial, no-relations and controlled-header tests, then removes only
-its own project and temporary files. It does not prove a hosted Supabase
-deployment, its RLS policies, gateway, or DataTug's actual connection form and
-query journey; those remain separate acceptance gates for the owning
-application.
+read-only role, native seeded rows, `db-max-rows=2` below the requested page
+size, and exact-origin CORS. It runs the real PostgREST discovery, short-page
+cursor journey, changed/foreign cursor, bad-auth, read-only denial, no-relations
+and controlled-header tests, then removes only its own project and temporary
+files. Neither real-service suite proves a hosted Supabase deployment, its RLS
+policies, a gateway, or DataTug's actual connection form and UI journey; those
+remain separate acceptance gates for the owning application.
 
 `pnpm check:packed-consumer` (repository root) additionally packs the published
 artifacts into a fresh directory outside the repository, installs only those

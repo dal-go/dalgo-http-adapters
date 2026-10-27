@@ -117,6 +117,56 @@ describe.skipIf(baseUrl === undefined || jwt === undefined)("real PostgREST v16 
     expect(empty).toEqual({ records: [] });
   });
 
+  it("continues every short page when the server cap is below the requested page size", async () => {
+    // The fixture sets PGRST_DB_MAX_ROWS=2; request 5 to force short non-empty
+    // pages and prove they are not treated as end-of-data.
+    const db = database({ maxQueryLimit: 5 });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let requests = 0;
+    let nonEmptyPages = 0;
+    let sawShortPage = false;
+    for (;;) {
+      const builder = items.query().orderBy("priority").limit(5);
+      const page = await db.queryWithSignal(
+        cursor === undefined ? builder.build() : builder.startAfter(cursor).build(),
+        new AbortController().signal,
+      );
+      requests += 1;
+      expect(page.records.length).toBeLessThanOrEqual(2);
+      if (page.records.length > 0) {
+        nonEmptyPages += 1;
+        if (page.records.length < 5) sawShortPage = true;
+      }
+      for (const record of page.records) {
+        expect(typeof record.data.priority).toBe("number");
+      }
+      seen.push(...page.records.map((record) => String(record.key.id)));
+      cursor = page.nextCursor?.values[0] as string | undefined;
+      if (cursor === undefined) {
+        // The only completion signal is the empty page after all short pages.
+        expect(page).toEqual({ records: [] });
+        break;
+      }
+      expect(requests).toBeLessThan(8);
+    }
+    expect(sawShortPage).toBe(true);
+    expect(nonEmptyPages).toBe(4);
+    expect(requests).toBe(5);
+    expect(seen).toHaveLength(7);
+    expect(new Set(seen).size).toBe(7);
+    // Keyset order is priority ascending with the ID tie-breaker.
+    expect(seen).toEqual(["i3", "i6", "i1", "i4", "i7", "i2", "i5"]);
+
+    // Legacy query/offset stays a single request with no cursor.
+    const legacy = await db.query(items.query().orderBy("priority").limit(3).offset(2).build());
+    expect(legacy.records.length).toBe(2);
+    expect(legacy.nextCursor).toBeUndefined();
+    // Legacy query keeps its exact one-request limit/offset contract and does
+    // not add a tie-breaker, so only the requested priority is asserted.
+    expect(legacy.records.map((record) => record.data.priority)).toEqual([2, 2]);
+  });
+
   it("continues past nullable order keys against the real database", async () => {
     const db = database({ maxQueryLimit: 2 });
     const seen: string[] = [];

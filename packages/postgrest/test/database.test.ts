@@ -99,6 +99,72 @@ describe("PostgrestDatabase", () => {
     expect(url).toContain("offset=2");
   });
 
+  it("refuses filters on reserved PostgREST query fields before HTTP", async () => {
+    const { database: db, fetch } = database();
+    const items = collection<{ value: string }>("items");
+    const queries = [
+      items.query().where("select", "==", "x").build(),
+      items.query().where("order", ">", "x").build(),
+      items.query().where("limit", "in", ["x"]).build(),
+      items.query().where("offset", "!=", "x").build(),
+      items.query().where("or", "==", "x").build(),
+      items.query().where("and", "in", ["x", "y"]).build(),
+    ];
+    for (const query of queries) {
+      await expect(db.query(query)).rejects.toMatchObject({
+        name: "UnsupportedError",
+        capability: expect.stringContaining("reserved query field"),
+      });
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps the actual URL for supported equality, range and IN filters", async () => {
+    const { database: db, fetch } = database({ maxQueryLimit: 10 });
+    const items = collection<{ title: string; priority: number }>("items");
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.query(
+      items.query()
+        .where("title", "==", "Alpha")
+        .where("priority", ">=", 2)
+        .where(DOCUMENT_ID, "in", ["a", "b"])
+        .limit(2)
+        .build(),
+    );
+    const url = new URL(fetch.mock.calls[0]?.[0].toString() ?? "");
+    expect(url.pathname).toBe("/rest/v1/items");
+    expect(url.searchParams.getAll("select")).toEqual(["*"]);
+    expect(url.searchParams.getAll("title")).toEqual(["eq.\"Alpha\""]);
+    expect(url.searchParams.getAll("priority")).toEqual(["gte.2"]);
+    expect(url.searchParams.getAll("id")).toEqual(["in.(\"a\",\"b\")"]);
+    expect(url.searchParams.getAll("limit")).toEqual(["2"]);
+    expect(url.searchParams.get("offset")).toBeNull();
+    expect(url.searchParams.get("or")).toBeNull();
+  });
+
+  it("refuses a reserved query field as the configured ID column", () => {
+    expect(() => new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      idColumn: "limit",
+    })).toThrow("reserved query field");
+    expect(() => new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      idColumn: "order",
+    })).toThrow("reserved query field");
+  });
+
+  it("refuses unsafe native integers in outgoing filters and record data before HTTP", async () => {
+    const { database: db, fetch } = database();
+    const items = collection<{ priority: number }>("items");
+    await expect(db.query(items.query().where("priority", "==", 2 ** 53).build()))
+      .rejects.toThrow("lossless safe integers");
+    await expect(db.insert(key("items", "unsafe"), { priority: 2 ** 53 }))
+      .rejects.toThrow("lossless safe integers");
+    await expect(db.insert(key("items", 2 ** 53), { priority: 1 }))
+      .rejects.toThrow("lossless safe integer");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("rejects unsupported hierarchical queries, cursors, bad filter inputs, and callback transactions", async () => {
     const { database: db, fetch } = database();
     const items = collection<{ done: boolean }>("items");
