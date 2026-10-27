@@ -6,4 +6,10 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   { rules: { "@typescript-eslint/no-explicit-any": "error" } },
+  {
+    files: ["scripts/*.mjs"],
+    languageOptions: {
+      globals: { console: "readonly", process: "readonly", URL: "readonly", window: "readonly" },
+    },
+  },
 );

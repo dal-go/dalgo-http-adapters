@@ -186,6 +186,16 @@ try {
   assert.match(postDeclaration, /from "@dalgo\/core"/u);
   assert.ok(!postDeclaration.includes("@dal-go/dalgo"), "packed PostgREST declarations reference the legacy package");
 
+  const couchIndexDeclaration = readFileSync(join(packageRoots.couch, "dist", "index.d.ts"), "utf8");
+  const nativeDeclaration = readFileSync(join(packageRoots.couch, "dist", "native.d.ts"), "utf8");
+  assert.match(couchIndexDeclaration, /NativeCouchDbDatabase/u);
+  assert.match(couchIndexDeclaration, /NATIVE_COUCHDB_READ_CAPABILITIES/u);
+  assert.match(nativeDeclaration, /export declare class NativeCouchDbDatabase implements Database/u);
+  assert.match(nativeDeclaration, /readonly readOnly: true/u);
+  assert.match(nativeDeclaration, /NativeCouchDbQuery<T> extends StructuredQuery<T>/u);
+  assert.match(nativeDeclaration, /from "@dalgo\/core"/u);
+  assert.ok(!legacySpecifier.test(nativeDeclaration), "packed native CouchDB declarations reference the legacy package");
+
   run(join(consumer, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], { cwd: consumer });
 
   copyFileSync(
@@ -194,8 +204,21 @@ try {
   );
   const runtime = JSON.parse(run(process.execPath, ["runtime.mjs"], { cwd: consumer }).trim());
   assert.deepEqual(runtime, {
-    postgrest: { queryWithSignal: "function", runReadwriteTransaction: "function" },
+    postgrest: {
+      queryWithSignal: "function",
+      discover: "function",
+      testConnection: "function",
+      runReadwriteTransaction: "function",
+    },
     couch: { queryWithSignal: "function", runReadwriteTransaction: "function" },
+    native: {
+      readOnly: true,
+      queryWithSignal: "function",
+      testConnection: "function",
+      describe: "function",
+      insertRefused: true,
+      transactionRefused: true,
+    },
   });
 
   const tree = JSON.parse(run("npm", [
