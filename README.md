@@ -55,6 +55,20 @@ pnpm check
 pnpm --filter @dalgo/firestore check
 ```
 
+Two consumer gates install the browser adapters outside the workspace instead of
+trusting the workspace links:
+
+```sh
+pnpm check:packed-consumer      # packs tarballs and installs them in a clean npm consumer
+pnpm check:git-subdir-consumer  # installs them as pnpm Git subdirectory dependencies
+```
+
+`check:git-subdir-consumer` also runs in CI. It rebuilds the adapters from a
+temporary Git repository, so each fetched workspace prepares
+`@dalgo/adapter-runtime` before type-checking the adapters that depend on it;
+`DALGO_ADAPTER_GIT_SUBDIR_REF=github:dal-go/dalgo-http-adapters#<sha>` points the
+same assertions at a pushed commit.
+
 Firestore, IndexedDB and BigQuery are configured as public packages under
 the `@dalgo` npm scope. Public manifests and source versions do not establish
 that a version is available on npm. The remaining adapters are private workspace

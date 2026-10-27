@@ -27,23 +27,40 @@ are not claimed by the package tests.
 ## Install
 
 `@dalgo/core` and `@dalgo/adapter-runtime` are peers. This package is not yet
-published to npm. First-wave consumers can pin the reviewed monorepo commit as a
-pnpm subdirectory dependency, the same pattern used by `@dalgo/sqlite-wasm`:
+published to npm. First-wave consumers pin a reviewed commit of this monorepo as
+a pnpm Git subdirectory dependency, the same pattern used by
+`@dalgo/sqlite-wasm`.
+
+Each `github:` subdirectory dependency is fetched as its own workspace copy, and
+only that copy is prepared. The package's `prepack` therefore builds
+`@dalgo/adapter-runtime` from the same commit before type-checking itself; a
+separate prebuilt runtime tarball or a local workspace link is not required.
+Substitute the full 40-character SHA of the reviewed merged commit for
+`<merged-sha>` in every place below:
 
 ```jsonc
 // package.json
 "@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559",
-"@dalgo/adapter-runtime": "github:dal-go/dalgo-http-adapters#<sha>&path:/packages/adapter-runtime",
-"@dal-go/dalgo2couchdb": "github:dal-go/dalgo-http-adapters#<sha>&path:/packages/couchdb"
+"@dalgo/adapter-runtime": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/adapter-runtime",
+"@dal-go/dalgo2couchdb": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/couchdb"
 ```
 
 ```yaml
-# pnpm-workspace.yaml: GitHub tarballs build themselves on install
+# pnpm-workspace.yaml: pnpm blocks build scripts until each exact package is approved
 allowBuilds:
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559': true
-  '@dalgo/adapter-runtime@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<sha>#path:/packages/adapter-runtime': true
-  '@dal-go/dalgo2couchdb@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<sha>#path:/packages/couchdb': true
+  '@dalgo/adapter-runtime@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/adapter-runtime': true
+  '@dal-go/dalgo2couchdb@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/couchdb': true
 ```
+
+If an entry is missing, pnpm names the exact key it needs; approve only the
+reviewed dependency, never a wildcard. From this repository,
+`pnpm check:git-subdir-consumer` installs these three packages from a temporary
+Git repository in a clean consumer and requires a strict typecheck, a dynamic
+import of every entry point, exactly one `@dalgo/core` `0.7.4` instance, no
+`@dal-go/dalgo`, and no local links. Run the identical check against a pushed
+commit with
+`DALGO_ADAPTER_GIT_SUBDIR_REF=github:dal-go/dalgo-http-adapters#<sha> pnpm check:git-subdir-consumer`.
 
 The `@dalgo/core` peer range is `>=0.7.4 <0.9.0`; the workspace tests against the
 exact `0.7.4` commit the web UI pins, so the browser contains one `Key`/query

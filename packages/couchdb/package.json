@@ -20,7 +20,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "eslint . && vitest run && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json",
     "lint": "eslint .",
-    "prepack": "npm run build",
+    "prepack": "npm --prefix ../adapter-runtime run build && npm run build",
     "test": "vitest run"
   },
   "repository": {
