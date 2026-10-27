@@ -1,3 +1,4 @@
+export { POSTGREST_READ_CAPABILITIES, type PostgrestReadCapabilities } from "./capabilities.js";
 export {
   PostgrestDatabase,
   PostgrestHttpError,

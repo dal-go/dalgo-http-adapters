@@ -1,0 +1,86 @@
+{
+  "format": "dalgo-adapter-conformance/1",
+  "scope": "Language-neutral adapter contract for cancellation, one page, value preservation and explicit refusals. This file documents expectations only; it is not proof that any adapter or provider is implemented or tested against a live service.",
+  "cancellation": {
+    "rule": "A caller abort stops header, network and body work, rejects with a redacted cancellation error, and never returns a late page. The adapter's own deadline is reported separately from a caller abort. A hostile cancel() implementation is not awaited.",
+    "cases": [
+      {
+        "id": "pre-abort",
+        "phase": "before-headers",
+        "expect": { "outcome": "cancelled", "reason": "caller", "headersCalls": 0, "requests": 0 }
+      },
+      {
+        "id": "caller-abort-pending-headers",
+        "phase": "headers-pending",
+        "expect": { "outcome": "cancelled", "reason": "caller", "requests": 0 }
+      },
+      {
+        "id": "deadline-pending-headers",
+        "phase": "headers-pending",
+        "expect": { "outcome": "cancelled", "reason": "deadline", "requests": 0 }
+      },
+      {
+        "id": "caller-abort-in-flight-fetch",
+        "phase": "fetch-pending",
+        "expect": { "outcome": "cancelled", "reason": "caller", "requests": 1, "lateResponse": "discarded" }
+      },
+      {
+        "id": "caller-abort-hanging-body",
+        "phase": "body-pending",
+        "expect": { "outcome": "cancelled", "reason": "caller", "requests": 1, "readerCancelled": true }
+      },
+      {
+        "id": "deadline-hanging-body",
+        "phase": "body-pending",
+        "expect": { "outcome": "cancelled", "reason": "deadline", "requests": 1, "readerCancelled": true }
+      },
+      {
+        "id": "abort-before-next-page",
+        "phase": "between-pages",
+        "expect": { "outcome": "cancelled", "reason": "caller", "additionalRequests": 0 }
+      },
+      {
+        "id": "redacted-transport-failure",
+        "phase": "fetch-rejects",
+        "expect": { "outcome": "redacted-error", "secretAbsent": true }
+      }
+    ]
+  },
+  "page": {
+    "shape": {
+      "records": [
+        {
+          "key": { "collection": "items", "id": "milk" },
+          "exists": true,
+          "data": {},
+          "metadata": {}
+        }
+      ],
+      "nextCursor": { "values": ["opaque-adapter-cursor"] }
+    },
+    "cursorRule": "Return nextCursor only when another page may exist. It is opaque and adapter-bound: pass it back unchanged, never construct or reuse it under a different query, endpoint or identity.",
+    "types": [
+      { "name": "string", "json": "milk" },
+      { "name": "safe-integer", "json": 42 },
+      { "name": "boolean", "json": false },
+      { "name": "null", "json": null },
+      { "name": "object", "json": { "nested": true } },
+      { "name": "array", "json": [1, "two", false] }
+    ],
+    "typeRule": "Preserve the JSON value the provider returns without stringifying numbers or coercing null. 64-bit integers, decimals, dates, binary values and vendor-specific types require an adapter-specific documented conversion."
+  },
+  "refusals": {
+    "rule": "When an adapter's capability descriptor classifies a feature as unsupported, refuse before any provider request with a typed unsupported error. Never silently ignore, emulate with an unbounded scan, or mislabel a provider search DSL as another engine.",
+    "features": [
+      "projection",
+      "joins",
+      "aggregation",
+      "grouping",
+      "subquery",
+      "fulltext",
+      "timeseries",
+      "native",
+      "discovery"
+    ]
+  }
+}
