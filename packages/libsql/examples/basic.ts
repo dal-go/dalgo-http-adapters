@@ -1,4 +1,5 @@
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
+
 import { LibSQLDatabase } from "../src/index.js";
 
 interface Item { readonly title: string; readonly rank: number; }
@@ -17,7 +18,7 @@ const database = new LibSQLDatabase({
 });
 
 const items = collection<Item>("items");
-const page = await database.query(items.query().orderBy("rank").limit(25).build());
+const page = await database.queryWithSignal(items.query().orderBy("rank").limit(25).build(), new AbortController().signal);
 await database.set(items.key("starter"), { title: "Starter", rank: page.records.length });
 
 async function currentDatabaseToken(): Promise<string> { return "replace-with-a-short-lived-token"; }

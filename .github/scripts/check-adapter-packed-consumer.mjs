@@ -81,13 +81,14 @@ try {
   run("pnpm", [
     "--filter", "@dalgo/adapter-runtime",
     "--filter", "@dal-go/dalgo2couchdb",
+    "--filter", "@dal-go/dalgo2libsql",
     "--filter", "@dal-go/dalgo2postgrest",
     "pack",
     "--pack-destination", tarballs,
   ]);
 
   const packFiles = readdirSync(tarballs).filter((name) => name.endsWith(".tgz")).sort();
-  assert.equal(packFiles.length, 3, "expected exactly three packed adapter tarballs");
+  assert.equal(packFiles.length, 4, "expected exactly four packed adapter tarballs");
   const tarball = (prefix) => {
     const matches = packFiles.filter((name) => name.startsWith(prefix));
     assert.equal(matches.length, 1, `expected one tarball for ${prefix}`);
@@ -128,6 +129,7 @@ try {
     "--save-exact",
     tarball("dalgo-adapter-runtime-"),
     tarball("dal-go-dalgo2couchdb-"),
+    tarball("dal-go-dalgo2libsql-"),
     tarball("dal-go-dalgo2postgrest-"),
     CORE_SPEC,
     TYPESCRIPT_SPEC,
@@ -156,7 +158,7 @@ try {
   assert.equal(coreManifest.name, "@dalgo/core");
   assert.equal(coreManifest.version, "0.7.4");
 
-  for (const name of ["postgrest", "couchdb", "adapter-runtime"]) {
+  for (const name of ["postgrest", "couchdb", "libsql", "adapter-runtime"]) {
     for (const file of walk(join(repository, "packages", name, "src"))) {
       assert.ok(!legacySpecifier.test(readFileSync(file, "utf8")), `${file} references @dal-go/dalgo`);
     }
@@ -165,6 +167,7 @@ try {
   const packageRoots = {
     postgrest: join(consumer, "node_modules", "@dal-go", "dalgo2postgrest"),
     couch: join(consumer, "node_modules", "@dal-go", "dalgo2couchdb"),
+    libsql: join(consumer, "node_modules", "@dal-go", "dalgo2libsql"),
     runtime: join(consumer, "node_modules", "@dalgo", "adapter-runtime"),
   };
   for (const [label, root] of Object.entries(packageRoots)) {
@@ -196,6 +199,18 @@ try {
   assert.match(nativeDeclaration, /from "@dalgo\/core"/u);
   assert.ok(!legacySpecifier.test(nativeDeclaration), "packed native CouchDB declarations reference the legacy package");
 
+  const libsqlIndexDeclaration = readFileSync(join(packageRoots.libsql, "dist", "index.d.ts"), "utf8");
+  const libsqlNativeDeclaration = readFileSync(join(packageRoots.libsql, "dist", "native.d.ts"), "utf8");
+  const libsqlCapabilitiesDeclaration = readFileSync(join(packageRoots.libsql, "dist", "capabilities.d.ts"), "utf8");
+  assert.match(libsqlIndexDeclaration, /NativeLibSQLDatabase/u);
+  assert.match(libsqlIndexDeclaration, /NATIVE_LIBSQL_READ_CAPABILITIES/u);
+  assert.match(libsqlIndexDeclaration, /LIBSQL_READ_CAPABILITIES/u);
+  assert.match(libsqlNativeDeclaration, /export declare class NativeLibSQLDatabase implements Database/u);
+  assert.match(libsqlNativeDeclaration, /readonly readOnly: true/u);
+  assert.match(libsqlNativeDeclaration, /from "@dalgo\/core"/u);
+  assert.match(libsqlCapabilitiesDeclaration, /storage: "native-rows"/u);
+  assert.ok(!legacySpecifier.test(libsqlNativeDeclaration), "packed native libSQL declarations reference the legacy package");
+
   run(join(consumer, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], { cwd: consumer });
 
   copyFileSync(
@@ -204,6 +219,8 @@ try {
   );
   const runtime = JSON.parse(run(process.execPath, ["runtime.mjs"], { cwd: consumer }).trim());
   assert.deepEqual(runtime, {
+    core: { collection: "function", key: "function" },
+    runtime: { isCancellableQueryExecutor: "function" },
     postgrest: {
       queryWithSignal: "function",
       discover: "function",
@@ -211,6 +228,21 @@ try {
       runReadwriteTransaction: "function",
     },
     couch: { queryWithSignal: "function", runReadwriteTransaction: "function" },
+    libsql: {
+      queryWithSignal: "function",
+      discover: "function",
+      testConnection: "function",
+      managedQueryWithSignal: "function",
+    },
+    nativeLibsql: {
+      readOnly: true,
+      queryWithSignal: "function",
+      discover: "function",
+      testConnection: "function",
+      describe: "function",
+      insertRefused: true,
+      transactionRefused: true,
+    },
     native: {
       readOnly: true,
       queryWithSignal: "function",
@@ -228,6 +260,7 @@ try {
     "@dalgo/core",
     "@dalgo/adapter-runtime",
     "@dal-go/dalgo2couchdb",
+    "@dal-go/dalgo2libsql",
     "@dal-go/dalgo2postgrest",
   ], { cwd: consumer }));
   assertNoLegacyTree(tree, "installed npm");

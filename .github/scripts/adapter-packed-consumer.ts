@@ -11,6 +11,18 @@ import {
   type NativeCouchDbQuery,
 } from "@dal-go/dalgo2couchdb";
 import {
+  LIBSQL_READ_CAPABILITIES,
+  LibSQLCursorError,
+  LibSQLDatabase,
+  LibSQLHttpError,
+  NATIVE_LIBSQL_READ_CAPABILITIES,
+  NativeLibSQLDatabase,
+  type LibSQLDatabaseOptions,
+  type LibSQLDiscovery,
+  type NativeLibSQLDatabaseOptions,
+  type NativeLibSQLDescribe,
+} from "@dal-go/dalgo2libsql";
+import {
   POSTGREST_READ_CAPABILITIES,
   PostgrestDatabase,
   PostgrestRequestError,
@@ -55,21 +67,55 @@ const nativeOptions: NativeCouchDbDatabaseOptions = {
     ],
   }],
 };
+const libsqlOptions: LibSQLDatabaseOptions = {
+  serverUrl: "https://libsql.example.test",
+  maxRows: 10,
+  tables: {
+    items: {
+      table: "items",
+      uniqueKey: true,
+      keyColumn: { column: "id", nullable: false },
+      columns: { title: { column: "title", nullable: false } },
+    },
+  },
+};
+const nativeLibsqlOptions: NativeLibSQLDatabaseOptions = {
+  serverUrl: "https://libsql.example.test",
+  identityScope: "consumer",
+  maxQueryLimit: 10,
+  tables: {
+    items: {
+      table: "items",
+      uniqueKey: true,
+      key: { column: "id", type: "integer" },
+      columns: { title: { column: "title", nullable: false } },
+    },
+  },
+};
 const postgrest = new PostgrestDatabase(postgrestOptions);
 const couch = new CouchDbDatabase(couchOptions);
 const nativeCouch = new NativeCouchDbDatabase(nativeOptions);
+const libsql = new LibSQLDatabase(libsqlOptions);
+const nativeLibsql = new NativeLibSQLDatabase(nativeLibsqlOptions);
 
 // The managed adapters still satisfy the core Database/WriteSession identity.
 const postgrestDatabase: Database & WriteSession = postgrest;
 const couchDatabase: Database & WriteSession = couch;
 const nativeDatabase: Database = nativeCouch;
+const libsqlDatabase: Database & WriteSession = libsql;
+const nativeLibsqlDatabase: Database = nativeLibsql;
 const nativeStorage: "native-rows" = NATIVE_COUCHDB_READ_CAPABILITIES.storage;
+const libsqlStorage: "native-rows" = NATIVE_LIBSQL_READ_CAPABILITIES.storage;
+const nativeLibsqlStorage: "native-rows" = LIBSQL_READ_CAPABILITIES.storage;
 
 // The additive cancellable surface is assignable to the shared runtime contract.
 const postgrestCancellable: CancellableQueryExecutor = postgrest;
 const couchCancellable: CancellableQueryExecutor = couch;
+const libsqlCancellable: CancellableQueryExecutor = libsql;
+const nativeLibsqlCancellable: CancellableQueryExecutor = nativeLibsql;
 
 const items = collection<{ done: boolean }>("items");
+const numericItems = collection<{ title: string }, number>("items");
 const query: StructuredQuery<{ done: boolean }> = items.query().limit(1).build();
 const postPage: Promise<QueryPage<{ done: boolean }>> = postgrest.queryWithSignal(query, signal);
 const couchPage: Promise<QueryPage<{ done: boolean }>> = couch.queryWithSignal(query, signal);
@@ -79,21 +125,37 @@ const nativeConnection: Promise<NativeCouchDbConnectionTest> = nativeCouch.testC
 const nativeDescription: Promise<NativeCouchDbDescribe> = nativeCouch.describe(signal);
 const postDiscovery: Promise<PostgrestDiscovery> = postgrest.discover(signal);
 const postConnection: Promise<PostgrestConnectionStatus> = postgrest.testConnection(signal);
+const libsqlPage: Promise<QueryPage<{ done: boolean }>> = libsql.queryWithSignal(query, signal);
+const libsqlDiscovery: Promise<LibSQLDiscovery> = libsql.discover(signal);
+const libsqlConnection = libsql.testConnection(signal);
+const nativeLibsqlPage: Promise<QueryPage<{ done: boolean }>> = nativeLibsql.queryWithSignal(query, signal);
+const nativeLibsqlDiscovery: Promise<LibSQLDiscovery> = nativeLibsql.discover(signal);
+const nativeLibsqlConnection = nativeLibsql.testConnection(signal);
+const nativeLibsqlDescription: Promise<NativeLibSQLDescribe> = nativeLibsql.describe(signal);
+const numericKey: number = numericItems.key(7).id;
 
 // The callback parameter must be the modern @dalgo/core type, not a legacy
 // @dal-go/dalgo type and not `any`.
 const callback: (transaction: ReadwriteTransaction) => Promise<string> = async (transaction) => transaction.constructor.name;
 const postTransaction: Promise<string> = postgrest.runReadwriteTransaction(callback);
 const couchTransaction: Promise<string> = couch.runReadwriteTransaction(callback);
+const libsqlTransaction: Promise<string> = libsql.runReadwriteTransaction(callback);
+const nativeLibsqlTransaction: Promise<string> = nativeLibsql.runReadwriteTransaction(callback);
 
 void postgrestDatabase.get(key("items", "milk"));
 void couchDatabase.get(key("items", "milk"));
 void postgrestDatabase;
 void couchDatabase;
 void nativeDatabase;
+void libsqlDatabase;
+void nativeLibsqlDatabase;
 void nativeStorage;
+void libsqlStorage;
+void nativeLibsqlStorage;
 void postgrestCancellable;
 void couchCancellable;
+void libsqlCancellable;
+void nativeLibsqlCancellable;
 void postPage;
 void couchPage;
 void nativePage;
@@ -101,16 +163,32 @@ void nativeConnection;
 void nativeDescription;
 void postDiscovery;
 void postConnection;
+void libsqlPage;
+void libsqlDiscovery;
+void libsqlConnection;
+void nativeLibsqlPage;
+void nativeLibsqlDiscovery;
+void nativeLibsqlConnection;
+void nativeLibsqlDescription;
+void numericKey;
 void postTransaction;
 void couchTransaction;
+void libsqlTransaction;
+void nativeLibsqlTransaction;
 void PostgrestRequestError;
 void CouchDbRequestError;
+void LibSQLHttpError;
+void LibSQLCursorError;
 void POSTGREST_READ_CAPABILITIES;
 void COUCHDB_READ_CAPABILITIES;
 void NATIVE_COUCHDB_READ_CAPABILITIES;
+void LIBSQL_READ_CAPABILITIES;
+void NATIVE_LIBSQL_READ_CAPABILITIES;
 
 // Runtime narrowing keeps the same contract after declaration packing.
 export const cancellable = {
   postgrest: isCancellableQueryExecutor(postgrest),
   couch: isCancellableQueryExecutor(couch),
+  libsql: isCancellableQueryExecutor(libsql),
+  nativeLibsql: isCancellableQueryExecutor(nativeLibsql),
 };

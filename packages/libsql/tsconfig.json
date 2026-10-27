@@ -4,10 +4,13 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true
+    "declaration": true,
+    "sourceMap": true,
+    "outDir": "dist"
   },
-  "include": ["src", "test", "examples"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }
