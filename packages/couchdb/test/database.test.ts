@@ -24,6 +24,26 @@ describe("CouchDbDatabase", () => {
     expect(headers).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves safe raw-wire numbers and refuses an unsafe integer instead of rounding", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(new Response(
+      `{"_id":"WyJpdGVtcyIsIm1pbGsiXQ","_rev":"1-a","__dalgo_collection":"items","__dalgo_id":"milk","data":{"max":9007199254740991,"fraction":1.25}}`,
+      { status: 200 },
+    ));
+    await expect(db.get(key("items", "milk"))).resolves.toMatchObject({
+      data: { max: Number.MAX_SAFE_INTEGER, fraction: 1.25 },
+    });
+
+    fetch.mockResolvedValueOnce(new Response(
+      `{"_id":"WyJpdGVtcyIsIm1pbGsiXQ","_rev":"1-a","__dalgo_collection":"items","__dalgo_id":"milk","data":{"big":9007199254740993}}`,
+      { status: 200 },
+    ));
+    const error = await db.get(key("items", "milk")).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(TypeError);
+    expect(String(error)).toContain("safe integer");
+    expect(String(error)).not.toContain("9007");
+  });
+
   it("creates explicit _id documents and maps a create conflict", async () => {
     const { database: db, fetch } = database();
     fetch.mockResolvedValueOnce(response(201, { ok: true, id: "x", rev: "1-a" }));

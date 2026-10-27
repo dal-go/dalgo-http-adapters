@@ -1,9 +1,4 @@
-import {
-  QueryCancelledError,
-  cancelQuietly,
-  createAbortScope,
-  raceAbort,
-} from "@dalgo/adapter-runtime";
+import { QueryCancelledError } from "@dalgo/adapter-runtime";
 import {
   AlreadyExistsError,
   DOCUMENT_ID,
@@ -22,16 +17,23 @@ import {
   type WriteSession,
 } from "@dalgo/core";
 
+import {
+  CouchDbHttpError,
+  CouchDbTransport,
+  assertJson,
+  isObject,
+  isPlainObject,
+  positive,
+  type CouchDbFetch,
+  type CouchDbHeaderProvider,
+} from "./transport.js";
+
+export { CouchDbHttpError, CouchDbRequestError } from "./transport.js";
+export type { CouchDbFetch, CouchDbHeaders, CouchDbHeaderProvider } from "./transport.js";
+
 const DEFAULT_MAX_GET_MANY = 100;
 const DEFAULT_MAX_PARALLEL_READS = 8;
 const DEFAULT_MAX_QUERY_LIMIT = 100;
-const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
-const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
-const DEFAULT_TIMEOUT_MS = 15_000;
-
-export type CouchDbFetch = typeof globalThis.fetch;
-export type CouchDbHeaders = Readonly<Record<string, string>>;
-export type CouchDbHeaderProvider = CouchDbHeaders | (() => CouchDbHeaders | Promise<CouchDbHeaders>);
 
 export interface CouchDbDatabaseOptions {
   /** Existing CouchDB database, as an HTTPS URL or loopback HTTP URL. */
@@ -58,33 +60,6 @@ interface CouchDocument {
 interface MangoResponse { readonly docs: readonly CouchDocument[]; readonly bookmark?: string; }
 interface CouchCursor { readonly adapter: "@dal-go/dalgo2couchdb"; readonly version: 1; readonly databaseUrl: string; readonly bookmark: string; }
 
-export class CouchDbHttpError extends Error {
-  public readonly status: number;
-  public constructor(status: number) {
-    super(`CouchDB request failed with HTTP ${String(status)}`);
-    this.name = "CouchDbHttpError";
-    this.status = status;
-  }
-}
-
-/** A redacted failure while obtaining headers, following a request, or consuming a response. */
-export class CouchDbRequestError extends Error {
-  public constructor() {
-    super("CouchDB request could not be completed");
-    this.name = "CouchDbRequestError";
-  }
-}
-
-/**
- * Adapter-owned response bounds failure. The message is a fixed diagnostic and
- * safe to expose; arbitrary transport RangeErrors are not preserved.
- */
-class CouchDbResponseSizeError extends RangeError {
-  public constructor() {
-    super("CouchDB response exceeds maxResponseBytes");
-  }
-}
-
 /** A 409 returned while applying an explicit document revision. */
 export class CouchDbConflictError extends Error {
   public readonly key: Key;
@@ -95,33 +70,7 @@ export class CouchDbConflictError extends Error {
   }
 }
 
-function positive(value: number | undefined, fallback: number, field: string, maximum = 16_777_216): number {
-  const result = value ?? fallback;
-  if (!Number.isSafeInteger(result) || result < 1 || result > maximum) throw new TypeError(`${field} must be a safe integer from 1 to ${String(maximum)}`);
-  return result;
-}
-
 function codecOrIdentity<T>(codec?: Codec<T>): Codec<T> { return (codec ?? identityCodec) as Codec<T>; }
-function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }
-function isObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return isObject(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-
-function assertJson(value: unknown, seen = new Set<object>()): void {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError("CouchDB JSON numbers must be finite and not -0");
-    return;
-  }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) throw new TypeError("CouchDB JSON must not contain cycles");
-    seen.add(value); for (const entry of value) assertJson(entry, seen); seen.delete(value); return;
-  }
-  if (!isPlainObject(value)) throw new TypeError("CouchDB JSON values must be plain objects, arrays, or primitives");
-  if (seen.has(value)) throw new TypeError("CouchDB JSON must not contain cycles");
-  seen.add(value); for (const entry of Object.values(value)) assertJson(entry, seen); seen.delete(value);
-}
 
 function validateData(value: unknown): asserts value is Record<string, unknown> {
   if (!isPlainObject(value)) throw new TypeError("CouchDB DALgo records must encode to a non-null plain object");
@@ -140,36 +89,6 @@ function storageId(key: Key): string {
   const encoded = new TextEncoder().encode(json);
   let binary = ""; for (const byte of encoded) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=/gu, "");
-}
-
-function validateHeaders(headers: CouchDbHeaders): void {
-  for (const [name, value] of Object.entries(headers)) {
-    if (typeof value !== "string" || /[\r\n]/u.test(name) || /[\r\n]/u.test(value)) throw new TypeError("CouchDB configured headers must be CR/LF-safe strings");
-  }
-}
-
-async function readResponse(response: Response, maximum: number, signal: AbortSignal, cancelled: () => Error): Promise<string> {
-  const length = response.headers.get("content-length");
-  if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximum)) {
-    cancelQuietly(response.body); throw new CouchDbResponseSizeError();
-  }
-  if (response.body === null) return "";
-  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
-  try {
-    for (;;) {
-      const next = await raceAbort(reader.read(), signal, cancelled);
-      if (next.done) break;
-      total += next.value.byteLength;
-      if (total > maximum) { cancelQuietly(reader); throw new CouchDbResponseSizeError(); }
-      chunks.push(next.value);
-    }
-  } finally {
-    if (signal.aborted) cancelQuietly(reader);
-    try { reader.releaseLock(); } catch { /* a cancelled stream can retain its lock */ }
-  }
-  const joined = new Uint8Array(total); let offset = 0;
-  for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(joined);
 }
 
 function couchDocument(value: unknown, key: Key): CouchDocument {
@@ -204,28 +123,15 @@ function selectorFilter<T>(filter: QueryFilter<T>): Record<string, unknown> {
 }
 
 export class CouchDbDatabase implements Database, WriteSession {
+  readonly #transport: CouchDbTransport;
   readonly #databaseUrl: string;
-  readonly #headers: CouchDbHeaderProvider | undefined;
-  readonly #fetch: CouchDbFetch;
-  readonly #timeoutMs: number;
-  readonly #maxRequestBytes: number;
-  readonly #maxResponseBytes: number;
   readonly #maxGetManyKeys: number;
   readonly #maxParallelReads: number;
   readonly #maxQueryLimit: number;
 
   public constructor(options: CouchDbDatabaseOptions) {
-    const url = new URL(options.databaseUrl.trim());
-    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
-    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new TypeError("databaseUrl must use HTTPS, except for loopback development");
-    if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) throw new TypeError("databaseUrl must not contain credentials, a query, or a fragment");
-    if (url.pathname === "/" || /\/_/u.test(url.pathname)) throw new TypeError("databaseUrl must name one existing application database, not a CouchDB management endpoint");
-    this.#databaseUrl = url.toString().replace(/\/+$/u, "");
-    this.#headers = options.headers;
-    this.#fetch = options.fetch ?? globalThis.fetch;
-    this.#timeoutMs = positive(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs", 120_000);
-    this.#maxRequestBytes = positive(options.maxRequestBytes, DEFAULT_MAX_REQUEST_BYTES, "maxRequestBytes");
-    this.#maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
+    this.#transport = new CouchDbTransport(options);
+    this.#databaseUrl = this.#transport.databaseUrl;
     this.#maxGetManyKeys = positive(options.maxGetManyKeys, DEFAULT_MAX_GET_MANY, "maxGetManyKeys", 1_000);
     this.#maxParallelReads = positive(options.maxParallelReads, Math.min(DEFAULT_MAX_PARALLEL_READS, this.#maxGetManyKeys), "maxParallelReads", this.#maxGetManyKeys);
     this.#maxQueryLimit = positive(options.maxQueryLimit, DEFAULT_MAX_QUERY_LIMIT, "maxQueryLimit", 1_000);
@@ -247,14 +153,14 @@ export class CouchDbDatabase implements Database, WriteSession {
 
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const body = this.document(key, codecOrIdentity(codec).encode(data));
-    const response = await this.request("PUT", `/${encodeURIComponent(storageId(key))}`, body, [409]);
+    const response = await this.#transport.request("PUT", `/${encodeURIComponent(storageId(key))}`, body, [409]);
     if (response.status === 409) throw new AlreadyExistsError(key, { cause: new CouchDbHttpError(409) });
   }
 
   public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
     const existing = await this.rawGet(key);
     const body = { ...this.document(key, codecOrIdentity(codec).encode(data)), ...(existing === undefined ? {} : { _rev: existing._rev }) };
-    const response = await this.request("PUT", `/${encodeURIComponent(storageId(key))}`, body, [409]);
+    const response = await this.#transport.request("PUT", `/${encodeURIComponent(storageId(key))}`, body, [409]);
     if (response.status === 409) throw new CouchDbConflictError(key);
   }
 
@@ -266,13 +172,13 @@ export class CouchDbDatabase implements Database, WriteSession {
   public async delete(key: Key): Promise<void> {
     const existing = await this.rawGet(key);
     if (existing === undefined) return;
-    const response = await this.request("DELETE", `/${encodeURIComponent(storageId(key))}`, undefined, [409], { "if-match": existing._rev });
+    const response = await this.#transport.request("DELETE", `/${encodeURIComponent(storageId(key))}`, undefined, [409], { "if-match": existing._rev });
     if (response.status === 409) throw new CouchDbConflictError(key);
   }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
     const plan = this.prepareQuery(query);
-    const response = await this.request("POST", "/_find", plan.body);
+    const response = await this.#transport.request("POST", "/_find", plan.body);
     return this.queryPage(query, plan.limit, response);
   }
 
@@ -283,7 +189,7 @@ export class CouchDbDatabase implements Database, WriteSession {
   public async queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
     if (signal.aborted) throw new QueryCancelledError("caller");
     const plan = this.prepareQuery(query);
-    const response = await this.request("POST", "/_find", plan.body, [], {}, signal);
+    const response = await this.#transport.request("POST", "/_find", plan.body, [], {}, signal);
     if (signal.aborted) throw new QueryCancelledError("caller");
     return this.queryPage(query, plan.limit, response);
   }
@@ -328,60 +234,7 @@ export class CouchDbDatabase implements Database, WriteSession {
   }
 
   private async rawGet(key: Key): Promise<CouchDocument | undefined> {
-    const response = await this.request("GET", `/${encodeURIComponent(storageId(key))}`, undefined, [404]);
+    const response = await this.#transport.request("GET", `/${encodeURIComponent(storageId(key))}`, undefined, [404]);
     return response.status === 404 ? undefined : couchDocument(response.body, key);
-  }
-
-  private async request(method: string, path: string, body?: unknown, accepted: readonly number[] = [], extraHeaders: CouchDbHeaders = {}, callerSignal?: AbortSignal): Promise<{ readonly status: number; readonly body: unknown }> {
-    const scope = createAbortScope(callerSignal, this.#timeoutMs);
-    const cancelled = (): Error => callerSignal === undefined
-      ? new DOMException("The operation was aborted.", "AbortError")
-      : new QueryCancelledError(scope.deadlineExceeded ? "deadline" : "caller");
-    const bodyCancelled = (): Error => callerSignal === undefined
-      ? new Error("CouchDB response timed out")
-      : cancelled();
-    try {
-      let supplied: CouchDbHeaders;
-      try {
-        supplied = await raceAbort(
-          Promise.resolve().then(() => typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {})),
-          scope.signal,
-          cancelled,
-        );
-      } catch (error) {
-        if (scope.signal.aborted) throw cancelled();
-        if (callerSignal !== undefined) throw new CouchDbRequestError();
-        throw error;
-      }
-      validateHeaders(supplied); validateHeaders(extraHeaders);
-      if (scope.signal.aborted) throw cancelled();
-      let serialized: string | undefined;
-      if (body !== undefined) { assertJson(body); serialized = JSON.stringify(body); if (byteLength(serialized) > this.#maxRequestBytes) throw new RangeError("CouchDB request exceeds maxRequestBytes"); }
-      const pending = Promise.resolve().then(() => this.#fetch(`${this.#databaseUrl}${path}`, { method, redirect: "error", signal: scope.signal, headers: { ...supplied, ...extraHeaders, accept: "application/json", ...(serialized === undefined ? {} : { "content-type": "application/json" }) }, ...(serialized === undefined ? {} : { body: serialized }) }));
-      void pending.then((late) => { if (scope.signal.aborted) cancelQuietly(late.body); }, () => undefined);
-      let response: Response;
-      try {
-        response = await raceAbort(pending, scope.signal, cancelled);
-      } catch (error) {
-        if (scope.signal.aborted) throw cancelled();
-        if (callerSignal !== undefined) throw new CouchDbRequestError();
-        throw error;
-      }
-      let text: string;
-      try {
-        text = await readResponse(response, this.#maxResponseBytes, scope.signal, bodyCancelled);
-      } catch (error) {
-        if (scope.signal.aborted) {
-          if (callerSignal === undefined) throw error;
-          cancelQuietly(response.body); throw cancelled();
-        }
-        if (callerSignal !== undefined && !(error instanceof CouchDbResponseSizeError)) throw new CouchDbRequestError();
-        throw error;
-      }
-      if (scope.signal.aborted) throw cancelled();
-      if (!response.ok && !accepted.includes(response.status)) throw new CouchDbHttpError(response.status);
-      if (text.length === 0) return { status: response.status, body: undefined };
-      try { return { status: response.status, body: JSON.parse(text) }; } catch { throw new TypeError("CouchDB returned invalid JSON"); }
-    } finally { scope.dispose(); }
   }
 }
