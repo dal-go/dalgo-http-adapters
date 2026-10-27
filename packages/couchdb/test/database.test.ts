@@ -88,4 +88,54 @@ describe("CouchDbDatabase", () => {
     fetch.mockResolvedValueOnce(response(200, document("WyJpdGVtcyIsIm1pbGsiXQ"), { "content-length": "99" }));
     await expect(db.get(key("items", "milk"))).rejects.toThrow("maxResponseBytes");
   });
+
+  it.each(["https://couch.example.com/app", "https://localhost/app", "http://localhost:5984/app", "http://127.0.0.1:5984/app", "http://[::1]:5984/app"])("accepts supported database endpoint %s without eager I/O", databaseUrl => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    expect(() => new CouchDbDatabase({ databaseUrl, fetch })).not.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  const unsafeUrls: readonly (readonly [string, RegExp])[] = [
+    ["http://couch.example.com/app", /must use HTTPS, except for loopback development/u],
+    ["http://localhost.evil.example/app", /must use HTTPS, except for loopback development/u],
+    ["http://[::2]:5984/app", /must use HTTPS, except for loopback development/u],
+    ["https://user:password@couch.example.com/app", /must not contain credentials, a query, or a fragment/u],
+    ["http://user:password@localhost:5984/app", /must not contain credentials, a query, or a fragment/u],
+    ["https://token@couch.example.com/app", /must not contain credentials, a query, or a fragment/u],
+    ["https://couch.example.com/app?token=secret", /must not contain credentials, a query, or a fragment/u],
+    ["https://couch.example.com/app#fragment", /must not contain credentials, a query, or a fragment/u],
+    ["https://couch.example.com", /must name one existing application database, not a CouchDB management endpoint/u],
+    ["https://couch.example.com/", /must name one existing application database, not a CouchDB management endpoint/u],
+    ["https://couch.example.com/_session", /must name one existing application database, not a CouchDB management endpoint/u],
+    ["https://couch.example.com/_users", /must name one existing application database, not a CouchDB management endpoint/u],
+    ["https://couch.example.com/app/_design/items", /must name one existing application database, not a CouchDB management endpoint/u],
+  ];
+  it.each(unsafeUrls)("refuses unsafe database URL %s without calling fetch", (databaseUrl, message) => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    expect(() => new CouchDbDatabase({ databaseUrl, fetch })).toThrow(message);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 1000])("accepts maxQueryLimit boundary %i without eager I/O", maxQueryLimit => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    expect(() => new CouchDbDatabase({ databaseUrl: "https://couch.example.com/app", fetch, maxQueryLimit })).not.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 1001])("rejects invalid maxQueryLimit %s without calling fetch", maxQueryLimit => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    expect(() => new CouchDbDatabase({ databaseUrl: "https://couch.example.com/app", fetch, maxQueryLimit })).toThrow("maxQueryLimit must be a safe integer from 1 to 1000");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("enforces the accepted maxQueryLimit boundary on queries before fetch", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const bounded = new CouchDbDatabase({ databaseUrl: "https://couch.example.com/app", fetch, maxQueryLimit: 1 });
+    const items = collection<{ done: boolean }>("items");
+    await expect(bounded.query(items.query().limit(2).build())).rejects.toBeInstanceOf(UnsupportedError);
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockResolvedValueOnce(response(200, { docs: [] }));
+    await bounded.query(items.query().limit(1).build());
+    expect(JSON.parse(request(fetch).body as string)).toMatchObject({ limit: 1 });
+  });
 });
