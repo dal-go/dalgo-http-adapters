@@ -41,6 +41,7 @@ const TYPESCRIPT_VERSION = "6.0.3";
 const ADAPTERS = [
   { name: "@dalgo/adapter-runtime", directory: "packages/adapter-runtime" },
   { name: "@dal-go/dalgo2couchdb", directory: "packages/couchdb" },
+  { name: "@dal-go/dalgo2libsql", directory: "packages/libsql" },
   { name: "@dal-go/dalgo2postgrest", directory: "packages/postgrest" },
 ];
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
@@ -311,7 +312,27 @@ try {
     core: { collection: "function", key: "function" },
     runtime: { isCancellableQueryExecutor: "function" },
     couch: { queryWithSignal: "function", runReadwriteTransaction: "function" },
-    postgrest: { queryWithSignal: "function", runReadwriteTransaction: "function" },
+    postgrest: {
+      queryWithSignal: "function",
+      discover: "function",
+      testConnection: "function",
+      runReadwriteTransaction: "function",
+    },
+    libsql: {
+      queryWithSignal: "function",
+      discover: "function",
+      testConnection: "function",
+      managedQueryWithSignal: "function",
+    },
+    nativeLibsql: {
+      readOnly: true,
+      queryWithSignal: "function",
+      discover: "function",
+      testConnection: "function",
+      describe: "function",
+      insertRefused: true,
+      transactionRefused: true,
+    },
   });
 
   const receipt = {
