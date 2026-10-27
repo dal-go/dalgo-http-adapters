@@ -16,6 +16,7 @@ import {
   type ExistingRecord,
   type QueryFilter,
   type QueryPage,
+  type ReadwriteTransaction,
   type RecordSnapshot,
   type StructuredQuery,
   type UpdateData,
@@ -300,9 +301,9 @@ export class PostgrestDatabase implements Database, WriteSession {
   }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
-    const url = this.prepareQuery(query);
+    const { url, limit } = this.prepareQuery(query);
     const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled));
-    return { records: rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
+    return this.queryPage(rows, limit, query);
   }
 
   /**
@@ -311,13 +312,18 @@ export class PostgrestDatabase implements Database, WriteSession {
    */
   public async queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
     if (signal.aborted) throw new QueryCancelledError("caller");
-    const url = this.prepareQuery(query);
+    const { url, limit } = this.prepareQuery(query);
     const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, readSignal, cancelled) => this.rows(response, readSignal, cancelled), signal);
     if (signal.aborted) throw new QueryCancelledError("caller");
+    return this.queryPage(rows, limit, query);
+  }
+
+  private queryPage<T>(rows: readonly Record<string, unknown>[], limit: number, query: StructuredQuery<T>): QueryPage<T> {
+    if (rows.length > limit) throw new RangeError("PostgREST response returned more rows than the requested query limit");
     return { records: rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
   }
 
-  private prepareQuery<T>(query: StructuredQuery<T>): URL {
+  private prepareQuery<T>(query: StructuredQuery<T>): { readonly url: URL; readonly limit: number } {
     if (query.source.kind !== "collection" || query.source.parent !== undefined) {
       throw new UnsupportedError("PostgREST collection-group or nested-collection queries");
     }
@@ -343,11 +349,11 @@ export class PostgrestDatabase implements Database, WriteSession {
       if (!Number.isSafeInteger(query.offset) || query.offset < 0) throw new TypeError("PostgREST query offset must be a non-negative safe integer");
       url.searchParams.set("offset", String(query.offset));
     }
-    return url;
+    return { url, limit };
   }
 
   public async runReadwriteTransaction<Result>(
-    callback: (transaction: import("@dal-go/dalgo").ReadwriteTransaction) => Promise<Result>,
+    callback: (transaction: ReadwriteTransaction) => Promise<Result>,
   ): Promise<Result> {
     void callback;
     throw new UnsupportedError("PostgREST callback transactions");

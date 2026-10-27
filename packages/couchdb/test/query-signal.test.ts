@@ -53,6 +53,19 @@ function request(fetch: ReturnType<typeof vi.fn>, call = 0): RequestInit {
   return fetch.mock.calls[call]?.[1] as RequestInit;
 }
 
+const transportSecret = "synthetic-sensitive-transport-text";
+
+function hostileRangeError(): RangeError {
+  return new RangeError(transportSecret, { cause: new Error(`${transportSecret}-cause`) });
+}
+
+function expectRedactedTransportFailure(error: unknown): void {
+  expect(error).toBeInstanceOf(CouchDbRequestError);
+  expect((error as Error).cause).toBeUndefined();
+  const exposed = [(error as Error).message, (error as Error).stack ?? ""].join("\n");
+  expect(exposed).not.toContain(transportSecret);
+}
+
 const items = collection<{ done: boolean }>("items");
 
 describe("CouchDbDatabase.queryWithSignal", () => {
@@ -220,6 +233,55 @@ describe("CouchDbDatabase.queryWithSignal", () => {
       .catch((reason: unknown) => reason);
     expect(fetchError).toBeInstanceOf(CouchDbRequestError);
     expect(String(fetchError)).not.toContain("secret");
+  });
+
+  it("redacts a RangeError thrown by the header provider", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const db = new CouchDbDatabase({
+      databaseUrl: "https://couch.example.com/app",
+      fetch,
+      headers: () => {
+        throw hostileRangeError();
+      },
+    });
+
+    const error = await db
+      .queryWithSignal(items.query().build(), new AbortController().signal)
+      .catch((reason: unknown) => reason);
+
+    expectRedactedTransportFailure(error);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("redacts a RangeError rejected by fetch", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    fetch.mockRejectedValueOnce(hostileRangeError());
+    const { database: db } = database({ fetch });
+
+    const error = await db
+      .queryWithSignal(items.query().build(), new AbortController().signal)
+      .catch((reason: unknown) => reason);
+
+    expectRedactedTransportFailure(error);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("redacts a RangeError raised while streaming the response body", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(hostileRangeError());
+      },
+    });
+    fetch.mockResolvedValueOnce(new Response(stream, { status: 200 }));
+    const { database: db } = database({ fetch });
+
+    const error = await db
+      .queryWithSignal(items.query().build(), new AbortController().signal)
+      .catch((reason: unknown) => reason);
+
+    expectRedactedTransportFailure(error);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("keeps deliberate unsupported and configuration errors precise", async () => {

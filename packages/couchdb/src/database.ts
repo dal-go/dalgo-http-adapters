@@ -75,6 +75,16 @@ export class CouchDbRequestError extends Error {
   }
 }
 
+/**
+ * Adapter-owned response bounds failure. The message is a fixed diagnostic and
+ * safe to expose; arbitrary transport RangeErrors are not preserved.
+ */
+class CouchDbResponseSizeError extends RangeError {
+  public constructor() {
+    super("CouchDB response exceeds maxResponseBytes");
+  }
+}
+
 /** A 409 returned while applying an explicit document revision. */
 export class CouchDbConflictError extends Error {
   public readonly key: Key;
@@ -141,7 +151,7 @@ function validateHeaders(headers: CouchDbHeaders): void {
 async function readResponse(response: Response, maximum: number, signal: AbortSignal, cancelled: () => Error): Promise<string> {
   const length = response.headers.get("content-length");
   if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximum)) {
-    cancelQuietly(response.body); throw new RangeError("CouchDB response exceeds maxResponseBytes");
+    cancelQuietly(response.body); throw new CouchDbResponseSizeError();
   }
   if (response.body === null) return "";
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
@@ -150,7 +160,7 @@ async function readResponse(response: Response, maximum: number, signal: AbortSi
       const next = await raceAbort(reader.read(), signal, cancelled);
       if (next.done) break;
       total += next.value.byteLength;
-      if (total > maximum) { cancelQuietly(reader); throw new RangeError("CouchDB response exceeds maxResponseBytes"); }
+      if (total > maximum) { cancelQuietly(reader); throw new CouchDbResponseSizeError(); }
       chunks.push(next.value);
     }
   } finally {
@@ -281,14 +291,15 @@ export class CouchDbDatabase implements Database, WriteSession {
   private prepareQuery<T>(query: StructuredQuery<T>): { readonly body: Record<string, unknown>; readonly limit: number } {
     if (query.source.kind !== "collection" || query.source.parent !== undefined) throw new UnsupportedError("CouchDB collection-group or nested collection queries");
     if (query.orders.length > 0 || query.offset !== undefined || query.startAt !== undefined || query.endAt !== undefined || query.endBefore !== undefined) throw new UnsupportedError("CouchDB ordered, offset, or inclusive/end cursor queries");
-    if (query.limit !== undefined && query.limit > this.#maxQueryLimit) throw new UnsupportedError(`CouchDB query limit above maxQueryLimit (${String(this.#maxQueryLimit)})`);
+    if (query.limit !== undefined && (!Number.isSafeInteger(query.limit) || query.limit < 1)) throw new UnsupportedError(`CouchDB query limit must be a safe integer from 1 to ${String(this.#maxQueryLimit)}`);
+    const limit = query.limit ?? this.#maxQueryLimit;
+    if (limit > this.#maxQueryLimit) throw new UnsupportedError(`CouchDB query limit above maxQueryLimit (${String(this.#maxQueryLimit)})`);
     let bookmark: string | undefined;
     if (query.startAfter !== undefined) {
       const cursor = query.startAfter.values[0];
       if (!isObject(cursor) || cursor.adapter !== "@dal-go/dalgo2couchdb" || cursor.version !== 1 || cursor.databaseUrl !== this.#databaseUrl || typeof cursor.bookmark !== "string" || query.startAfter.values.length !== 1) throw new TypeError("CouchDB query cursor must be returned by this adapter");
       bookmark = cursor.bookmark;
     }
-    const limit = query.limit ?? this.#maxQueryLimit;
     const body = { selector: { $and: [{ __dalgo_collection: { $eq: query.source.name } }, ...query.filters.map((filter) => selectorFilter(filter))] }, limit, ...(bookmark === undefined ? {} : { bookmark }) };
     return { body, limit };
   }
@@ -296,6 +307,7 @@ export class CouchDbDatabase implements Database, WriteSession {
   private queryPage<T>(query: StructuredQuery<T>, limit: number, response: { readonly status: number; readonly body: unknown }): QueryPage<T> {
     if (!isObject(response.body) || !Array.isArray(response.body.docs) || (response.body.bookmark !== undefined && typeof response.body.bookmark !== "string")) throw new TypeError("malformed CouchDB Mango response");
     const mango = response.body as unknown as MangoResponse;
+    if (mango.docs.length > limit) throw new RangeError("CouchDB response returned more rows than the requested query limit");
     const records = mango.docs.map((document): ExistingRecord<T> => {
       const key = new Key(query.source.name, document.__dalgo_id);
       const valid = couchDocument(document, key);
@@ -363,7 +375,7 @@ export class CouchDbDatabase implements Database, WriteSession {
           if (callerSignal === undefined) throw error;
           cancelQuietly(response.body); throw cancelled();
         }
-        if (callerSignal !== undefined && !(error instanceof RangeError)) throw new CouchDbRequestError();
+        if (callerSignal !== undefined && !(error instanceof CouchDbResponseSizeError)) throw new CouchDbRequestError();
         throw error;
       }
       if (scope.signal.aborted) throw cancelled();

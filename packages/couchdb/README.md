@@ -192,9 +192,14 @@ build, and type checks of the minimal example. Tests inject `fetch` and
 in-memory streams; they do not contact a CouchDB server and are not a live
 CouchDB acceptance test. They cover caller abort before headers, while headers
 are pending, in flight, and while the body is hanging, the deadline in the same
-phases, late-response cleanup, no later page request, redaction, bounds, and
-legacy query behaviour. A real CouchDB container and the DataTug UI remain
-separate gates.
+phases, late-response cleanup, no later page request, redaction of arbitrary
+transport `RangeError`s while retaining adapter-owned bounds diagnostics,
+oversized query-page rejection before decoding, and legacy query behaviour.
+`pnpm check:packed-consumer` additionally packs the published artifacts into a
+fresh directory outside the repository, installs only those tarballs plus the
+exact modern `@dalgo/core` commit, and type-checks and runs the packed
+declarations with no `@dal-go/dalgo` package available. A real CouchDB container
+and the DataTug UI remain separate gates.
 
 The package manifest, exports, `prepack`, `publishConfig` and changeset are ready
 for the repository's Changesets pattern, but no npm publication or DataTug UI

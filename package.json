@@ -11,6 +11,7 @@
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "check": "pnpm -r --if-present run check",
+    "check:packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs",
     "lint": "pnpm -r --if-present run lint",
     "test": "pnpm -r --if-present run test",
     "release:version": "changeset version"

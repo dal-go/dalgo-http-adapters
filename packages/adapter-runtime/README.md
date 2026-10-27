@@ -59,6 +59,10 @@ The contract is:
 - Deliberate configuration and unsupported-query errors keep their precise
   type and message. They are not converted into cancellation or transport
   errors.
+- Adapter-owned bounds diagnostics with fixed messages (for example a response
+  exceeding `maxResponseBytes`) remain visible. Arbitrary transport failures,
+  including external `RangeError`s, are redacted even when they share that
+  error class.
 - Cancellation never waits for a hostile `cancel()` promise.
 
 Adapters use the shared helpers rather than duplicating the race:
