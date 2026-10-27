@@ -198,7 +198,9 @@ jobs:
 
   postgrest-browsers:
     # Real Chromium -> real PostgREST CORS/header/paging proof. The script owns
-    # a disposable loopback Compose project and a unique static origin.
+    # a disposable loopback Compose project and a unique static origin. Runs
+    # only when postgrest, its adapter-runtime dependency, the lockfile or this
+    # workflow changed.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -219,7 +221,7 @@ jobs:
           esac
           if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             echo "run=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "$base" HEAD | grep -Eq '^(packages/postgrest/|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/ci\.yml$)'; then
+          elif git diff --name-only "$base" HEAD | grep -Eq '^(packages/(postgrest|adapter-runtime)/|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/ci\.yml$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

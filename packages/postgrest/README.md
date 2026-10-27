@@ -355,9 +355,11 @@ HTTP contract test only: Node does not enforce browser CORS and the test sets
 `Origin` manually, so it does not prove browser behaviour.
 
 `pnpm test:browser` owns a second disposable Compose project named
-`datatug-postgrest-ts-r2-<run>` and a unique loopback static origin. It builds
-the fixture page with esbuild, launches real headless Chromium through
-Playwright, and has the browser bundle use the real `PostgrestDatabase` and
+`datatug-postgrest-ts-r2-<run>` and a unique loopback static origin. It first
+builds the workspace dependency outputs (`@dalgo/adapter-runtime` among them),
+so it works from a clean source checkout, then builds the fixture page with
+esbuild, launches real headless Chromium through Playwright, and has the
+browser bundle use the real `PostgrestDatabase` and
 global `fetch` against that real PostgREST service. The service allows exactly
 the static page origin. The suite proves successful discovery, native rows and
 multi-page continuation across server-capped short pages, a redacted bad
