@@ -10,7 +10,7 @@ overrides:
   '@dalgo/firestore>@dalgo/core': 0.8.0
   '@dal-go/dalgo': github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
   '@dalgo/bigquery>@dalgo/core': 0.1.0
-  '@dalgo/core': github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
+  '@dalgo/core': github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
   '@dalgo/indexeddb>@dalgo/core': 0.8.0
   '@dalgo/ovdb>@dalgo/core': github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42
   '@dalgo/sqlite-wasm>@dalgo/core': github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42
@@ -804,8 +804,8 @@ importers:
   packages/sqlite-sql:
     dependencies:
       '@dalgo/core':
-        specifier: github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -1131,9 +1131,9 @@ packages:
     version: 0.7.4
     engines: {node: '>=20'}
 
-  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336':
-    resolution: {gitHosted: true, integrity: sha512-xzGv43RgfWDLbdVaskT274Tladnnr7z2HeC2Wl8F0H+Nwt+2UBFDZwOAekW8f9v7RqS9YT6NtgohmaAqmE6FTw==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336}
-    version: 0.2.0
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d':
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d}
+    version: 0.8.0
     engines: {node: '>=20'}
 
   '@esbuild/aix-ppc64@0.28.2':
@@ -3126,9 +3126,9 @@ snapshots:
     dependencies:
       yaml: 2.8.2
 
-  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336':
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d':
     dependencies:
-      yaml: 2.8.2
+      yaml: 2.9.1
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true
