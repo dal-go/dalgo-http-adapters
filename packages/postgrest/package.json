@@ -18,11 +18,12 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:deps": "pnpm --filter \"@dal-go/dalgo2postgrest...\" run build",
     "check": "eslint . && vitest run && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json",
     "lint": "eslint .",
     "prepack": "npm --prefix ../adapter-runtime run build && npm run build",
     "test": "vitest run",
-    "test:browser": "node scripts/real-postgrest-browser.mjs",
+    "test:browser": "pnpm run build:deps && node scripts/real-postgrest-browser.mjs",
     "test:real": "node scripts/real-postgrest.mjs"
   },
   "repository": {
