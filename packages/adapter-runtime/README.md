@@ -141,8 +141,9 @@ Remaining owner gates are:
 - the first npm bootstrap (or a deliberate decision to keep first-wave
   consumption on pinned GitHub subdirectory dependencies);
 - updating `docs/RELEASING.md` and the root support catalogue;
-- consumer installation and a real DataTug web-UI journey. Neither is claimed
-  here.
+- a real application consumer installation and a real DataTug web-UI journey.
+  The packed-declaration consumer check proves only the packed type surface, not
+  either of those deployments.
 
 ## License
 

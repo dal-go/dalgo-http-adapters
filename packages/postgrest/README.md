@@ -209,7 +209,7 @@ The package manifest, exports, `prepack`, `publishConfig` and changeset are read
 for the repository's Changesets pattern, but no npm publication or DataTug UI
 integration is claimed. Remaining owner gates include adding this package to the
 release workflow, npm bootstrap/trusted publishing, an `.changeset` version PR,
-and a consumer installation.
+and a real application consumer installation.
 
 ## License
 
