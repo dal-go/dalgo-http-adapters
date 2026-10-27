@@ -157,6 +157,42 @@ deliberately does not implement the `WriteSession` contract. `insert`, `set`, `u
 rejects with `UnsupportedError` before any HTTP request. `readOnly` is `true`.
 Use the managed `CouchDbDatabase` or a different adapter for writes.
 
+### Batched point reads
+
+`getMany` validates the whole bounded key list before I/O, preserves input
+order, and runs at most `maxParallelReads` (default 8) requests.
+`getManyWithSignal(keys, signal)` adds caller cancellation. One
+operation-wide deadline (the configured `timeoutMs`) covers every key's header
+acquisition, fetch and response-body read; it is not renewed per key. The first
+failure — provider error, malformed or unsafe document, cancellation, or budget
+— aborts in-flight sibling requests and prevents any later key from being
+requested. A batch either returns every snapshot in order or fails; no partial
+batch is returned, and a late response body cannot join a failed batch.
+
+`maxGetManyBytes` (default 1 MiB, hard maximum 16 MiB) bounds the cumulative
+decoded response bytes one batch may retain. It is checked from the exact
+response-body byte counts before a result is accepted, so individually valid
+documents that together exceed the budget fail with `CouchDbBatchSizeError`
+rather than growing memory. Each request still has its own `maxResponseBytes`
+ceiling. Point `get` remains an independent request with its own deadline.
+
+### Numeric policy
+
+CouchDB JSON numbers are eventually decoded by `JSON.parse`, which would
+silently round an integer such as `9007199254740993` to `9007199254740992`.
+Before parsing, the adapter scans the raw response text outside strings and
+refuses any integer-valued number outside the safe-integer range, including
+integer-valued decimal/exponent forms, and refuses `-0` and non-finite numbers.
+Safe integers (`|n| <= 2^53-1`) are preserved exactly, numbers inside strings are
+untouched, and a configured codec never receives a rounded integer. Request
+bodies must also contain only finite safe integers.
+
+This release has no lossless BigInt or arbitrary-precision number
+representation; refusal is deliberate. Non-integer decimal/exponent values keep
+normal IEEE-754 semantics. Cursor payloads are no longer JSON on the wire, so
+the same policy applies uniformly to `get`, `getMany`, queries and discovery in
+both the managed and native layouts.
+
 ### Filters, NULL and missing values
 
 Supported filters are simple top-level fields plus `_id`/`_rev`; `DOCUMENT_ID`
@@ -195,20 +231,28 @@ cancelled rather than returned.
 
 Pages use the configured `limit` (default 100, hard maximum 1,000). A full page
 must include a Mango bookmark; if CouchDB omits it, the adapter throws rather
-than reporting a false completion. `nextCursor` contains one opaque adapter
-token bound to:
+than reporting a false completion. `nextCursor` contains one adapter-issued
+opaque handle. The adapter keeps a bounded, per-instance registry entry for the
+complete handle: endpoint/instance, collection, query/filter/sort/projection
+fingerprint, effective page size, credential scope and provider bookmark. The
+handle is generated from 256 random bits and contains no bookmark, filter value,
+query or credential. The provider bookmark is never trusted from the caller.
 
-- adapter instance and normalized endpoint;
-- configured collection;
-- filters, sort and projection;
-- effective page size;
-- credential scope.
+A handle is single-use: successfully continuing a query consumes it. Unknown,
+reconstructed/forged, edited, foreign-instance, changed-query/page-size/
+projection/credential-scope and replayed handles are refused before any HTTP
+request. Because no cursor payload is decoded or trusted, editing a bookmark
+while retaining the other fields is not possible; the remaining FNV
+fingerprints are grouping keys only, never authentication.
 
-Changing any of those, reusing a consumed cursor, or using a cursor from another
-adapter instance is refused. `startAt`, `endAt`, `endBefore` and `offset` are
+Issued and consumed state are both bounded (1,000 entries each by default).
+When pending state is full, the oldest unused handle is retired and its later
+use is refused as unknown rather than growing the registry without bound.
+Applications that fan out and hold many unused cursors for a long time should
+re-issue the query; this is an explicit in-memory, per-instance limitation, not
+a persistent credential. `startAt`, `endAt`, `endBefore` and `offset` are
 refused; only `startAfter` continues a native query. Cursor tokens are never
-logged, and their filter/credential bindings are keyed digests rather than raw
-values. Because a header-refreshed token changes the implicit credential scope,
+logged. Because a header-refreshed token changes the implicit credential scope,
 long-lived pagination should pass a stable non-secret `cursorScope` (for example
 a user/session identifier) or re-issue the query. The legacy `query` method uses
 the same configured deadline without a caller signal; a deadline surfaces as
@@ -308,17 +352,18 @@ The native constant is `NATIVE_COUCHDB_READ_CAPABILITIES` (also available as
 
 | Feature | Status | Bound / reason |
 | --- | --- | --- |
-| read/get, read/getMany | native | native `_id`; `getMany` max 100 keys, 8 parallel reads by default |
+| read/get, read/getMany | native | native `_id`; `getMany` max 100 keys, 8 parallel reads, 1 MiB cumulative response budget by default |
 | projection | native | optional Mango `fields`; `_id` is mandatory and preserved |
 | filter | native | simple top-level fields plus `_id`/`_rev`; explicit-null vs present-non-null vs missing semantics |
 | sort | configured | only a permitted index matching the full order plus `_id`; fallback disabled |
-| pagination | native | stable limit plus a query/resource/instance/credential-bound bookmark cursor |
+| pagination | native | stable limit plus an adapter-issued opaque single-use handle with a bounded stored query/bookmark binding |
 | joins, aggregation, grouping, subquery, fulltext, timeseries | unsupported | refused before HTTP |
 | native query | unsupported | no raw Mango selector/order escape hatch |
 | discovery | native | `GET /{db}`, `GET /{db}/_index`, bounded `_all_docs`; no cluster `_all_dbs` |
-| bounds | enforced | query 100/1000, request/response 1 MiB/16 MiB, metadata 256 KiB, sample 20, indexes 100 |
+| bounds | enforced | query 100/1000, request/response 1 MiB/16 MiB, getMany 1 MiB cumulative, metadata 256 KiB, sample 20, indexes 100 |
 
 `describe().limits` reports the actual instance bounds, including
+`maxGetManyBytes`, `maxIssuedCursors`, `maxConservedCursors`,
 `maxMetadataBytes`, `maxSampleDocuments` and `maxIndexes`.
 
 ## Intentional limitations
@@ -335,6 +380,18 @@ The native constant is `NATIVE_COUCHDB_READ_CAPABILITIES` (also available as
   It supports one configured collection per database instance and no nested
   keys. Ordering requires a matching index that ends in `_id`; Mango's
   same-direction rule is enforced.
+- There is no BigInt or arbitrary-precision number representation. Integer
+  values outside the safe-integer range are refused on request and response
+  instead of being rounded; this includes integer-valued decimal/exponent
+  tokens. Decimal/exponent values keep IEEE-754 semantics.
+- Cursor handles and their validated bindings are in-memory and per instance.
+  Issued and consumed state are bounded; the oldest unused pending handle is
+  retired when the issued registry is full. There is no persistent cursor store
+  and no browser-stored secret.
+- `getMany` never returns a partial batch: the first failure aborts siblings and
+  no later key is requested. `CouchDbBatchSizeError` means the cumulative
+  response budget was exceeded, not that one document was too large (that is
+  still `maxResponseBytes`).
 - `NativeCouchDbDatabase.describe()` samples at most `maxSampleDocuments`
   documents to label top-level fields. Sampling is not a schema, completeness or
   authorization claim; pass `configuredFields` for a deliberate label.
@@ -342,12 +399,12 @@ The native constant is `NATIVE_COUCHDB_READ_CAPABILITIES` (also available as
   can provide a continuous or long-poll change stream, but DALgo currently has
   no realtime/change-feed contract. This adapter deliberately does not expose it.
 - Defaults are a 15-second timeout, 1 MiB request/response limits, `getMany`
-  maximum 100, 8 parallel reads, native metadata 256 KiB, field sample 20,
-  index discovery 100, and Mango query maximum 100 (each configurable within
-  hard caps). Oversized response streams are cancelled without waiting. HTTP
-  error bodies are intentionally redacted; `CouchDbHttpError` exposes only the
-  status, and native metadata failures expose a reason and optional HTTP status,
-  never a response body.
+  maximum 100 keys, 8 parallel reads and a 1 MiB cumulative response budget,
+  native metadata 256 KiB, field sample 20, index discovery 100, and Mango query
+  maximum 100 (each configurable within hard caps). Oversized response streams
+  are cancelled without waiting. HTTP error bodies are intentionally redacted;
+  `CouchDbHttpError` exposes only the status, and native metadata failures expose
+  a reason and optional HTTP status, never a response body.
 
 ## Verification
 
@@ -355,7 +412,10 @@ The native constant is `NATIVE_COUCHDB_READ_CAPABILITIES` (also available as
 build, and type checks of the minimal examples. Unit tests inject `fetch` and
 in-memory streams; they cover managed regressions plus native reads/mapping,
 native NULL/missing filters, projection, index-matched ordering, exact bounds,
-cursor binding/change/foreign/reuse, malformed docs and index payloads, metadata
+raw-wire numeric refusal, one batch deadline across delayed headers/bodies,
+cumulative getMany budgets, fail-fast sibling aborts and no later-key requests,
+opaque cursor binding/tampering/forgery/foreign-instance/replay and bounded
+cursor state, malformed docs and index payloads, metadata
 denial/unavailability, read-only refusals, caller/deadline cancellation through
 headers/fetch/body, and redaction. They do not contact a CouchDB server.
 
@@ -363,15 +423,16 @@ The gated [native-live.test.ts](test/native-live.test.ts) suite runs against a
 disposable CouchDB when `COUCHDB_NATIVE_URL` (plus optional
 `COUCHDB_NATIVE_USER`, `COUCHDB_NATIVE_PASSWORD`, `COUCHDB_NATIVE_INDEX_DDOC`,
 `COUCHDB_NATIVE_INDEX_NAME`) is set; otherwise it is skipped. It verifies real
-native documents, NULL/missing semantics, index-backed pagination, metadata
-discovery, bad auth, byte/batch bounds and transport redaction with the actual
-platform `fetch`.
+native documents, NULL/missing semantics, index-backed pagination, tampered and
+foreign cursor handles, metadata discovery, bad auth, byte/batch bounds and
+transport redaction with the actual platform `fetch`.
 
 [scripts/browser-native-smoke.mjs](scripts/browser-native-smoke.mjs) bundles the
 actual class and runs it in Chromium with real browser `fetch` against a
-disposable CouchDB whose CORS allowlist names the exact page origin. It is a
-package-level browser proof, run from a workspace that provides Playwright and
-esbuild:
+disposable CouchDB whose CORS allowlist names the exact page origin. It also
+checks a repeated, tampered and forged cursor handle and a pre-aborted
+`getManyWithSignal` batch. It is a package-level browser proof, run from a
+workspace that provides Playwright and esbuild:
 
 ```sh
 cd packages/sqlite-wasm

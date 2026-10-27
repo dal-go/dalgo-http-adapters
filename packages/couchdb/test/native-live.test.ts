@@ -92,17 +92,37 @@ describe.skipIf(liveUrl === undefined)("NativeCouchDbDatabase against a disposab
     const cursor = first.nextCursor?.values[0];
     if (typeof cursor !== "string") throw new Error("expected a native CouchDB bookmark cursor");
 
+    await expect(database.query(items.query().where("status", "==", "done").orderBy("status").limit(2).startAfter(cursor).build()))
+      .rejects.toThrow("does not match");
+
     const second = await database.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(cursor).build());
     expect(second.records).toHaveLength(2);
     expect(second.records.map((record) => record.key.id).sort()).not.toEqual(first.records.map((record) => record.key.id).sort());
 
     await expect(database.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(cursor).build()))
       .rejects.toThrow("already been used");
-    await expect(database.query(items.query().where("status", "==", "done").orderBy("status").limit(2).startAfter(cursor).build()))
-      .rejects.toThrow("does not match");
 
     const third = await database.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(...(second.nextCursor?.values ?? [])).build());
     expect(third.records).toEqual([]);
+  });
+
+  it("rejects tampered, forged and foreign cursor handles before the provider", async () => {
+    const database = liveDatabase();
+    const first = await database.query(items.query().where("status", "==", "open").orderBy("status").limit(2).build());
+    const cursor = first.nextCursor?.values[0];
+    if (typeof cursor !== "string") throw new Error("expected a native CouchDB bookmark cursor");
+    const tampered = `${cursor.slice(0, -1)}${cursor.endsWith("A") ? "B" : "A"}`;
+    await expect(database.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(tampered).build()))
+      .rejects.toThrow("invalid or unknown to this adapter instance");
+    await expect(database.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(`nc1_${"A".repeat(43)}`).build()))
+      .rejects.toThrow("invalid or unknown to this adapter instance");
+
+    const foreign = liveDatabase();
+    await expect(foreign.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(cursor).build()))
+      .rejects.toThrow("invalid or unknown to this adapter instance");
+
+    const second = await database.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(cursor).build());
+    expect(second.records.length).toBeGreaterThan(0);
   });
 
   it("honours an explicit projection and never drops the requested _id", async () => {
@@ -166,6 +186,9 @@ describe.skipIf(liveUrl === undefined)("NativeCouchDbDatabase against a disposab
     const batchBounded = liveDatabase({ maxGetManyKeys: 1 });
     await expect(batchBounded.getMany([key("items", "milk"), key("items", "eggs")]))
       .rejects.toBeInstanceOf(UnsupportedError);
+    const bytesBounded = liveDatabase({ maxGetManyBytes: 1 });
+    await expect(bytesBounded.getMany([key("items", "milk"), key("items", "eggs")]))
+      .rejects.toThrow("maxGetManyBytes");
   });
 
   it("does no header or provider work for an already-aborted caller", async () => {

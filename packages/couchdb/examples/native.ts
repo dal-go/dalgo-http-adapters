@@ -34,6 +34,9 @@ const controller = new AbortController();
 const page = await db.queryWithSignal(projected, controller.signal);
 void page;
 
+const batch = await db.getManyWithSignal([items.key("milk"), items.key("bread")], controller.signal);
+void batch;
+
 const description = await db.describe(controller.signal);
 if (description.indexes.status === "available") {
   void description.indexes.indexes;

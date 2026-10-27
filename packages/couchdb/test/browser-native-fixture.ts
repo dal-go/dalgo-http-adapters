@@ -1,3 +1,4 @@
+import { QueryCancelledError } from "@dalgo/adapter-runtime";
 import { UnsupportedError, collection, key } from "@dalgo/core";
 
 import { CouchDbHttpError, NativeCouchDbDatabase } from "../src/index.js";
@@ -55,6 +56,18 @@ export async function runNativeBrowserProof(config: NativeBrowserConfig) {
     repeatedRejected = error instanceof TypeError;
   }
 
+  const tampered = `${cursor.slice(0, -1)}${cursor.endsWith("A") ? "B" : "A"}`;
+  const tamperedRejected = await db.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(tampered).build())
+    .then(() => false, (error: unknown) => error instanceof TypeError);
+  const forgedRejected = await db.query(items.query().where("status", "==", "open").orderBy("status").limit(2).startAfter(`nc1_${"A".repeat(43)}`).build())
+    .then(() => false, (error: unknown) => error instanceof TypeError);
+
+  const preAborted = new AbortController();
+  preAborted.abort();
+  const pointRead = await db.getMany([key("items", "milk"), key("items", "eggs")]);
+  const abortedBatchRejected = await db.getManyWithSignal([key("items", "milk"), key("items", "eggs")], preAborted.signal)
+    .then(() => false, (error: unknown) => error instanceof QueryCancelledError);
+
   const connection = await db.testConnection();
   const indexes = await db.listIndexes();
   const fields = await db.sampleFields();
@@ -83,6 +96,8 @@ export async function runNativeBrowserProof(config: NativeBrowserConfig) {
       space: space.exists && space.key.id === "id with space" && space.data._id === "id with space",
       slash: slash.exists && slash.key.id === "id/slash" && slash.data._id === "id/slash",
       getMany: many.length === 3 && many[0]?.exists === true && many[1]?.exists === false && many[2]?.exists === true,
+      orderedBatch: pointRead.length === 2 && pointRead[0]?.key.id === "milk" && pointRead[1]?.key.id === "eggs",
+      abortedBatchRejected,
     },
     query: {
       explicitNull: nulls.records.map((record) => record.key.id),
@@ -91,6 +106,8 @@ export async function runNativeBrowserProof(config: NativeBrowserConfig) {
       firstPage: first.records.map((record) => record.key.id),
       secondPage: second.records.map((record) => record.key.id),
       repeatedRejected,
+      tamperedRejected,
+      forgedRejected,
     },
     metadata: {
       connection: connection.ok && connection.database.database === "app",

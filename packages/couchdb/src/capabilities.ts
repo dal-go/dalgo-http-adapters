@@ -91,7 +91,7 @@ export const NATIVE_COUCHDB_READ_CAPABILITIES = {
     },
     pagination: {
       status: "native",
-      detail: "stable limit plus a Mango bookmark cursor bound to endpoint, collection, query/projection, page size, adapter instance and credential scope",
+      detail: "stable limit plus an adapter-issued opaque single-use handle; bounded stored query, page size, instance, credential-scope and bookmark binding",
     },
     joins: { status: "unsupported" },
     aggregation: { status: "unsupported" },

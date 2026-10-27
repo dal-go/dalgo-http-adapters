@@ -27,6 +27,8 @@ export interface CouchDbTransportOptions {
 export interface CouchDbResponse {
   readonly status: number;
   readonly body: unknown;
+  /** Exact number of decoded response-body bytes, for caller-owned batch bounds. */
+  readonly bytes: number;
 }
 
 export class CouchDbHttpError extends Error {
@@ -72,6 +74,7 @@ export function assertJson(value: unknown, seen = new Set<object>()): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
     if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError("CouchDB JSON numbers must be finite and not -0");
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) throw new TypeError("CouchDB JSON integer numbers must be safe integers");
     return;
   }
   if (Array.isArray(value)) {
@@ -83,18 +86,93 @@ export function assertJson(value: unknown, seen = new Set<object>()): void {
   seen.add(value); for (const entry of Object.values(value)) assertJson(entry, seen); seen.delete(value);
 }
 
+const JSON_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u;
+
+/**
+ * Rejects a JSON number token that {@link JSON.parse} would silently round.
+ *
+ * The adapter's numeric policy is deliberately narrower than ECMAScript's:
+ * every JSON number must become a finite IEEE-754 double, integer-valued
+ * numbers must be safe integers, and `-0` is refused. Decimal/exponent values
+ * that stay non-integer use normal IEEE-754 semantics. Malformed tokens are
+ * left for `JSON.parse` to report; this scan never includes the token, a value
+ * or a credential in an error message.
+ */
+function assertLosslessNumber(token: string): void {
+  if (!JSON_NUMBER.test(token)) return;
+  const value = Number(token);
+  if (!Number.isFinite(value)) throw new TypeError("CouchDB returned a JSON number outside the finite range");
+  if (Object.is(value, -0)) throw new TypeError("CouchDB returned a JSON -0 number");
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    throw new TypeError("CouchDB returned a JSON integer outside the safe integer range");
+  }
+}
+
+/**
+ * Scans raw wire text before `JSON.parse`, so a provider value such as
+ * `9007199254740993` is refused instead of being accepted as the different
+ * number `9007199254740992`. Strings (including escaped quotes) are skipped.
+ */
+export function assertLosslessJson(text: string): void {
+  let index = 0;
+  while (index < text.length) {
+    const code = text.charCodeAt(index);
+    if (code === 0x22) {
+      index += 1;
+      while (index < text.length) {
+        const inner = text.charCodeAt(index);
+        if (inner === 0x5c) { index += 2; continue; }
+        index += 1;
+        if (inner === 0x22) break;
+      }
+      continue;
+    }
+    if (code === 0x2d || (code >= 0x30 && code <= 0x39)) {
+      const start = index;
+      if (code === 0x2d) index += 1;
+      while (index < text.length) {
+        const digit = text.charCodeAt(index);
+        if (digit < 0x30 || digit > 0x39) break;
+        index += 1;
+      }
+      if (text.charCodeAt(index) === 0x2e) {
+        index += 1;
+        while (index < text.length) {
+          const digit = text.charCodeAt(index);
+          if (digit < 0x30 || digit > 0x39) break;
+          index += 1;
+        }
+      }
+      const exponent = text.charCodeAt(index);
+      if (exponent === 0x65 || exponent === 0x45) {
+        index += 1;
+        const sign = text.charCodeAt(index);
+        if (sign === 0x2b || sign === 0x2d) index += 1;
+        while (index < text.length) {
+          const digit = text.charCodeAt(index);
+          if (digit < 0x30 || digit > 0x39) break;
+          index += 1;
+        }
+      }
+      assertLosslessNumber(text.slice(start, index));
+      continue;
+    }
+    index += 1;
+  }
+}
+
 export function validateHeaders(headers: CouchDbHeaders): void {
   for (const [name, value] of Object.entries(headers)) {
     if (typeof value !== "string" || /[\r\n]/u.test(name) || /[\r\n]/u.test(value)) throw new TypeError("CouchDB configured headers must be CR/LF-safe strings");
   }
 }
 
-async function readResponse(response: Response, maximum: number, signal: AbortSignal, cancelled: () => Error): Promise<string> {
+async function readResponse(response: Response, maximum: number, signal: AbortSignal, cancelled: () => Error): Promise<{ readonly text: string; readonly bytes: number }> {
   const length = response.headers.get("content-length");
   if (length !== null && (!/^\d+$/u.test(length) || Number(length) > maximum)) {
     cancelQuietly(response.body); throw new CouchDbResponseSizeError();
   }
-  if (response.body === null) return "";
+  if (response.body === null) return { text: "", bytes: 0 };
   const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
   try {
     for (;;) {
@@ -110,7 +188,7 @@ async function readResponse(response: Response, maximum: number, signal: AbortSi
   }
   const joined = new Uint8Array(total); let offset = 0;
   for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(joined);
+  return { text: new TextDecoder().decode(joined), bytes: total };
 }
 
 /**
@@ -141,6 +219,7 @@ export class CouchDbTransport {
   }
 
   public get databaseUrl(): string { return this.#databaseUrl; }
+  public get timeoutMs(): number { return this.#timeoutMs; }
 
   public async request(
     method: string,
@@ -188,8 +267,11 @@ export class CouchDbTransport {
         throw error;
       }
       let text: string;
+      let responseBytes: number;
       try {
-        text = await readResponse(response, maximumBytes, scope.signal, bodyCancelled);
+        const consumed = await readResponse(response, maximumBytes, scope.signal, bodyCancelled);
+        text = consumed.text;
+        responseBytes = consumed.bytes;
       } catch (error) {
         if (scope.signal.aborted) {
           if (callerSignal === undefined) throw error;
@@ -200,8 +282,11 @@ export class CouchDbTransport {
       }
       if (scope.signal.aborted) throw cancelled();
       if (!response.ok && !accepted.includes(response.status)) throw new CouchDbHttpError(response.status);
-      if (text.length === 0) return { status: response.status, body: undefined };
-      try { return { status: response.status, body: JSON.parse(text) }; } catch { throw new TypeError("CouchDB returned invalid JSON"); }
+      if (text.length === 0) return { status: response.status, body: undefined, bytes: responseBytes };
+      assertLosslessJson(text);
+      let parsed: unknown;
+      try { parsed = JSON.parse(text); } catch { throw new TypeError("CouchDB returned invalid JSON"); }
+      return { status: response.status, body: parsed, bytes: responseBytes };
     } finally { scope.dispose(); }
   }
 }

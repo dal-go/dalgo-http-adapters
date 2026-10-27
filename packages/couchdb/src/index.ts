@@ -15,6 +15,7 @@ export {
   type CouchDbHeaderProvider,
 } from "./database.js";
 export {
+  CouchDbBatchSizeError,
   NativeCouchDbDatabase,
   type NativeCouchDbConnectionTest,
   type NativeCouchDbDatabaseInfo,

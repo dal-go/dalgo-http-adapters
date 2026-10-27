@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   COUCHDB_READ_CAPABILITIES,
   NATIVE_COUCHDB_READ_CAPABILITIES,
+  CouchDbBatchSizeError,
   CouchDbHttpError,
   CouchDbRequestError,
   NativeCouchDbDatabase,
@@ -44,15 +45,21 @@ function body(fetch: ReturnType<typeof vi.fn>, call = 0): unknown {
   return JSON.parse(request(fetch, call).body as string);
 }
 
-function rewriteCursor(token: string, mutate: (payload: Record<string, unknown>) => void): string {
-  const base64 = token.replace(/-/gu, "+").replace(/_/gu, "/");
-  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-  const payload = JSON.parse(atob(padded)) as Record<string, unknown>;
-  mutate(payload);
+function legacyCursor(payload: Record<string, unknown>): string {
   const encoded = new TextEncoder().encode(JSON.stringify(payload));
   let binary = "";
   for (const byte of encoded) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=/gu, "");
+}
+
+function deferred<T>() {
+  let resolve: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve(value: T): void { resolve?.(value); } };
+}
+
+async function flush(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 
 function doc(id: string, rev = "1-a", data: Record<string, unknown> = { title: "Milk" }) {
@@ -200,6 +207,224 @@ describe("NativeCouchDbDatabase reads", () => {
   });
 });
 
+function idFromRequest(input: unknown): string {
+  const url = new URL(String(input));
+  return decodeURIComponent(url.pathname.slice(url.pathname.lastIndexOf("/") + 1));
+}
+
+describe("NativeCouchDbDatabase getMany bounds and cancellation", () => {
+  it("applies one batch deadline instead of renewing it for every key", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    fetch.mockImplementation((input) => new Promise<Response>((resolve) => {
+      setTimeout(() => { resolve(response(200, doc(idFromRequest(input)))); }, 30);
+    }));
+    const database = new NativeCouchDbDatabase({
+      databaseUrl: "https://couch.example.com/app",
+      collection: "items",
+      fetch,
+      timeoutMs: 80,
+      maxParallelReads: 1,
+    });
+    const error = await database.getMany([
+      key("items", "a"), key("items", "b"), key("items", "c"), key("items", "d"), key("items", "e"),
+    ]).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
+    expect(fetch.mock.calls.length).toBeLessThan(5);
+  });
+
+  it("counts delayed header acquisition against the same batch deadline", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    fetch.mockImplementation((input) => Promise.resolve(response(200, doc(idFromRequest(input)))));
+    let issued = 0;
+    const database = new NativeCouchDbDatabase({
+      databaseUrl: "https://couch.example.com/app",
+      collection: "items",
+      fetch,
+      timeoutMs: 80,
+      maxParallelReads: 1,
+      headers: () => new Promise((resolve) => {
+        issued += 1;
+        setTimeout(() => { resolve({ authorization: `Bearer ${String(issued)}` }); }, 30);
+      }),
+    });
+    const error = await database.getMany([
+      key("items", "a"), key("items", "b"), key("items", "c"), key("items", "d"), key("items", "e"),
+    ]).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
+    expect(issued).toBeLessThan(5);
+    expect(fetch.mock.calls.length).toBeLessThan(5);
+  });
+
+  it("enforces one cumulative response budget before accepting results", async () => {
+    const sample = JSON.stringify(doc("a"));
+    const perDocument = new TextEncoder().encode(sample).byteLength;
+    const database = nativeDatabase({ maxGetManyBytes: perDocument + 4 });
+    const fetch = database.fetch;
+    fetch.mockImplementation((input) => Promise.resolve(response(200, doc(idFromRequest(input)))));
+    const error = await database.database.getMany([key("items", "a"), key("items", "b")]).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(CouchDbBatchSizeError);
+    expect(String(error)).toContain("maxGetManyBytes");
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    const single = nativeDatabase({ maxGetManyBytes: perDocument });
+    single.fetch.mockResolvedValueOnce(response(200, doc("a")));
+    await expect(single.database.getMany([key("items", "a")])).resolves.toMatchObject([{ key: key("items", "a"), exists: true }]);
+  });
+
+  it("aborts pending siblings and issues no later-key request after the first failure", async () => {
+    const pending = deferred<Response>();
+    const { database, fetch } = nativeDatabase({ maxParallelReads: 2 });
+    fetch.mockImplementationOnce(() => Promise.reject(new Error("synthetic transport failure")))
+      .mockImplementationOnce(() => pending.promise);
+    const error = await database.getMany([key("items", "a"), key("items", "b"), key("items", "c")])
+      .catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(CouchDbRequestError);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    const late = response(200, doc("b"));
+    const cancel = vi.spyOn(late.body as ReadableStream<Uint8Array>, "cancel");
+    pending.resolve(late);
+    await flush();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    const sequential = nativeDatabase({ maxParallelReads: 1 });
+    sequential.fetch.mockRejectedValueOnce(new Error("synthetic transport failure"));
+    await expect(sequential.database.getMany([key("items", "a"), key("items", "b"), key("items", "c")]))
+      .rejects.toBeInstanceOf(CouchDbRequestError);
+    expect(sequential.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("honours getManyWithSignal without scheduling or accepting late work", async () => {
+    const pending = deferred<Response>();
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    fetch.mockImplementation(() => pending.promise);
+    const database = new NativeCouchDbDatabase({
+      databaseUrl: "https://couch.example.com/app",
+      collection: "items",
+      fetch,
+      maxParallelReads: 1,
+    });
+    const controller = new AbortController();
+    const running = database.getManyWithSignal([
+      key("items", "a"), key("items", "b"), key("items", "c"),
+    ], controller.signal);
+    await vi.waitFor(() => { expect(fetch).toHaveBeenCalledTimes(1); });
+    controller.abort();
+    await expect(running).rejects.toMatchObject({ name: "QueryCancelledError", reason: "caller" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const late = response(200, doc("a"));
+    const cancel = vi.spyOn(late.body as ReadableStream<Uint8Array>, "cancel");
+    pending.resolve(late);
+    await flush();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    const headers = vi.fn(() => ({ authorization: "Bearer never" }));
+    const aborted = new NativeCouchDbDatabase({
+      databaseUrl: "https://couch.example.com/app",
+      collection: "items",
+      fetch: vi.fn<typeof globalThis.fetch>(),
+      headers,
+    });
+    const preAborted = new AbortController();
+    preAborted.abort();
+    await expect(aborted.getManyWithSignal([key("items", "a")], preAborted.signal))
+      .rejects.toMatchObject({ name: "QueryCancelledError", reason: "caller" });
+    expect(headers).not.toHaveBeenCalled();
+  });
+});
+
+describe("NativeCouchDbDatabase numeric policy", () => {
+  const unsafe = "9007199254740993";
+
+  it("refuses an unsafe raw-wire integer instead of rounding it", async () => {
+    const { database, fetch } = nativeDatabase();
+    fetch.mockResolvedValueOnce(new Response(`{"_id":"a","_rev":"1-a","amount":${unsafe}}`, { status: 200 }));
+    const error = await database.get(key("items", "a")).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(TypeError);
+    expect(String(error)).toContain("safe integer");
+    expect(String(error)).not.toContain("9007");
+  });
+
+  it("covers nested values, arrays, integer-valued decimals, -0 and non-finite tokens", async () => {
+    const { database, fetch } = nativeDatabase();
+    for (const text of [
+      `{"_id":"a","_rev":"1-a","nested":{"deep":{"n":${unsafe}}}}`,
+      `{"_id":"a","_rev":"1-a","values":[1,2,${unsafe}]}`,
+      `{"_id":"a","_rev":"1-a","amount":${unsafe}.0}`,
+      `{"_id":"a","_rev":"1-a","amount":-0}`,
+      `{"_id":"a","_rev":"1-a","amount":1e400}`,
+    ]) {
+      fetch.mockResolvedValueOnce(new Response(text, { status: 200 }));
+      const error = await database.get(key("items", "a")).catch((reason: unknown) => reason);
+      expect(error).toBeInstanceOf(TypeError);
+      expect(String(error)).not.toContain("9007");
+    }
+    expect(fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it("preserves safe integers, fractions, exponents and numeric-looking strings exactly", async () => {
+    const { database, fetch } = nativeDatabase();
+    fetch.mockResolvedValueOnce(new Response(
+      `{"_id":"a","_rev":"1-a","max":9007199254740991,"min":-9007199254740991,"fraction":1.25,"exponent":1e3,"text":"${unsafe}","values":[0,-1.5,9007199254740991]}`,
+      { status: 200 },
+    ));
+    const snapshot = await database.get(key("items", "a"));
+    expect(snapshot.data).toEqual({
+      _id: "a",
+      _rev: "1-a",
+      max: Number.MAX_SAFE_INTEGER,
+      min: Number.MIN_SAFE_INTEGER,
+      fraction: 1.25,
+      exponent: 1_000,
+      text: unsafe,
+      values: [0, -1.5, Number.MAX_SAFE_INTEGER],
+    });
+  });
+
+  it("applies the same policy to getMany, query and discovery responses", async () => {
+    const getMany = nativeDatabase({ maxParallelReads: 1 });
+    getMany.fetch.mockResolvedValueOnce(new Response(`{"_id":"a","_rev":"1-a","n":${unsafe}}`, { status: 200 }));
+    await expect(getMany.database.getMany([key("items", "a"), key("items", "b")]))
+      .rejects.toThrow("safe integer");
+    expect(getMany.fetch).toHaveBeenCalledTimes(1);
+
+    const { database, fetch } = nativeDatabase();
+    fetch.mockResolvedValueOnce(new Response(`{"docs":[{"_id":"a","n":${unsafe}}],"bookmark":"b"}`, { status: 200 }));
+    await expect(database.query(query(items.query().limit(1).build()))).rejects.toThrow("safe integer");
+
+    fetch.mockResolvedValueOnce(new Response(`{"db_name":"app","doc_count":${unsafe}}`, { status: 200 }));
+    await expect(database.testConnection()).resolves.toMatchObject({ ok: false, reason: "malformed" });
+
+    fetch.mockResolvedValueOnce(new Response(`{"rows":[{"id":"a","doc":{"_id":"a","n":${unsafe}}}]}`, { status: 200 }));
+    await expect(database.sampleFields()).resolves.toMatchObject({ status: "unavailable", reason: "malformed" });
+  });
+
+  it("refuses unsafe request integers before I/O and still delivers safe values to a codec", async () => {
+    const { database, fetch } = nativeDatabase();
+    await expect(database.query(query(items.query().where("n", "==", Number.MAX_SAFE_INTEGER + 1).build())))
+      .rejects.toThrow("safe integers");
+    await expect(database.query(query(items.query().where("n", "in", [1, Number.MAX_SAFE_INTEGER + 1]).build())))
+      .rejects.toThrow("safe integers");
+    expect(fetch).not.toHaveBeenCalled();
+
+    fetch.mockResolvedValueOnce(response(200, { docs: [], bookmark: "b" }));
+    await database.query(query(items.query().where("n", "==", Number.MAX_SAFE_INTEGER).build()));
+    expect(body(fetch)).toMatchObject({ selector: { $and: [{ n: { $eq: Number.MAX_SAFE_INTEGER } }] } });
+
+    const decode = vi.fn((value: unknown) => value as { n: number });
+    const codec = { encode: (value: { n: number }) => value, decode };
+    fetch.mockResolvedValueOnce(new Response(`{"_id":"a","_rev":"1-a","n":9007199254740991}`, { status: 200 }));
+    await expect(database.get(key("items", "a"), codec)).resolves.toMatchObject({ data: { n: Number.MAX_SAFE_INTEGER } });
+    expect(decode).toHaveBeenCalledTimes(1);
+
+    fetch.mockResolvedValueOnce(new Response(`{"_id":"a","_rev":"1-a","n":${unsafe}}`, { status: 200 }));
+    await expect(database.get(key("items", "a"), codec)).rejects.toThrow("safe integer");
+    expect(decode).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("NativeCouchDbDatabase ordered queries", () => {
   const ascIndex = {
     ddoc: "_design/status-id",
@@ -284,15 +509,16 @@ describe("NativeCouchDbDatabase cursor binding", () => {
     return { ...state, built, cursor, page };
   }
 
-  it("returns an opaque cursor that does not expose filter values or credentials", async () => {
+  it("returns an unguessable opaque handle that carries no filter, bookmark or credential", async () => {
     const { cursor, fetch } = await firstPage({ headers: () => ({ authorization: "Bearer super-secret-token" }) });
+    expect(cursor).toMatch(/^nc1_[A-Za-z0-9_-]{43}$/u);
     expect(cursor).not.toContain("open");
     expect(cursor).not.toContain("super-secret-token");
     expect(cursor).not.toContain("provider-bookmark");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("continues with the same query, page size and bookmark", async () => {
+  it("continues with the same query, page size and adapter-stored bookmark", async () => {
     const { database, fetch, built, cursor } = await firstPage();
     fetch.mockResolvedValueOnce(response(200, { docs: [], bookmark: "next" }));
     const page = await database.query({ ...built, startAfter: { values: [cursor] } });
@@ -311,42 +537,54 @@ describe("NativeCouchDbDatabase cursor binding", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects a cursor rebound to another endpoint, collection, page size or credential scope", async () => {
+  it("rejects a changed bookmark even with every legacy binding field retained", async () => {
     const { database, fetch, built, cursor } = await firstPage();
-    const foreignEndpoint = rewriteCursor(cursor, (payload) => { payload.e = "0".repeat(16); });
-    await expect(database.query({ ...built, startAfter: { values: [foreignEndpoint] } }))
-      .rejects.toThrow("another endpoint or collection");
-    const foreignCollection = rewriteCursor(cursor, (payload) => { payload.c = "1".repeat(16); });
-    await expect(database.query({ ...built, startAfter: { values: [foreignCollection] } }))
-      .rejects.toThrow("another endpoint or collection");
-    const changedPageSize = rewriteCursor(cursor, (payload) => { payload.l = 1; });
-    await expect(database.query({ ...built, startAfter: { values: [changedPageSize] } }))
-      .rejects.toThrow("page size changed");
-    const foreignScope = rewriteCursor(cursor, (payload) => { payload.s = "2".repeat(16); });
-    await expect(database.query({ ...built, startAfter: { values: [foreignScope] } }))
-      .rejects.toThrow("credential scope");
+    const forged = legacyCursor({
+      a: "@dal-go/dalgo2couchdb",
+      v: 2,
+      m: "native",
+      i: cursor.slice(4, 20),
+      e: "0".repeat(16),
+      c: "1".repeat(16),
+      q: "2".repeat(16),
+      s: "3".repeat(16),
+      l: 2,
+      b: "attacker-bookmark",
+    });
+    await expect(database.query({ ...built, startAfter: { values: [forged] } }))
+      .rejects.toThrow("cursor is invalid");
+    const tampered = `${cursor.slice(0, -1)}${cursor.endsWith("A") ? "B" : "A"}`;
+    await expect(database.query({ ...built, startAfter: { values: [tampered] } }))
+      .rejects.toThrow("invalid or unknown");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects foreign instance cursors and repeated reuse", async () => {
+  it("rejects reconstructed tokens, foreign instances and foreign endpoints", async () => {
     const { database, fetch, built, cursor } = await firstPage();
+    const reconstructed = legacyCursor({
+      adapter: "@dal-go/dalgo2couchdb",
+      version: 2,
+      bookmark: "provider-bookmark",
+      cursor,
+    });
+    await expect(database.query({ ...built, startAfter: { values: [reconstructed] } }))
+      .rejects.toThrow("cursor is invalid");
+
     const foreign = nativeDatabase({ permittedIndexes: [ascIndex] });
     await expect(foreign.database.query({ ...built, startAfter: { values: [cursor] } }))
-      .rejects.toThrow("another adapter instance");
+      .rejects.toThrow("invalid or unknown to this adapter instance");
+    expect(foreign.fetch).not.toHaveBeenCalled();
+
     const changedEndpoint = new NativeCouchDbDatabase({
       databaseUrl: "https://other.example.com/app",
       collection: "items",
       fetch: foreign.fetch,
       permittedIndexes: [ascIndex],
     });
-    // The instance id is checked before the endpoint binding; both are foreign.
     await expect(changedEndpoint.query({ ...built, startAfter: { values: [cursor] } }))
-      .rejects.toThrow("another adapter instance");
-
-    fetch.mockResolvedValueOnce(response(200, { docs: [], bookmark: "next" }));
-    await database.query({ ...built, startAfter: { values: [cursor] } });
-    await expect(database.query({ ...built, startAfter: { values: [cursor] } }))
-      .rejects.toThrow("already been used");
+      .rejects.toThrow("invalid or unknown to this adapter instance");
+    expect(foreign.fetch).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("binds an implicit cursor to the credential scope and allows an explicit stable scope", async () => {
@@ -365,10 +603,60 @@ describe("NativeCouchDbDatabase cursor binding", () => {
       .resolves.toMatchObject({ records: [] });
   });
 
+  it("continues multiple pages and rejects replay after consumption", async () => {
+    const { database, fetch, built, cursor } = await firstPage();
+    fetch.mockResolvedValueOnce(response(200, {
+      docs: [{ _id: "c", status: "open" }, { _id: "d", status: "open" }],
+      bookmark: "second-bookmark",
+    }));
+    const second = await database.query({ ...built, startAfter: { values: [cursor] } });
+    const secondCursor = second.nextCursor?.values[0];
+    if (typeof secondCursor !== "string") throw new Error("expected a second cursor");
+    expect(secondCursor).not.toBe(cursor);
+
+    fetch.mockResolvedValueOnce(response(200, { docs: [], bookmark: "third-bookmark" }));
+    await expect(database.query({ ...built, startAfter: { values: [secondCursor] } }))
+      .resolves.toMatchObject({ records: [] });
+
+    await expect(database.query({ ...built, startAfter: { values: [cursor] } }))
+      .rejects.toThrow("already been used");
+    await expect(database.query({ ...built, startAfter: { values: [secondCursor] } }))
+      .rejects.toThrow("already been used");
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds issued cursor state and retires only the oldest pending handle", async () => {
+    const { database, fetch } = nativeDatabase();
+    fetch.mockResolvedValueOnce(response(200, { db_name: "app", doc_count: 0 }));
+    fetch.mockResolvedValueOnce(response(200, { indexes: [] }));
+    fetch.mockResolvedValueOnce(response(200, { rows: [] }));
+    const limits = (await database.describe()).limits;
+    expect(limits.maxIssuedCursors).toBeGreaterThan(0);
+    expect(limits.maxConservedCursors).toBeGreaterThan(0);
+
+    fetch.mockImplementation(() => Promise.resolve(response(200, { docs: [{ _id: "a" }], bookmark: "bookmark" })));
+    let oldest: string | undefined;
+    let newest: string | undefined;
+    for (let index = 0; index < limits.maxIssuedCursors + 1; index += 1) {
+      const page = await database.query(query(items.query().limit(1).build()));
+      const token = page.nextCursor?.values[0];
+      if (typeof token !== "string") throw new Error("expected a cursor");
+      if (index === 0) oldest = token;
+      newest = token;
+    }
+    if (oldest === undefined || newest === undefined) throw new Error("expected cursors");
+    await expect(database.query({ ...items.query().limit(1).build(), startAfter: { values: [oldest] } }))
+      .rejects.toThrow("invalid or unknown to this adapter instance");
+    const continued = await database.query({ ...items.query().limit(1).build(), startAfter: { values: [newest] } });
+    expect(continued.records).toHaveLength(1);
+  });
+
   it("rejects malformed/forged tokens and non-single cursor values", async () => {
     const { database, fetch, built } = await firstPage();
     await expect(database.query({ ...built, startAfter: { values: ["not-a-cursor"] } }))
       .rejects.toThrow("cursor is invalid");
+    await expect(database.query({ ...built, startAfter: { values: [`nc1_${"A".repeat(43)}`] } }))
+      .rejects.toThrow("invalid or unknown");
     await expect(database.query({ ...built, startAfter: { values: ["x", "y"] } }))
       .rejects.toThrow("exactly one");
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -422,6 +710,7 @@ describe("NativeCouchDbDatabase response validation and bounds", () => {
     expect(() => nativeDatabase({ databaseUrl: "https://couch.example.com/_users" })).toThrow("management endpoint");
     expect(() => nativeDatabase({ collection: "items/nested" })).toThrow("without a path");
     expect(() => nativeDatabase({ cursorScope: "bad\nscope" })).toThrow("control-free");
+    expect(() => nativeDatabase({ maxGetManyBytes: 0 })).toThrow("maxGetManyBytes");
   });
 });
 
