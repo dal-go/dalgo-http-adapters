@@ -11,12 +11,16 @@ assert.equal(isCancellableQueryExecutor(postgrest), true);
 assert.equal(isCancellableQueryExecutor(couch), true);
 assert.equal(typeof postgrest.queryWithSignal, "function");
 assert.equal(typeof couch.queryWithSignal, "function");
+assert.equal(typeof postgrest.discover, "function");
+assert.equal(typeof postgrest.testConnection, "function");
 assert.equal(typeof postgrest.runReadwriteTransaction, "function");
 assert.equal(typeof couch.runReadwriteTransaction, "function");
 
 console.log(JSON.stringify({
   postgrest: {
     queryWithSignal: typeof postgrest.queryWithSignal,
+    discover: typeof postgrest.discover,
+    testConnection: typeof postgrest.testConnection,
     runReadwriteTransaction: typeof postgrest.runReadwriteTransaction,
   },
   couch: {

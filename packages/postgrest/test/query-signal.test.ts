@@ -277,7 +277,9 @@ describe("PostgrestDatabase.queryWithSignal", () => {
     expect(POSTGREST_READ_CAPABILITIES.query.filter.status).toBe("native");
     expect(POSTGREST_READ_CAPABILITIES.query.projection.status).toBe("unsupported");
     expect(POSTGREST_READ_CAPABILITIES.query.native.status).toBe("unsupported");
-    expect(POSTGREST_READ_CAPABILITIES.query.discovery.status).toBe("unsupported");
+    expect(POSTGREST_READ_CAPABILITIES.query.discovery.status).toBe("native");
+    expect(POSTGREST_READ_CAPABILITIES.query.pagination.detail).toContain("opaque keyset cursor");
+    expect(POSTGREST_READ_CAPABILITIES.bounds.maxQueryOffset.default).toBe(100_000);
     expect(POSTGREST_READ_CAPABILITIES.bounds.filterOperators).toContain("array-contains-any");
   });
 });

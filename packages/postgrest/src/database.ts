@@ -22,12 +22,34 @@ import {
   type UpdateData,
   type WriteSession,
 } from "@dalgo/core";
+import {
+  PostgrestCursorError,
+  decodePostgrestCursor,
+  encodePostgrestCursor,
+  postgrestKeysetFilter,
+  type PostgrestCursorBinding,
+  type PostgrestCursorOrder,
+} from "./cursor.js";
+import {
+  parsePostgrestOpenApi,
+  type PostgrestConnectionStatus,
+  type PostgrestDiscovery,
+  type PostgrestDiscoveryBounds,
+  type PostgrestDiscoveryReason,
+} from "./discovery.js";
 
 const DEFAULT_MAX_GET_MANY = 100;
 const DEFAULT_MAX_PARALLEL_READS = 8;
 const DEFAULT_MAX_QUERY_LIMIT = 100;
+const DEFAULT_MAX_QUERY_OFFSET = 100_000;
+const DEFAULT_MAX_QUERY_PAGES = 10_000;
 const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
+const DEFAULT_MAX_DISCOVERY_RELATIONS = 100;
+const DEFAULT_MAX_DISCOVERY_FIELDS = 200;
+const DEFAULT_MAX_DISCOVERY_BYTES = 524_288;
+const DEFAULT_MAX_CURSOR_BYTES = 8_192;
+const DEFAULT_MAX_SCHEMA_DEPTH = 4;
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export type PostgrestFetch = typeof globalThis.fetch;
@@ -37,12 +59,27 @@ export type PostgrestHeaderProvider = PostgrestHeaders | (() => PostgrestHeaders
 export interface PostgrestDatabaseOptions {
   /** PostgREST API root, normally the configured server origin or a proxy subpath. */
   readonly baseUrl: string;
+  /**
+   * Allows plain HTTP only for `localhost`, `127.0.0.1` or `[::1]`. HTTPS is
+   * the default and remains the only option for every hosted origin.
+   */
+  readonly allowInsecureLoopbackHttp?: boolean;
+  /** PostgREST schema/profile selected with `Accept-Profile`/`Content-Profile`. */
+  readonly schema?: string;
+  /** Alias for `schema`; supplying both must resolve to the same profile. */
+  readonly profile?: string;
   /** Name of the primary-key column shared by exposed adapter relations. Defaults to `id`. */
   readonly idColumn?: string;
   /** Maps a top-level DALgo collection name to an exposed PostgREST relation. */
   readonly relationName?: (collection: string) => string;
   /** Re-evaluated for every request; use it for refreshed Bearer or cookie headers. */
   readonly headers?: PostgrestHeaderProvider;
+  /**
+   * Optional stable, non-secret tenant/user/workspace identity. It is bound
+   * into opaque cursors so a cursor cannot be replayed under another role
+   * scope. Never put a token or password here.
+   */
+  readonly identityScope?: string;
   readonly fetch?: PostgrestFetch;
   readonly timeoutMs?: number;
   readonly maxRequestBytes?: number;
@@ -50,6 +87,13 @@ export interface PostgrestDatabaseOptions {
   readonly maxGetManyKeys?: number;
   readonly maxParallelReads?: number;
   readonly maxQueryLimit?: number;
+  readonly maxQueryOffset?: number;
+  readonly maxQueryPages?: number;
+  readonly maxDiscoveryRelations?: number;
+  readonly maxDiscoveryFieldsPerRelation?: number;
+  readonly maxDiscoveryBytes?: number;
+  readonly maxCursorBytes?: number;
+  readonly maxSchemaDepth?: number;
 }
 
 /** Deliberately excludes PostgREST/PostgreSQL error bodies, which can contain row values. */
@@ -126,6 +170,25 @@ function validateHeaders(headers: PostgrestHeaders): void {
 
 function identifier(value: string, label: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(value)) throw new UnsupportedError(`PostgREST ${label} names`);
+  return value;
+}
+
+function profileName(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return identifier(value, "schema/profile");
+}
+
+function identityScopeName(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) {
+    throw new TypeError("identityScope must be a non-empty string of at most 256 printable characters");
+  }
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new TypeError("identityScope must be a non-empty string of at most 256 printable characters");
+    }
+  }
   return value;
 }
 
@@ -214,8 +277,16 @@ async function readJson(response: Response, maximum: number, signal: AbortSignal
   return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
 }
 
+interface QueryContinuation {
+  readonly binding: PostgrestCursorBinding;
+  readonly page: number;
+  readonly orders: readonly PostgrestCursorOrder[];
+}
+
 export class PostgrestDatabase implements Database, WriteSession {
   readonly #baseUrl: string;
+  readonly #schema: string | undefined;
+  readonly #identityScope: string | undefined;
   readonly #idColumn: string;
   readonly #relationName: (collection: string) => string;
   readonly #headers: PostgrestHeaderProvider | undefined;
@@ -226,13 +297,33 @@ export class PostgrestDatabase implements Database, WriteSession {
   readonly #maxGetManyKeys: number;
   readonly #maxParallelReads: number;
   readonly #maxQueryLimit: number;
+  readonly #maxQueryOffset: number;
+  readonly #maxQueryPages: number;
+  readonly #maxDiscoveryRelations: number;
+  readonly #maxDiscoveryFields: number;
+  readonly #maxDiscoveryBytes: number;
+  readonly #maxCursorBytes: number;
+  readonly #maxSchemaDepth: number;
 
   public constructor(options: PostgrestDatabaseOptions) {
+    if (options.schema !== undefined && options.profile !== undefined && options.schema !== options.profile) {
+      throw new TypeError("schema and profile must name the same PostgREST profile");
+    }
     const url = new URL(options.baseUrl.trim());
     const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
-    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new TypeError("baseUrl must use HTTPS, except for loopback development");
-    if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) throw new TypeError("baseUrl must not contain credentials, a query, or a fragment");
+    if (url.protocol === "http:") {
+      if (!loopback || options.allowInsecureLoopbackHttp !== true) {
+        throw new TypeError("baseUrl must use HTTPS; loopback HTTP requires allowInsecureLoopbackHttp: true");
+      }
+    } else if (url.protocol !== "https:") {
+      throw new TypeError("baseUrl must use HTTPS");
+    }
+    if (url.username.length > 0 || url.password.length > 0 || url.search.length > 0 || url.hash.length > 0) {
+      throw new TypeError("baseUrl must not contain credentials, a query, or a fragment");
+    }
     this.#baseUrl = `${url.toString().replace(/\/+$/u, "")}/`;
+    this.#schema = profileName(options.profile ?? options.schema);
+    this.#identityScope = identityScopeName(options.identityScope);
     this.#idColumn = identifier(options.idColumn ?? "id", "id column");
     this.#relationName = options.relationName ?? ((collection) => collection);
     this.#headers = options.headers;
@@ -243,6 +334,13 @@ export class PostgrestDatabase implements Database, WriteSession {
     this.#maxGetManyKeys = positive(options.maxGetManyKeys, DEFAULT_MAX_GET_MANY, "maxGetManyKeys", 1_000);
     this.#maxParallelReads = positive(options.maxParallelReads, Math.min(DEFAULT_MAX_PARALLEL_READS, this.#maxGetManyKeys), "maxParallelReads", this.#maxGetManyKeys);
     this.#maxQueryLimit = positive(options.maxQueryLimit, DEFAULT_MAX_QUERY_LIMIT, "maxQueryLimit", 1_000);
+    this.#maxQueryOffset = positive(options.maxQueryOffset, DEFAULT_MAX_QUERY_OFFSET, "maxQueryOffset", 10_000_000);
+    this.#maxQueryPages = positive(options.maxQueryPages, DEFAULT_MAX_QUERY_PAGES, "maxQueryPages", 1_000_000);
+    this.#maxDiscoveryRelations = positive(options.maxDiscoveryRelations, DEFAULT_MAX_DISCOVERY_RELATIONS, "maxDiscoveryRelations", 10_000);
+    this.#maxDiscoveryFields = positive(options.maxDiscoveryFieldsPerRelation, DEFAULT_MAX_DISCOVERY_FIELDS, "maxDiscoveryFieldsPerRelation", 10_000);
+    this.#maxDiscoveryBytes = positive(options.maxDiscoveryBytes, DEFAULT_MAX_DISCOVERY_BYTES, "maxDiscoveryBytes", 16_777_216);
+    this.#maxCursorBytes = positive(options.maxCursorBytes, DEFAULT_MAX_CURSOR_BYTES, "maxCursorBytes", 65_536);
+    this.#maxSchemaDepth = positive(options.maxSchemaDepth, DEFAULT_MAX_SCHEMA_DEPTH, "maxSchemaDepth", 16);
   }
 
   public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
@@ -301,34 +399,63 @@ export class PostgrestDatabase implements Database, WriteSession {
   }
 
   public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
-    const { url, limit } = this.prepareQuery(query);
+    const { url, limit } = this.prepareQuery(query, false);
     const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled));
     return this.queryPage(rows, limit, query);
   }
 
   /**
-   * Cancellable query entry point. The caller signal covers header acquisition,
-   * fetch and response-body reading, and shares one deadline with `query`.
+   * Cancellable query entry point with an optional adapter-owned keyset cursor.
+   * The caller signal covers header acquisition, fetch and response-body
+   * reading, and shares one deadline with `query`.
    */
   public async queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
     if (signal.aborted) throw new QueryCancelledError("caller");
-    const { url, limit } = this.prepareQuery(query);
+    const { url, limit, continuation } = this.prepareQuery(query, true);
     const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, readSignal, cancelled) => this.rows(response, readSignal, cancelled), signal);
     if (signal.aborted) throw new QueryCancelledError("caller");
-    return this.queryPage(rows, limit, query);
+    return this.queryPage(rows, limit, query, continuation);
   }
 
-  private queryPage<T>(rows: readonly Record<string, unknown>[], limit: number, query: StructuredQuery<T>): QueryPage<T> {
+  private queryPage<T>(
+    rows: readonly Record<string, unknown>[],
+    limit: number,
+    query: StructuredQuery<T>,
+    continuation?: QueryContinuation,
+  ): QueryPage<T> {
     if (rows.length > limit) throw new RangeError("PostgREST response returned more rows than the requested query limit");
-    return { records: rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name)) };
+    const records = rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name));
+    if (continuation === undefined || rows.length !== limit) return { records };
+    const last = rows[rows.length - 1];
+    if (last === undefined) return { records };
+    const values = continuation.orders.map((order) => {
+      if (!Object.hasOwn(last, order.field)) {
+        throw new TypeError(`PostgREST response row is missing the ${order.field} order column`);
+      }
+      return last[order.field];
+    });
+    const cursor = encodePostgrestCursor(continuation.binding, continuation.page, values, this.#maxCursorBytes);
+    return { records, nextCursor: { values: [cursor] } };
   }
 
-  private prepareQuery<T>(query: StructuredQuery<T>): { readonly url: URL; readonly limit: number } {
+  private prepareQuery<T>(
+    query: StructuredQuery<T>,
+    cursorMode: boolean,
+  ): { readonly url: URL; readonly limit: number; readonly continuation?: QueryContinuation } {
     if (query.source.kind !== "collection" || query.source.parent !== undefined) {
       throw new UnsupportedError("PostgREST collection-group or nested-collection queries");
     }
-    if (query.startAt !== undefined || query.startAfter !== undefined || query.endAt !== undefined || query.endBefore !== undefined) {
+    for (const key of ["projection", "select", "columns", "fields"]) {
+      if (Object.hasOwn(query, key)) throw new UnsupportedError("PostgREST query projection");
+    }
+    if (query.startAt !== undefined || query.endAt !== undefined || query.endBefore !== undefined) {
       throw new UnsupportedError("PostgREST DALgo query cursors");
+    }
+    if (!cursorMode && query.startAfter !== undefined) {
+      throw new UnsupportedError("PostgREST DALgo query cursors");
+    }
+    if (query.startAfter !== undefined && query.offset !== undefined) {
+      throw new UnsupportedError("PostgREST query cursors combined with offset");
     }
     const url = this.relationUrlForCollection(query.source.name);
     url.searchParams.set("select", "*");
@@ -336,21 +463,216 @@ export class PostgrestDatabase implements Database, WriteSession {
       const [field, value] = filterParameter(filter, this.#idColumn);
       url.searchParams.append(field, value);
     }
-    if (query.orders.length > 0) {
-      url.searchParams.set("order", query.orders.map((order) => {
-        if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("PostgREST query order directions");
-        return `${order.field === DOCUMENT_ID ? this.#idColumn : identifier(String(order.field), "order field")}.${order.direction}`;
-      }).join(","));
+    const orders = cursorMode ? this.cursorOrders(query.orders) : this.legacyOrders(query.orders);
+    if (orders.length > 0) {
+      url.searchParams.set("order", orders.map((order) => `${order.field}.${order.direction}`).join(","));
     }
     const limit = query.limit ?? this.#maxQueryLimit;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#maxQueryLimit) throw new UnsupportedError(`PostgREST query limit above ${String(this.#maxQueryLimit)}`);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#maxQueryLimit) {
+      throw new UnsupportedError(`PostgREST query limit above ${String(this.#maxQueryLimit)}`);
+    }
     url.searchParams.set("limit", String(limit));
     if (query.offset !== undefined) {
-      if (!Number.isSafeInteger(query.offset) || query.offset < 0) throw new TypeError("PostgREST query offset must be a non-negative safe integer");
+      if (!Number.isSafeInteger(query.offset) || query.offset < 0) {
+        throw new TypeError("PostgREST query offset must be a non-negative safe integer");
+      }
+      if (query.offset > this.#maxQueryOffset) {
+        throw new UnsupportedError(`PostgREST query offset above ${String(this.#maxQueryOffset)}`);
+      }
       url.searchParams.set("offset", String(query.offset));
     }
-    return { url, limit };
+    if (!cursorMode) return { url, limit };
+
+    const continuationBinding = this.cursorBinding(query, orders, limit);
+    let page = 1;
+    if (query.startAfter !== undefined) {
+      if (query.startAfter.values.length !== 1 || typeof query.startAfter.values[0] !== "string") {
+        throw new PostgrestCursorError("malformed");
+      }
+      const decoded = decodePostgrestCursor(query.startAfter.values[0], continuationBinding, this.#maxCursorBytes);
+      page = decoded.page;
+      if (page > this.#maxQueryPages) {
+        throw new UnsupportedError(`PostgREST query cursor page above ${String(this.#maxQueryPages)}`);
+      }
+      url.searchParams.set("or", postgrestKeysetFilter(orders, decoded.values));
+    }
+    return { url, limit, continuation: { binding: continuationBinding, page: page + 1, orders } };
   }
+
+  private cursorOrders(orders: readonly { readonly field: string; readonly direction: "asc" | "desc" }[]): readonly PostgrestCursorOrder[] {
+    const mapped: PostgrestCursorOrder[] = [];
+    const seen = new Set<string>();
+    for (const order of orders) {
+      if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("PostgREST query order directions");
+      const field = order.field === DOCUMENT_ID ? this.#idColumn : identifier(String(order.field), "order field");
+      if (seen.has(field)) throw new UnsupportedError("PostgREST duplicate query order fields");
+      seen.add(field);
+      mapped.push({ field, direction: order.direction });
+    }
+    if (!seen.has(this.#idColumn)) mapped.push({ field: this.#idColumn, direction: "asc" });
+    return mapped;
+  }
+
+  private legacyOrders(orders: readonly { readonly field: string; readonly direction: "asc" | "desc" }[]): readonly PostgrestCursorOrder[] {
+    return orders.map((order) => {
+      if (order.direction !== "asc" && order.direction !== "desc") throw new UnsupportedError("PostgREST query order directions");
+      return {
+        field: order.field === DOCUMENT_ID ? this.#idColumn : identifier(String(order.field), "order field"),
+        direction: order.direction,
+      };
+    });
+  }
+
+  private cursorBinding<T>(
+    query: StructuredQuery<T>,
+    orders: readonly PostgrestCursorOrder[],
+    limit: number,
+  ): PostgrestCursorBinding {
+    return {
+      endpoint: this.#baseUrl,
+      collection: query.source.name,
+      relation: this.relationForCollection(query.source.name),
+      ...(this.#schema === undefined ? {} : { schema: this.#schema }),
+      idColumn: this.#idColumn,
+      select: "*",
+      filters: query.filters.map((filter) => filterParameter(filter, this.#idColumn)),
+      orders,
+      limit,
+      ...(this.#identityScope === undefined ? {} : { identityScope: this.#identityScope }),
+    };
+  }
+
+  /** Read-only provider metadata. It never calls an administration endpoint. */
+  public async discover(signal?: AbortSignal): Promise<PostgrestDiscovery> {
+    if (signal?.aborted === true) throw new QueryCancelledError("caller");
+    try {
+      const body = await this.request(
+        new URL(this.#baseUrl),
+        "GET",
+        { accept: "application/openapi+json, application/json;q=0.9" },
+        undefined,
+        (response, readSignal, cancelled) => this.metadataBody(response, readSignal, cancelled),
+        signal,
+      );
+      const parsed = parsePostgrestOpenApi(body, {
+        idColumn: this.#idColumn,
+        maxRelations: this.#maxDiscoveryRelations,
+        maxFieldsPerRelation: this.#maxDiscoveryFields,
+        maxSchemaDepth: this.#maxSchemaDepth,
+      });
+      if (parsed.status === "unavailable") {
+        return this.discoveryUnavailable(parsed.reason, parsed.detail, 200);
+      }
+      return {
+        adapter: "@dal-go/dalgo2postgrest",
+        protocol: "postgrest-openapi",
+        endpoint: this.#baseUrl,
+        ...(this.#schema === undefined ? {} : { schema: this.#schema }),
+        status: "available",
+        detail: "read-only OpenAPI metadata is available for the request role",
+        relations: parsed.relations,
+        relationCount: parsed.relationCount,
+        truncated: parsed.truncated,
+        omittedRelations: parsed.omittedRelations,
+        bounds: this.discoveryBounds,
+      };
+    } catch (error) {
+      if (error instanceof QueryCancelledError) throw error;
+      if (error instanceof PostgrestHttpError) {
+        if (error.status === 401) {
+          return this.discoveryUnavailable("unauthorized", "PostgREST metadata requires a valid user identity", error.status);
+        }
+        if (error.status === 403) {
+          return this.discoveryUnavailable("forbidden", "PostgREST metadata is not permitted for this identity", error.status);
+        }
+        if (error.status === 404 || error.status === 405) {
+          return this.discoveryUnavailable("metadata-disabled", "PostgREST OpenAPI metadata is disabled or not available at this endpoint", error.status);
+        }
+        return this.discoveryUnavailable("request-failed", "PostgREST metadata request failed", error.status);
+      }
+      return this.discoveryUnavailable("request-failed", "PostgREST metadata request could not be completed");
+    }
+  }
+
+  /** A safe UI-factory preflight: proves transport, headers and metadata access. */
+  public async testConnection(signal?: AbortSignal): Promise<PostgrestConnectionStatus> {
+    const discovery = await this.discover(signal);
+    if (discovery.status === "available") {
+      return {
+        ok: true,
+        status: "connected",
+        relationCount: discovery.relationCount,
+        ...(this.#schema === undefined ? {} : { schema: this.#schema }),
+        detail: "PostgREST connection, identity and metadata access succeeded",
+      };
+    }
+    if (discovery.reason === "no-relations") {
+      return {
+        ok: true,
+        status: "connected",
+        relationCount: 0,
+        ...(this.#schema === undefined ? {} : { schema: this.#schema }),
+        detail: discovery.detail,
+      };
+    }
+    const status = discovery.reason === "unauthorized"
+      ? "unauthorized"
+      : discovery.reason === "forbidden"
+        ? "forbidden"
+        : discovery.reason === "metadata-disabled"
+          ? "metadata-disabled"
+          : discovery.reason === "malformed-metadata"
+            ? "metadata-malformed"
+            : "unreachable";
+    return {
+      ok: false,
+      status,
+      ...(discovery.httpStatus === undefined ? {} : { httpStatus: discovery.httpStatus }),
+      ...(this.#schema === undefined ? {} : { schema: this.#schema }),
+      detail: discovery.detail,
+    };
+  }
+
+  private get discoveryBounds(): PostgrestDiscoveryBounds {
+    return {
+      maxRelations: this.#maxDiscoveryRelations,
+      maxFieldsPerRelation: this.#maxDiscoveryFields,
+      maxMetadataBytes: this.#maxDiscoveryBytes,
+      maxSchemaDepth: this.#maxSchemaDepth,
+    };
+  }
+
+  private discoveryUnavailable(
+    reason: PostgrestDiscoveryReason,
+    detail: string,
+    httpStatus?: number,
+  ): PostgrestDiscovery {
+    return {
+      adapter: "@dal-go/dalgo2postgrest",
+      protocol: "postgrest-openapi",
+      endpoint: this.#baseUrl,
+      ...(this.#schema === undefined ? {} : { schema: this.#schema }),
+      status: "unavailable",
+      reason,
+      detail,
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      relations: [],
+      relationCount: 0,
+      truncated: false,
+      omittedRelations: 0,
+      bounds: this.discoveryBounds,
+    };
+  }
+
+  private readonly metadataBody = async (
+    response: Response,
+    signal: AbortSignal,
+    cancelled: () => Error,
+  ): Promise<unknown> => {
+    const body = await readJson(response, this.#maxDiscoveryBytes, signal, cancelled);
+    if (body === undefined) throw new TypeError("PostgREST metadata response was empty");
+    return body;
+  };
 
   public async runReadwriteTransaction<Result>(
     callback: (transaction: ReadwriteTransaction) => Promise<Result>,
@@ -364,8 +686,12 @@ export class PostgrestDatabase implements Database, WriteSession {
     return this.relationUrlForCollection(key.collection);
   }
 
+  private relationForCollection(collection: string): string {
+    return identifier(this.#relationName(collection), "relation");
+  }
+
   private relationUrlForCollection(collection: string): URL {
-    return new URL(encodeURIComponent(identifier(this.#relationName(collection), "relation")), this.#baseUrl);
+    return new URL(encodeURIComponent(this.relationForCollection(collection)), this.#baseUrl);
   }
 
   private keyUrl(key: Key): URL {
@@ -380,6 +706,13 @@ export class PostgrestDatabase implements Database, WriteSession {
 
   private writeHeaders(prefer: string): Record<string, string> {
     return { accept: "application/json", "content-type": "application/json", prefer };
+  }
+
+  private profileHeaders(method: string): Record<string, string> {
+    if (this.#schema === undefined) return {};
+    return method === "GET" || method === "HEAD"
+      ? { "accept-profile": this.#schema }
+      : { "content-profile": this.#schema };
   }
 
   private readonly discard = async (response: Response): Promise<void> => {
@@ -415,6 +748,7 @@ export class PostgrestDatabase implements Database, WriteSession {
       }
       if (provided !== undefined) validateHeaders(provided);
       const headers = new Headers(provided);
+      for (const [name, value] of Object.entries(this.profileHeaders(method))) headers.set(name, value);
       for (const [name, value] of Object.entries(requiredHeaders)) headers.set(name, value);
       if (scope.signal.aborted) throw cancelled();
       const pending = Promise.resolve().then(() => this.#fetch(url, {

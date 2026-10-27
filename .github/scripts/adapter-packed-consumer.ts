@@ -8,7 +8,9 @@ import {
   POSTGREST_READ_CAPABILITIES,
   PostgrestDatabase,
   PostgrestRequestError,
+  type PostgrestConnectionStatus,
   type PostgrestDatabaseOptions,
+  type PostgrestDiscovery,
 } from "@dal-go/dalgo2postgrest";
 import {
   isCancellableQueryExecutor,
@@ -49,6 +51,8 @@ const items = collection<{ done: boolean }>("items");
 const query: StructuredQuery<{ done: boolean }> = items.query().limit(1).build();
 const postPage: Promise<QueryPage<{ done: boolean }>> = postgrest.queryWithSignal(query, signal);
 const couchPage: Promise<QueryPage<{ done: boolean }>> = couch.queryWithSignal(query, signal);
+const postDiscovery: Promise<PostgrestDiscovery> = postgrest.discover(signal);
+const postConnection: Promise<PostgrestConnectionStatus> = postgrest.testConnection(signal);
 
 // The callback parameter must be the modern @dalgo/core type, not a legacy
 // @dal-go/dalgo type and not `any`.
@@ -64,6 +68,8 @@ void postgrestCancellable;
 void couchCancellable;
 void postPage;
 void couchPage;
+void postDiscovery;
+void postConnection;
 void postTransaction;
 void couchTransaction;
 void PostgrestRequestError;

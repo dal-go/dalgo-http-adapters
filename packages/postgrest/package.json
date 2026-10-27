@@ -21,7 +21,8 @@
     "check": "eslint . && vitest run && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json",
     "lint": "eslint .",
     "prepack": "npm run build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:real": "node scripts/real-postgrest.mjs"
   },
   "repository": {
     "type": "git",

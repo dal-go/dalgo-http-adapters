@@ -194,7 +194,12 @@ try {
   );
   const runtime = JSON.parse(run(process.execPath, ["runtime.mjs"], { cwd: consumer }).trim());
   assert.deepEqual(runtime, {
-    postgrest: { queryWithSignal: "function", runReadwriteTransaction: "function" },
+    postgrest: {
+      queryWithSignal: "function",
+      discover: "function",
+      testConnection: "function",
+      runReadwriteTransaction: "function",
+    },
     couch: { queryWithSignal: "function", runReadwriteTransaction: "function" },
   });
 
