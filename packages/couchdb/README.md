@@ -3,7 +3,9 @@
 `@dal-go/dalgo2couchdb` is a deliberately bounded TypeScript adapter from
 [`@dalgo/core`](https://github.com/dal-go/dalgo-js) to an existing Apache
 CouchDB database using its document and [Mango query API](https://docs.couchdb.org/en/stable/api/database/find.html).
-It does not call CouchDB administration, user, cluster, or configuration APIs.
+It offers two explicit storage modes: a managed `__dalgo_*` envelope, and a
+read-only native application-document mode that never writes an envelope. It
+does not call CouchDB administration, user, cluster, or configuration APIs.
 
 ## Security and browser boundary
 
@@ -21,8 +23,9 @@ origin allowlist, authentication scheme, cookie policy, proxy boundary, token
 audience, and database permissions remains application work.
 
 The package source is browser-safe and imports no Node built-in. A real browser
-journey, CORS policy, and the DataTug web UI are separate verification gates and
-are not claimed by the package tests.
+CORS proof against a disposable CouchDB is included as a package script, but
+the DataTug form/factory/query-session wiring and the whole DataTug UI journey
+remain separate verification gates and are not claimed by the package tests.
 
 ## Install
 
@@ -92,11 +95,144 @@ must re-read and decide how to merge their own data. This follows CouchDB's
 and [DELETE](https://docs.couchdb.org/en/stable/api/document/common.html#delete--db-docid)
 revision rules.
 
-This is the **managed-envelope** layout. Reading pre-existing application
-documents without that envelope, and native Mango pass-through, are future work;
-the capability constants below do not claim them.
+This is the **managed-envelope** layout used by `CouchDbDatabase`. It is not the
+only supported layout: `NativeCouchDbDatabase` reads pre-existing application
+documents without that envelope and is described below. The managed
+`COUCHDB_READ_CAPABILITIES` constant deliberately does not claim native reading.
 
-## Supported DALgo surface
+## Native application-document mode (read-only)
+
+`NativeCouchDbDatabase` exposes existing CouchDB documents. One configured
+CouchDB database maps to exactly **one configured logical DALgo collection**;
+the adapter never infers schema-less collections inside it. No `__dalgo_*` or
+`data` envelope is written or required.
+
+```ts
+import { collection } from "@dalgo/core";
+import { NativeCouchDbDatabase } from "@dal-go/dalgo2couchdb";
+
+const db = new NativeCouchDbDatabase({
+  databaseUrl: "https://couch.example.com/app",
+  collection: "items",
+  headers: async () => ({ authorization: `Bearer ${await getFreshCouchToken()}` }),
+  permittedIndexes: [{
+    ddoc: "_design/status-id",
+    name: "status-id-index",
+    fields: [
+      { field: "status", direction: "asc" },
+      { field: "_id", direction: "asc" },
+    ],
+  }],
+});
+
+const items = collection<{ title: string; status: string }>("items");
+const page = await db.queryWithSignal({
+  ...items.query().where("status", "==", "open").orderBy("status").limit(20).build(),
+  projection: ["_id", "title"],
+}, signal);
+```
+
+The type-checked version is [examples/native.ts](examples/native.ts).
+
+| CouchDB document | Native DALgo mapping |
+| --- | --- |
+| `_id` (string) | `Key.id` and the preserved `data._id` field. |
+| `_rev` | `RecordSnapshot.metadata.revision` and the preserved `data._rev` field when returned. |
+| other fields | Returned unchanged in `data`; nested values, explicit `null` and arrays are never flattened or rewritten. |
+| configured database | The only resource exposed; `Key.collection` must equal `collection` and nested keys are refused. |
+
+A projection is an additive `NativeCouchDbQuery` option, because the modern
+`@dalgo/core` `StructuredQuery` has no projection member. A projection must
+explicitly include `_id`; CouchDB otherwise omits it, and the adapter refuses
+that projection before HTTP rather than dropping the native ID. When `_rev` is
+not projected, `metadata` contains `id` but no fabricated revision. The
+`/app` database in a real fixture can be queried directly; cluster
+`_all_dbs`, administration, user and configuration endpoints are never called.
+
+### Read-only guarantee
+
+`NativeCouchDbDatabase` implements the read/query side of `Database` and
+deliberately does not implement the `WriteSession` contract. `insert`, `set`, `update`, `delete` and
+`runReadwriteTransaction` still exist as explicit runtime refusals: each
+rejects with `UnsupportedError` before any HTTP request. `readOnly` is `true`.
+Use the managed `CouchDbDatabase` or a different adapter for writes.
+
+### Filters, NULL and missing values
+
+Supported filters are simple top-level fields plus `_id`/`_rev`; `DOCUMENT_ID`
+maps to `_id`. Operators are `==`, `!=`, `<`, `<=`, `>`, `>=`, `in` and
+`not-in`. Complex/dotted paths, array operators, `undefined`, and null with
+ordering operators are refused before I/O. CouchDB's own semantics are kept:
+
+- `field == null` matches an explicitly stored JSON `null` only.
+- `field != null` matches a present, non-null value only.
+- A missing field matches neither expression. Missing is not silently treated
+  as `null`, and the adapter has no `$exists` escape hatch.
+
+### Ordered queries and allowed indexes
+
+An unordered query is bounded by `limit` and the Mango bookmark; CouchDB chooses
+the index. An ordered DALgo query is admitted **only** when:
+
+1. all sort directions are the same;
+2. `_id` is the final sort field (the adapter appends it when omitted);
+3. a configured `permittedIndexes` entry has exactly those fields and
+   directions;
+4. at least one requested sort field has an equality, range or `in` filter, as
+   CouchDB's Mango index selection requires.
+
+The request sends that index with `use_index` and `allow_fallback: false`. A
+missing/mismatched index, mixed direction, or unfiltered sort is rejected before
+HTTP; the adapter never claims a generic sort fallback. There is no raw Mango
+selector or sort escape hatch.
+
+### Bookmarks, projection and cursor binding
+
+`queryWithSignal(query, signal)` combines the caller abort with one end-to-end
+deadline covering header acquisition, fetch, body reading and each continuation
+request. A pre-aborted caller performs no header/fetch work, and a late body is
+cancelled rather than returned.
+
+Pages use the configured `limit` (default 100, hard maximum 1,000). A full page
+must include a Mango bookmark; if CouchDB omits it, the adapter throws rather
+than reporting a false completion. `nextCursor` contains one opaque adapter
+token bound to:
+
+- adapter instance and normalized endpoint;
+- configured collection;
+- filters, sort and projection;
+- effective page size;
+- credential scope.
+
+Changing any of those, reusing a consumed cursor, or using a cursor from another
+adapter instance is refused. `startAt`, `endAt`, `endBefore` and `offset` are
+refused; only `startAfter` continues a native query. Cursor tokens are never
+logged, and their filter/credential bindings are keyed digests rather than raw
+values. Because a header-refreshed token changes the implicit credential scope,
+long-lived pagination should pass a stable non-secret `cursorScope` (for example
+a user/session identifier) or re-issue the query. The legacy `query` method uses
+the same configured deadline without a caller signal; a deadline surfaces as
+`QueryCancelledError` with reason `deadline`.
+
+### Connection, index and field discovery
+
+`NativeCouchDbDatabase` uses only the configured database endpoints:
+
+| Method | Request | Result |
+| --- | --- | --- |
+| `testConnection(signal?)` | `GET /{db}` | Discriminated `{ ok: true, database }` or `{ ok: false, reason, httpStatus? }`. |
+| `listIndexes(signal?)` | `GET /{db}/_index` | Available index definitions, or explicit `unavailable`/denied reason. |
+| `sampleFields(signal?)` | bounded `GET /{db}/_all_docs?include_docs=true&limit=N` | Top-level fields labelled `sampled`, with `sampleSize` and conservative `truncated`. |
+| `describe(signal?)` | the above | Resource, connection, indexes, field provenance and configured limits. |
+
+If `configuredFields` is supplied, fields are labelled `configured` and no
+sampling request is made. Metadata bodies are bounded by `maxMetadataBytes`
+(default 256 KiB), discovery by `maxSampleDocuments` (default 20) and
+`maxIndexes` (default 100), and requests by the same `timeoutMs`,
+`maxRequestBytes` and `maxResponseBytes` transport. Missing, denied or malformed
+metadata is never converted into a successful empty database.
+
+## Managed-envelope surface
 
 | DALgo operation | CouchDB mapping |
 | --- | --- |
@@ -163,43 +299,94 @@ Legacy `query` keeps its interface and success behaviour.
 | discovery | unsupported | no schema/index discovery |
 | bounds | enforced | `maxQueryLimit` 100/1000, request/response 1 MiB/16 MiB |
 
-The exported constant is `COUCHDB_READ_CAPABILITIES`; `storage` is
+The exported managed constant is `COUCHDB_READ_CAPABILITIES`; `storage` is
 `"managed-envelope"` and `bounds` contains the constructor default and hard
 maximum for each numeric limit.
 
+The native constant is `NATIVE_COUCHDB_READ_CAPABILITIES` (also available as
+`db.capabilities` on `NativeCouchDbDatabase`):
+
+| Feature | Status | Bound / reason |
+| --- | --- | --- |
+| read/get, read/getMany | native | native `_id`; `getMany` max 100 keys, 8 parallel reads by default |
+| projection | native | optional Mango `fields`; `_id` is mandatory and preserved |
+| filter | native | simple top-level fields plus `_id`/`_rev`; explicit-null vs present-non-null vs missing semantics |
+| sort | configured | only a permitted index matching the full order plus `_id`; fallback disabled |
+| pagination | native | stable limit plus a query/resource/instance/credential-bound bookmark cursor |
+| joins, aggregation, grouping, subquery, fulltext, timeseries | unsupported | refused before HTTP |
+| native query | unsupported | no raw Mango selector/order escape hatch |
+| discovery | native | `GET /{db}`, `GET /{db}/_index`, bounded `_all_docs`; no cluster `_all_dbs` |
+| bounds | enforced | query 100/1000, request/response 1 MiB/16 MiB, metadata 256 KiB, sample 20, indexes 100 |
+
+`describe().limits` reports the actual instance bounds, including
+`maxMetadataBytes`, `maxSampleDocuments` and `maxIndexes`.
+
 ## Intentional limitations
 
-- `update` is rejected. Turning a DALgo partial update into a read-modify-write
-  would conceal an MVCC race.
+- `update` is rejected in both modes. Turning a DALgo partial update into a
+  read-modify-write would conceal an MVCC race.
 - Callback transactions and `_bulk_docs` ACID claims are rejected. CouchDB has
   per-document MVCC, not the DALgo callback transaction/retry contract.
-- Collection-group and nested-collection queries, ordering, offsets, inclusive
-  or end cursors, null/undefined filters, complex field paths, array filters,
-  attachments, and management APIs are not implemented.
+- The managed adapter refuses collection-group/nested queries, ordering,
+  offsets, inclusive/end cursors, null/undefined filters, complex field paths,
+  array filters and attachments.
+- Native mode refuses all writes and offers no raw Mango selector, `$exists`,
+  `$regex`, `$or`, array, full-text, join, grouping or aggregation escape hatch.
+  It supports one configured collection per database instance and no nested
+  keys. Ordering requires a matching index that ends in `_id`; Mango's
+  same-direction rule is enforced.
+- `NativeCouchDbDatabase.describe()` samples at most `maxSampleDocuments`
+  documents to label top-level fields. Sampling is not a schema, completeness or
+  authorization claim; pass `configuredFields` for a deliberate label.
 - CouchDB's [`_changes` feed](https://docs.couchdb.org/en/stable/api/database/changes.html)
   can provide a continuous or long-poll change stream, but DALgo currently has
   no realtime/change-feed contract. This adapter deliberately does not expose it.
 - Defaults are a 15-second timeout, 1 MiB request/response limits, `getMany`
-  maximum 100, 8 parallel reads, and Mango query maximum 100 (each configurable
-  within hard caps). Oversized response streams are cancelled without waiting.
-  HTTP error bodies are intentionally redacted; `CouchDbHttpError` exposes only
-  the status.
+  maximum 100, 8 parallel reads, native metadata 256 KiB, field sample 20,
+  index discovery 100, and Mango query maximum 100 (each configurable within
+  hard caps). Oversized response streams are cancelled without waiting. HTTP
+  error bodies are intentionally redacted; `CouchDbHttpError` exposes only the
+  status, and native metadata failures expose a reason and optional HTTP status,
+  never a response body.
 
 ## Verification
 
 `pnpm check` runs ESLint, deterministic Vitest HTTP-contract tests, declaration
-build, and type checks of the minimal example. Tests inject `fetch` and
-in-memory streams; they do not contact a CouchDB server and are not a live
-CouchDB acceptance test. They cover caller abort before headers, while headers
-are pending, in flight, and while the body is hanging, the deadline in the same
-phases, late-response cleanup, no later page request, redaction of arbitrary
-transport `RangeError`s while retaining adapter-owned bounds diagnostics,
-oversized query-page rejection before decoding, and legacy query behaviour.
+build, and type checks of the minimal examples. Unit tests inject `fetch` and
+in-memory streams; they cover managed regressions plus native reads/mapping,
+native NULL/missing filters, projection, index-matched ordering, exact bounds,
+cursor binding/change/foreign/reuse, malformed docs and index payloads, metadata
+denial/unavailability, read-only refusals, caller/deadline cancellation through
+headers/fetch/body, and redaction. They do not contact a CouchDB server.
+
+The gated [native-live.test.ts](test/native-live.test.ts) suite runs against a
+disposable CouchDB when `COUCHDB_NATIVE_URL` (plus optional
+`COUCHDB_NATIVE_USER`, `COUCHDB_NATIVE_PASSWORD`, `COUCHDB_NATIVE_INDEX_DDOC`,
+`COUCHDB_NATIVE_INDEX_NAME`) is set; otherwise it is skipped. It verifies real
+native documents, NULL/missing semantics, index-backed pagination, metadata
+discovery, bad auth, byte/batch bounds and transport redaction with the actual
+platform `fetch`.
+
+[scripts/browser-native-smoke.mjs](scripts/browser-native-smoke.mjs) bundles the
+actual class and runs it in Chromium with real browser `fetch` against a
+disposable CouchDB whose CORS allowlist names the exact page origin. It is a
+package-level browser proof, run from a workspace that provides Playwright and
+esbuild:
+
+```sh
+cd packages/sqlite-wasm
+COUCHDB_NATIVE_URL=http://127.0.0.1:<db-port>/app \
+COUCHDB_NATIVE_BROWSER_ORIGIN=http://127.0.0.1:<page-port>/ \
+node ../couchdb/scripts/browser-native-smoke.mjs
+```
+
 `pnpm check:packed-consumer` additionally packs the published artifacts into a
 fresh directory outside the repository, installs only those tarballs plus the
 exact modern `@dalgo/core` commit, and type-checks and runs the packed
-declarations with no `@dal-go/dalgo` package available. A real CouchDB container
-and the DataTug UI remain separate gates.
+declarations with no `@dal-go/dalgo` package available, including the native
+facade. A DataTug form/factory/query-session wiring and the whole DataTug UI
+journey remain separate owner gates and are not claimed here. The real browser
+proof above does not claim DataTug UI integration.
 
 The package manifest, exports, `prepack`, `publishConfig` and changeset are ready
 for the repository's Changesets pattern, but no npm publication or DataTug UI

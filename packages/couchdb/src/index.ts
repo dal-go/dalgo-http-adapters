@@ -1,4 +1,9 @@
-export { COUCHDB_READ_CAPABILITIES, type CouchDbReadCapabilities } from "./capabilities.js";
+export {
+  COUCHDB_READ_CAPABILITIES,
+  NATIVE_COUCHDB_READ_CAPABILITIES,
+  type CouchDbReadCapabilities,
+  type NativeCouchDbReadCapabilities,
+} from "./capabilities.js";
 export {
   CouchDbConflictError,
   CouchDbDatabase,
@@ -9,3 +14,21 @@ export {
   type CouchDbHeaders,
   type CouchDbHeaderProvider,
 } from "./database.js";
+export {
+  NativeCouchDbDatabase,
+  type NativeCouchDbConnectionTest,
+  type NativeCouchDbDatabaseInfo,
+  type NativeCouchDbDatabaseOptions,
+  type NativeCouchDbDescribe,
+  type NativeCouchDbDiscoveredIndex,
+  type NativeCouchDbDiscoveredIndexField,
+  type NativeCouchDbFetch,
+  type NativeCouchDbFieldDiscovery,
+  type NativeCouchDbHeaders,
+  type NativeCouchDbHeaderProvider,
+  type NativeCouchDbIndex,
+  type NativeCouchDbIndexDiscovery,
+  type NativeCouchDbIndexField,
+  type NativeCouchDbMetadataFailure,
+  type NativeCouchDbQuery,
+} from "./native.js";
