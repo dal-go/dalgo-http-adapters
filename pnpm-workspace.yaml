@@ -9,6 +9,13 @@ overrides:
   "@dalgo/bigquery>@dalgo/core": "0.1.0"
   "@dalgo/core": "github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336"
   "@dalgo/indexeddb>@dalgo/core": "0.8.0"
+  # The DataTug web UI pins @dalgo/core 0.7.4 at this commit. The shared
+  # browser runtime and the two reference adapters use exactly that commit so
+  # the browser never contains two Key/Query identities. Swap all three for a
+  # published core release when the consumer upgrade is deliberate.
+  "@dalgo/adapter-runtime>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
+  "@dal-go/dalgo2couchdb>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
+  "@dal-go/dalgo2postgrest>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
   # dalgo-js 24eb5b7 builds as @dalgo/core 0.7.4 and includes the capabilities
   # types. The 0.7.4 on npm lacks them, so ovdb (GitHub-path client) is pinned
   # to this commit until a core release published with them replaces it.
@@ -21,6 +28,7 @@ allowBuilds:
   "@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d": true
   "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336": true
   "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42": true
+  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559": true
   "@firebase/util@1.15.3": false
   "esbuild@0.28.2": false
   "protobufjs@7.6.6": false
