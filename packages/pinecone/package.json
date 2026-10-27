@@ -23,7 +23,7 @@
   "engines": { "node": ">=24" },
   "peerDependencies": { "@dal-go/dalgo": "^0.1.0" },
   "devDependencies": {
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d",
+    "@dal-go/dalgo": "github:dal-go/dalgo-js#6ccf83cd87d71cef188a25c2a8e6e184eea711a5",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",
