@@ -62,7 +62,7 @@
     "@dalgo/core": "^0.8.0",
     "@dalgo/sqlite-sql": "workspace:^",
     "@eslint/js": "10.0.1",
-    "@playwright/test": "1.64.0",
+    "@playwright/test": "1.64.1",
     "@sqlite.org/sqlite-wasm": "3.53.4-build2",
     "@types/node": "26.6.2",
     "@vitest/coverage-v8": "5.0.1",
