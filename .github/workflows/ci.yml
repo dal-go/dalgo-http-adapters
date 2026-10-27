@@ -80,7 +80,7 @@ jobs:
           node .github/scripts/prepare-ovdb-release.mjs verify "$artifact" "$source_sha" "$version" "$artifact/tested-artifact.json"
       - name: Retain OVDB consumer and artifact receipts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ovdb-artifact-${{ github.sha }}
           path: ${{ runner.temp }}/ovdb-artifact
@@ -120,7 +120,7 @@ jobs:
           node .github/scripts/prepare-bigquery-release.mjs verify "$artifact" "$source_sha" "$version" "$artifact/tested-artifact.json"
       - name: Retain BigQuery compatibility receipts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bigquery-core-${{ github.sha }}
           path: ${{ runner.temp }}/bigquery-core-artifact
@@ -190,7 +190,7 @@ jobs:
         run: pnpm --filter @dalgo/sqlite-wasm test:browser --project=chromium --project=firefox
       - name: Retain Playwright results
         if: failure() && steps.changes.outputs.run == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sqlite-wasm-browsers-${{ github.sha }}
           path: packages/sqlite-wasm/test-results

@@ -367,21 +367,21 @@ jobs:
           done
       - name: Retain BigQuery release artifact and gate receipts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bigquery-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           path: ${{ runner.temp }}/bigquery-release
           if-no-files-found: ignore
       - name: Retain HTTP release artifact and gate receipts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: http-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           path: ${{ runner.temp }}/http-release
           if-no-files-found: ignore
       - name: Retain OVDB release artifact and gate receipts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ovdb-release-${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
           path: ${{ runner.temp }}/ovdb-release
