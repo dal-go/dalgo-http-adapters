@@ -14,7 +14,9 @@ import {
   POSTGREST_READ_CAPABILITIES,
   PostgrestDatabase,
   PostgrestRequestError,
+  type PostgrestConnectionStatus,
   type PostgrestDatabaseOptions,
+  type PostgrestDiscovery,
 } from "@dal-go/dalgo2postgrest";
 import {
   isCancellableQueryExecutor,
@@ -75,6 +77,8 @@ const nativeQuery: NativeCouchDbQuery<{ done: boolean }> = { ...query, projectio
 const nativePage: Promise<QueryPage<{ done: boolean }>> = nativeCouch.queryWithSignal(nativeQuery, signal);
 const nativeConnection: Promise<NativeCouchDbConnectionTest> = nativeCouch.testConnection(signal);
 const nativeDescription: Promise<NativeCouchDbDescribe> = nativeCouch.describe(signal);
+const postDiscovery: Promise<PostgrestDiscovery> = postgrest.discover(signal);
+const postConnection: Promise<PostgrestConnectionStatus> = postgrest.testConnection(signal);
 
 // The callback parameter must be the modern @dalgo/core type, not a legacy
 // @dal-go/dalgo type and not `any`.
@@ -95,6 +99,8 @@ void couchPage;
 void nativePage;
 void nativeConnection;
 void nativeDescription;
+void postDiscovery;
+void postConnection;
 void postTransaction;
 void couchTransaction;
 void PostgrestRequestError;

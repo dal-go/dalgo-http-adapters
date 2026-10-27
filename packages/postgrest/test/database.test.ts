@@ -37,7 +37,7 @@ describe("PostgrestDatabase", () => {
       key: key("items", "milk"), exists: true, data: { done: false },
     });
 
-    expect(fetch.mock.calls[0]?.[0].toString()).toBe("https://api.example.com/rest/v1/items?id=eq.%22milk%22&select=*&limit=1");
+    expect(fetch.mock.calls[0]?.[0].toString()).toBe("https://api.example.com/rest/v1/items?id=eq.milk&select=*&limit=1");
     expect(header(fetch, "authorization")).toBe("Bearer opaque");
     expect(header(fetch, "accept")).toBe("application/json");
     expect(headers).toHaveBeenCalledTimes(1);
@@ -55,7 +55,7 @@ describe("PostgrestDatabase", () => {
     fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: true }]));
     await db.set(key("items", "milk"), { done: true });
     expect(request(fetch, 1).method).toBe("PUT");
-    expect(fetch.mock.calls[1]?.[0].toString()).toContain("id=eq.%22milk%22");
+    expect(fetch.mock.calls[1]?.[0].toString()).toContain("id=eq.milk");
     expect(header(fetch, "prefer", 1)).toBe("return=representation");
     expect(JSON.parse(request(fetch, 1).body as string)).toEqual({ id: "milk", done: true });
     expect(JSON.parse(request(fetch, 1).body as string)).not.toHaveProperty("legacyField");
@@ -64,7 +64,7 @@ describe("PostgrestDatabase", () => {
     fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: true }]));
     await db.update(key("items", "milk"), { done: true });
     expect(request(fetch, 2).method).toBe("PATCH");
-    expect(fetch.mock.calls[2]?.[0].toString()).toContain("id=eq.%22milk%22");
+    expect(fetch.mock.calls[2]?.[0].toString()).toContain("id=eq.milk");
     expect(header(fetch, "prefer", 2)).toBe("handling=strict, max-affected=1, return=representation");
 
     fetch.mockResolvedValueOnce(response(200, []));
@@ -97,6 +97,157 @@ describe("PostgrestDatabase", () => {
     expect(url).toContain("order=priority.desc");
     expect(url).toContain("limit=5");
     expect(url).toContain("offset=2");
+  });
+
+  it("quotes every PostgREST control parameter name used as a filter key", async () => {
+    const { database: db, fetch } = database();
+    const items = collection<{ value: string }>("items");
+    const names = ["select", "columns", "on_conflict", "order", "limit", "offset", "and", "or"];
+    for (const name of names) {
+      fetch.mockResolvedValueOnce(response(200, []));
+      await db.query(items.query().where(name, "==", "x").build());
+      const url = new URL(fetch.mock.calls.at(-1)?.[0].toString() ?? "");
+      // The predicate keeps its own quoted key instead of colliding with, or
+      // being consumed as, the adapter's control parameter of the same name.
+      expect(url.searchParams.getAll(`"${name}"`), name).toEqual(["eq.x"]);
+    }
+    expect(fetch).toHaveBeenCalledTimes(names.length);
+  });
+
+  it("maps DOCUMENT_ID to a quoted configured ID column and quotes its point reads", async () => {
+    const { database: db, fetch } = database({ idColumn: "order" });
+    const items = collection<{ title: string }>("items");
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.query(items.query().where(DOCUMENT_ID, "==", "a").build());
+    const queryUrl = new URL(fetch.mock.calls[0]?.[0].toString() ?? "");
+    expect(queryUrl.searchParams.getAll("\"order\"")).toEqual(["eq.a"]);
+    expect(queryUrl.searchParams.getAll("order")).toEqual([]);
+
+    fetch.mockResolvedValueOnce(response(200, [{ order: "a", title: "Alpha" }]));
+    await expect(db.get<{ title: string }>(key("items", "a"))).resolves.toEqual({
+      key: key("items", "a"), exists: true, data: { title: "Alpha" },
+    });
+    const pointUrl = new URL(fetch.mock.calls[1]?.[0].toString() ?? "");
+    expect(pointUrl.searchParams.getAll("\"order\"")).toEqual(["eq.a"]);
+    expect(pointUrl.searchParams.get("select")).toBe("*");
+    expect(pointUrl.searchParams.get("limit")).toBe("1");
+  });
+
+  it("quotes a control-named configured key on keyed write verbs too", async () => {
+    const { database: db, fetch } = database({ idColumn: "offset" });
+    fetch.mockResolvedValueOnce(response(200, [{ offset: 7, title: "seven" }]));
+    await db.set(key("reserved_ids", 7), { title: "seven" });
+    expect(request(fetch).method).toBe("PUT");
+    expect(new URL(fetch.mock.calls[0]?.[0].toString() ?? "").searchParams.getAll("\"offset\"")).toEqual(["eq.7"]);
+
+    fetch.mockResolvedValueOnce(response(200, [{ offset: 7, title: "updated" }]));
+    await db.update(key("reserved_ids", 7), { title: "updated" });
+    expect(request(fetch, 1).method).toBe("PATCH");
+    expect(new URL(fetch.mock.calls[1]?.[0].toString() ?? "").searchParams.getAll("\"offset\"")).toEqual(["eq.7"]);
+
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.delete(key("reserved_ids", 7));
+    expect(request(fetch, 2).method).toBe("DELETE");
+    expect(new URL(fetch.mock.calls[2]?.[0].toString() ?? "").searchParams.getAll("\"offset\"")).toEqual(["eq.7"]);
+  });
+
+  it("keeps ordinary column names that resemble a control unquoted", async () => {
+    const { database: db, fetch } = database();
+    const items = collection<{ value: string }>("items");
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.query(
+      items.query()
+        .where("order_id", "==", "a")
+        .where("limiters", "==", "b")
+        .where("columns_count", "==", "c")
+        .where("ordinary", "==", "d")
+        .where("android", "==", "e")
+        .build(),
+    );
+    const url = new URL(fetch.mock.calls[0]?.[0].toString() ?? "");
+    expect(url.searchParams.getAll("order_id")).toEqual(["eq.a"]);
+    expect(url.searchParams.getAll("limiters")).toEqual(["eq.b"]);
+    expect(url.searchParams.getAll("columns_count")).toEqual(["eq.c"]);
+    expect(url.searchParams.getAll("ordinary")).toEqual(["eq.d"]);
+    expect(url.searchParams.getAll("android")).toEqual(["eq.e"]);
+  });
+
+  it("keeps the actual URL for supported equality, range and IN filters", async () => {
+    const { database: db, fetch } = database({ maxQueryLimit: 10 });
+    const items = collection<{ title: string; priority: number }>("items");
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.query(
+      items.query()
+        .where("title", "==", "Alpha")
+        .where("priority", ">=", 2)
+        .where(DOCUMENT_ID, "in", ["a", "b"])
+        .limit(2)
+        .build(),
+    );
+    const url = new URL(fetch.mock.calls[0]?.[0].toString() ?? "");
+    expect(url.pathname).toBe("/rest/v1/items");
+    expect(url.searchParams.getAll("select")).toEqual(["*"]);
+    expect(url.searchParams.getAll("title")).toEqual(["eq.Alpha"]);
+    expect(url.searchParams.getAll("priority")).toEqual(["gte.2"]);
+    expect(url.searchParams.getAll("id")).toEqual(["in.(\"a\",\"b\")"]);
+    expect(url.searchParams.getAll("limit")).toEqual(["2"]);
+    expect(url.searchParams.get("offset")).toBeNull();
+    expect(url.searchParams.get("or")).toBeNull();
+  });
+
+  it("accepts a control name as the configured ID column because it is always quoted", () => {
+    expect(() => new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      idColumn: "limit",
+    })).not.toThrow();
+    expect(() => new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      idColumn: "order",
+    })).not.toThrow();
+    expect(() => new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      idColumn: "not a column",
+    })).toThrow("id column");
+  });
+
+  it("sends top-level string operands raw and quotes them only in list contexts", async () => {
+    const { database: db, fetch } = database({ maxQueryLimit: 10 });
+    const items = collection<{ title: string; tag: string }>("items");
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.query(
+      items.query()
+        .where("title", "==", "a, b.c")
+        .where("tag", "not-in", ["say \"hi\"", "back\\slash"])
+        .build(),
+    );
+    const url = new URL(fetch.mock.calls[0]?.[0].toString() ?? "");
+    // PostgREST compares a single-value operand literally, so quoting it would
+    // compare the quote characters too (`eq."a"` does not match `a`).
+    expect(url.searchParams.getAll("title")).toEqual(["eq.a, b.c"]);
+    // A membership list is a reserved-character context: quote and escape.
+    expect(url.searchParams.getAll("tag")).toEqual(["not.in.(\"say \\\"hi\\\"\",\"back\\\\slash\")"]);
+  });
+
+  it("refuses unsafe native integers in outgoing filters and record data before HTTP", async () => {
+    const { database: db, fetch } = database();
+    const items = collection<{ priority: number }>("items");
+    await expect(db.query(items.query().where("priority", "==", 2 ** 53).build()))
+      .rejects.toThrow("lossless");
+    await expect(db.insert(key("items", "unsafe"), { priority: 2 ** 53 }))
+      .rejects.toThrow("lossless");
+    await expect(db.insert(key("items", 2 ** 53), { priority: 1 }))
+      .rejects.toThrow("lossless number or string ID");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("emits exact decimal filter literals without rounding them through a safe-integer rule", async () => {
+    const { database: db, fetch } = database({ maxQueryLimit: 10 });
+    const items = collection<{ score: number }>("items");
+    fetch.mockResolvedValueOnce(response(200, []));
+    await db.query(items.query().where("score", ">", 0.1).where("score", "<", 0.30000000000000004).build());
+    const url = new URL(fetch.mock.calls[0]?.[0].toString() ?? "");
+    expect(url.searchParams.getAll("score")).toEqual(["gt.0.1", "lt.0.30000000000000004"]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("rejects unsupported hierarchical queries, cursors, bad filter inputs, and callback transactions", async () => {
