@@ -11,6 +11,7 @@
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "check": "pnpm -r --if-present run check",
+    "check:git-subdir-consumer": "node .github/scripts/check-adapter-git-subdir-consumer.mjs",
     "check:packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs",
     "lint": "pnpm -r --if-present run lint",
     "test": "pnpm -r --if-present run test",
