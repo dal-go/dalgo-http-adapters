@@ -8,7 +8,7 @@ overrides:
   '@dalgo/http>@dalgo/core': 0.8.0
   '@dalgo/d1>@dalgo/core': 0.8.0
   '@dalgo/firestore>@dalgo/core': 0.8.0
-  '@dal-go/dalgo': github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
+  '@dal-go/dalgo': github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
   '@dalgo/bigquery>@dalgo/core': 0.1.0
   '@dalgo/core': github:dal-go/dalgo-js#b863f32d2e92a0784e9633aa0eaa14d2d5528336
   '@dalgo/indexeddb>@dalgo/core': 0.8.0
@@ -23,8 +23,8 @@ importers:
         specifier: 3.0.3
         version: 3.0.3
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -44,8 +44,8 @@ importers:
   packages/algolia:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -66,8 +66,8 @@ importers:
   packages/appwrite:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -88,8 +88,8 @@ importers:
   packages/azure-table:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -134,8 +134,8 @@ importers:
   packages/clickhouse:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -156,8 +156,8 @@ importers:
   packages/cosmosdb:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -178,8 +178,8 @@ importers:
   packages/couchbase:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -200,8 +200,8 @@ importers:
   packages/couchdb:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -249,8 +249,8 @@ importers:
   packages/databricks:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -271,8 +271,8 @@ importers:
   packages/datastore:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -293,8 +293,8 @@ importers:
   packages/dynamodb:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@aws-sdk/client-dynamodb':
         specifier: ^3.1000.0
@@ -321,8 +321,8 @@ importers:
   packages/elasticsearch:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -343,8 +343,8 @@ importers:
   packages/firebase-rtdb:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -443,8 +443,8 @@ importers:
   packages/influxdb:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -465,8 +465,8 @@ importers:
   packages/kusto:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -487,8 +487,8 @@ importers:
   packages/libsql:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -509,8 +509,8 @@ importers:
   packages/neo4j:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -531,8 +531,8 @@ importers:
   packages/neptune:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -553,8 +553,8 @@ importers:
   packages/opensearch:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -600,8 +600,8 @@ importers:
   packages/pinecone:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -622,8 +622,8 @@ importers:
   packages/pocketbase:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -644,8 +644,8 @@ importers:
   packages/postgrest:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -666,8 +666,8 @@ importers:
   packages/qdrant:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -688,8 +688,8 @@ importers:
   packages/rds-data:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@aws-sdk/client-rds-data':
         specifier: ^3.0.0
@@ -716,8 +716,8 @@ importers:
         specifier: ^3.0.0
         version: 3.1136.0
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -738,8 +738,8 @@ importers:
   packages/snowflake:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -760,8 +760,8 @@ importers:
   packages/solr:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -782,8 +782,8 @@ importers:
   packages/spanner:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -869,8 +869,8 @@ importers:
   packages/timestream:
     dependencies:
       '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#04ce7f644fc334da7e471f0be503a7b937c7025d
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d
+        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
+        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -1113,11 +1113,6 @@ packages:
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
 
-  '@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d':
-    resolution: {gitHosted: true, integrity: sha512-g8zbFuq9eZOL2w2REhoNuPZh2OcmxxOvfuMA0cxElUqXXgai0864uaAZ4g21+088GdalzAbY8816Ks0k7p3Seg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d}
-    version: 0.1.0
-    engines: {node: '>=20'}
-
   '@dalgo/core@0.1.0':
     resolution: {integrity: sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==}
     engines: {node: '>=20'}
@@ -1129,6 +1124,11 @@ packages:
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42':
     resolution: {gitHosted: true, integrity: sha512-RUfWJUr2IjhGED/C+IKHiFBOsY38uU5M+nTx/47B7+OemRUCez6m2DXPvPpPXfHJVFvws2jXCV9r3K662Xytjg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42}
     version: 0.7.4
+    engines: {node: '>=20'}
+
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d':
+    resolution: {gitHosted: true, integrity: sha512-cHjKikGNcMABCcwEoT4AG4oMJbevLK5PLS0Q5hg3OyGeedjmY5ftCvy4mUn2Flpcy0+KWxmDiKDnN3Dnz27Xzg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d}
+    version: 0.8.0
     engines: {node: '>=20'}
 
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336':
@@ -3114,8 +3114,6 @@ snapshots:
 
   '@csstools/css-tokenizer@3.0.4': {}
 
-  '@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d': {}
-
   '@dalgo/core@0.1.0': {}
 
   '@dalgo/core@0.8.0':
@@ -3125,6 +3123,10 @@ snapshots:
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42':
     dependencies:
       yaml: 2.8.2
+
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d':
+    dependencies:
+      yaml: 2.9.1
 
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/b863f32d2e92a0784e9633aa0eaa14d2d5528336':
     dependencies:
