@@ -13,7 +13,7 @@ overrides:
   '@dalgo/core': github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
   '@dalgo/indexeddb>@dalgo/core': 0.8.0
   '@dalgo/adapter-runtime>@dalgo/core': github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
-  '@dal-go/dalgo2couchdb>@dalgo/core': github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
+  '@dal-go/dalgo2couchdb>@dalgo/core': github:dal-go/dalgo-js#6ccf83cd87d71cef188a25c2a8e6e184eea711a5
   '@dal-go/dalgo2postgrest>@dalgo/core': github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
   '@dalgo/ovdb>@dalgo/core': github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
   '@dalgo/sqlite-wasm>@dalgo/core': github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42
@@ -228,8 +228,8 @@ importers:
   packages/couchdb:
     dependencies:
       '@dalgo/core':
-        specifier: github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559
+        specifier: github:dal-go/dalgo-js#6ccf83cd87d71cef188a25c2a8e6e184eea711a5
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/6ccf83cd87d71cef188a25c2a8e6e184eea711a5
     devDependencies:
       '@dalgo/adapter-runtime':
         specifier: workspace:^
@@ -1169,13 +1169,18 @@ packages:
     version: 0.7.4
     engines: {node: '>=20'}
 
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/6ccf83cd87d71cef188a25c2a8e6e184eea711a5':
+    resolution: {gitHosted: true, integrity: sha512-ne2A8pUel4cmDN1MbUH0TfbDT1nIG83mcVUd4I7uhbYXGmKObH2T5HuhwSzwrDGPuHk6JT+UgcxR2j9YGmhuEg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/6ccf83cd87d71cef188a25c2a8e6e184eea711a5}
+    version: 0.8.0
+    engines: {node: '>=20'}
+
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d':
     resolution: {gitHosted: true, integrity: sha512-cHjKikGNcMABCcwEoT4AG4oMJbevLK5PLS0Q5hg3OyGeedjmY5ftCvy4mUn2Flpcy0+KWxmDiKDnN3Dnz27Xzg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d}
     version: 0.8.0
     engines: {node: '>=20'}
 
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559':
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559}
+    resolution: {gitHosted: true, integrity: sha512-4/mXXq+vUFYviUaGmxzlmUoxxCC02xnegJhnK+fI0EJ4aNv1b3y2XA+qCCNNOEW3yGwirs8ccf4/bamubjTOgg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559}
     version: 0.7.4
     engines: {node: '>=20'}
 
@@ -3166,6 +3171,10 @@ snapshots:
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42':
     dependencies:
       yaml: 2.8.2
+
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/6ccf83cd87d71cef188a25c2a8e6e184eea711a5':
+    dependencies:
+      yaml: 2.9.1
 
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d':
     dependencies:

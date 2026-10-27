@@ -14,7 +14,7 @@ overrides:
   # the browser never contains two Key/Query identities. Swap all three for a
   # published core release when the consumer upgrade is deliberate.
   "@dalgo/adapter-runtime>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
-  "@dal-go/dalgo2couchdb>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
+  "@dal-go/dalgo2couchdb>@dalgo/core": "github:dal-go/dalgo-js#6ccf83cd87d71cef188a25c2a8e6e184eea711a5"
   "@dal-go/dalgo2postgrest>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
   # OVDB uses this reviewed core snapshot until its consumer deliberately
   # moves to a published core release.
