@@ -4,7 +4,7 @@
 // this container, its temporary key directory and its own data volume.
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,24 @@ export const LIBSQL_ARM64_MANIFEST = "sha256:f5fef78e7e927dcad04da5a95cd07b589c1
 const READER_EXPIRY_SECONDS = 3_600;
 
 function base64url(value) { return Buffer.from(value).toString("base64url"); }
+
+/**
+ * Writes the *public* verification key into the fixture's own directory and
+ * makes that directory and key readable by the unprivileged user the container
+ * runs as. `mkdtemp` creates the directory 0700 and a plain write is masked by
+ * the caller's umask, so through a bind mount the server's own uid could not
+ * traverse or read it on Linux: the container exits before serving /health and
+ * the host sees only a refused fetch. Only the public key is ever written to
+ * disk — the private key and every JWT signed with it stay in process memory —
+ * so widening exactly this directory and this file leaks nothing.
+ */
+export function writePublicKeyMaterial(work, publicKey) {
+  const file = join(work, "public.pem");
+  writeFileSync(file, publicKey.export({ type: "spki", format: "pem" }));
+  chmodSync(work, 0o755);
+  chmodSync(file, 0o644);
+  return file;
+}
 
 /** Verifies the pinned multi-arch image metadata before starting anything. */
 export function verifyPinnedImage() {
@@ -156,7 +174,7 @@ export async function startLibSQLFixture() {
   const name = `dalgo-libsql-fixture-${stamp}`;
   const work = mkdtempSync(join(tmpdir(), `${name}-`));
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  writeFileSync(join(work, "public.pem"), publicKey.export({ type: "spki", format: "pem" }));
+  writePublicKeyMaterial(work, publicKey);
 
   const token = (permission) => {
     const header = base64url(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));

@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 interface TeardownResult {
   readonly containerRemoved: boolean;
@@ -10,6 +14,7 @@ type Run = (args: readonly string[], options?: Readonly<Record<string, unknown>>
 
 interface FixtureModule {
   readonly teardownFixtureResources: (options: { readonly name: string; readonly run: Run }) => TeardownResult;
+  readonly writePublicKeyMaterial: (work: string, publicKey: ReturnType<typeof generateKeyPairSync>["publicKey"]) => string;
 }
 
 const fixture = await import(new URL("../scripts/libsql-fixture.mjs", import.meta.url).href) as FixtureModule;
@@ -100,6 +105,41 @@ function fakeDocker(options: FakeDockerOptions = {}): FakeDocker {
   };
   return { run, calls, containers, volumes };
 }
+
+describe("libSQL fixture public key material", () => {
+  it("makes only the public key traversable and readable by the unprivileged container user under a restrictive umask", () => {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const work = mkdtempSync(join(tmpdir(), "dalgo-libsql-public-key-"));
+    const previousUmask = process.umask(0o077);
+    try {
+      fixture.writePublicKeyMaterial(work, publicKey);
+      // mkdtemp creates the directory 0755-or-tighter and the key write is
+      // masked by the caller's umask, so under 0077 the bind mount would be
+      // untraversable and unreadable for the container's own uid on Linux.
+      // The expected post-conditions are the real filesystem modes, not a
+      // record of chmod being called.
+      expect(statSync(work).mode & 0o777).toBe(0o755);
+      expect(statSync(join(work, "public.pem")).mode & 0o777).toBe(0o644);
+    } finally {
+      process.umask(previousUmask);
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  it("writes only the public PEM and never a private key or JWT file", () => {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const work = mkdtempSync(join(tmpdir(), "dalgo-libsql-public-key-"));
+    try {
+      fixture.writePublicKeyMaterial(work, publicKey);
+      expect(readdirSync(work)).toEqual(["public.pem"]);
+      const pem = readFileSync(join(work, "public.pem"), "utf8");
+      expect(pem).toContain("-----BEGIN PUBLIC KEY-----");
+      expect(pem).not.toContain("PRIVATE KEY");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("libSQL fixture teardown", () => {
   it("captures mounts before removal, removes the container with -v and verifies only its own volume", () => {
