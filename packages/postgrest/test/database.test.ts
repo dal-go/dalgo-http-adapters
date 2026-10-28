@@ -320,4 +320,27 @@ describe("PostgrestDatabase", () => {
     });
     await expect(timeout.get(key("items", "milk"))).rejects.toEqual(new PostgrestRequestError());
   });
+
+  it("binds the default fetch to globalThis like a browser requires", async () => {
+    const calls: unknown[] = [];
+    function strictFetch(this: unknown, input: RequestInfo | URL): Promise<Response> {
+      // Chromium rejects window.fetch with "Illegal invocation" when called
+      // with a receiver other than the window.
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      calls.push(input);
+      return Promise.resolve(response(200, []));
+    }
+    vi.stubGlobal("fetch", strictFetch);
+    try {
+      const db = new PostgrestDatabase({
+        baseUrl: "https://api.example.com/rest/v1",
+        headers: { authorization: "Bearer opaque" },
+      });
+      await expect(db.get(key("items", "milk"))).resolves.toEqual({ key: key("items", "milk"), exists: false });
+      expect(calls).toHaveLength(1);
+      expect(new URL(String(calls[0])).pathname).toBe("/rest/v1/items");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
