@@ -344,7 +344,7 @@ export class PostgrestDatabase implements Database, WriteSession {
     this.#idColumn = identifier(options.idColumn ?? "id", "id column");
     this.#relationName = options.relationName ?? ((collection) => collection);
     this.#headers = options.headers;
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#timeoutMs = positive(options.timeoutMs, DEFAULT_TIMEOUT_MS, "timeoutMs", 120_000);
     this.#maxRequestBytes = positive(options.maxRequestBytes, DEFAULT_MAX_REQUEST_BYTES, "maxRequestBytes");
     this.#maxResponseBytes = positive(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
