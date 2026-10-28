@@ -48,10 +48,18 @@ interface BadCredentialResult {
   readonly connection: { readonly ok: boolean; readonly status: string; readonly httpStatus?: number };
 }
 
+interface NativeResult {
+  readonly discovery: { readonly status: string; readonly relationCount: number };
+  readonly connection: { readonly ok: boolean; readonly status: string; readonly schema?: string };
+  readonly recordCount: number;
+  readonly ids: readonly string[];
+}
+
 interface Harness {
   origin(): string;
   allowed(token: string): Promise<AllowedResult>;
   attempt(token: string): Promise<{ readonly ok: true; readonly value: AllowedResult } | { readonly ok: false; readonly error: PostgrestError }>;
+  native(token: string): Promise<NativeResult>;
   badCredential(token: string): Promise<BadCredentialResult>;
   cancelled(token: string): Promise<PostgrestError>;
 }
@@ -113,6 +121,17 @@ test.describe("real Chromium -> real PostgREST", () => {
       expect(row.score === null || typeof row.score === "number").toBe(true);
       expect(row.tags === null || Array.isArray(row.tags)).toBe(true);
     }
+  });
+
+  test("reads real rows with the default browser fetch and no injected transport", async ({ page }) => {
+    await load(page);
+    const result = await page.evaluate((token) => globalThis.harness.native(token), jwt);
+
+    expect(result.discovery).toMatchObject({ status: "available", relationCount: 2 });
+    expect(result.connection).toMatchObject({ ok: true, status: "connected", schema: "api" });
+    // PGRST_DB_MAX_ROWS=2 caps the requested five-row page.
+    expect(result.recordCount).toBe(2);
+    expect(result.ids).toEqual(["i1", "i2"]);
   });
 
   test("reports a bad credential as a redacted HTTP status, not a CORS or body leak", async ({ page }) => {

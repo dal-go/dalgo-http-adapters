@@ -14,6 +14,7 @@ overrides:
   '@dalgo/indexeddb>@dalgo/core': 0.8.0
   '@dalgo/adapter-runtime>@dalgo/core': github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
   '@dal-go/dalgo2couchdb>@dalgo/core': github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
+  '@dal-go/dalgo2libsql>@dalgo/core': github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
   '@dal-go/dalgo2postgrest>@dalgo/core': github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
   '@dalgo/ovdb>@dalgo/core': github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
   '@dalgo/sqlite-wasm>@dalgo/core': github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42
@@ -517,13 +518,25 @@ importers:
 
   packages/libsql:
     dependencies:
-      '@dal-go/dalgo':
-        specifier: github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
-        version: '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d'
+      '@dalgo/core':
+        specifier: github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559
     devDependencies:
+      '@dalgo/adapter-runtime':
+        specifier: workspace:^
+        version: link:../adapter-runtime
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
+      '@playwright/test':
+        specifier: 1.64.1
+        version: 1.64.1
+      '@types/node':
+        specifier: 26.6.5
+        version: 26.6.5
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       eslint:
         specifier: 10.11.0
         version: 10.11.0

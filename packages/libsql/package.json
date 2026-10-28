@@ -1,8 +1,7 @@
 {
   "name": "@dal-go/dalgo2libsql",
-  "private": true,
   "version": "0.1.0",
-  "description": "Provider-neutral libSQL Hrana-over-HTTP adapter for DALgo TypeScript",
+  "description": "Provider-neutral libSQL Hrana-over-HTTP adapter and read-only native-table facade for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "sideEffects": false,
@@ -15,10 +14,13 @@
   "files": ["dist", "LICENSE", "README.md"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "eslint . && vitest run && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.build.json",
+    "build:deps": "pnpm --filter \"@dal-go/dalgo2libsql...\" run build",
+    "check": "eslint . && vitest run && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json",
     "lint": "eslint .",
-    "prepack": "npm run build",
-    "test": "vitest run"
+    "prepack": "npm --prefix ../adapter-runtime run build && npm run build",
+    "test": "vitest run",
+    "test:real": "pnpm run build:deps && node scripts/real-libsql.mjs",
+    "test:browser": "pnpm run build:deps && node scripts/real-libsql-browser.mjs"
   },
   "repository": {
     "type": "git",
@@ -28,11 +30,22 @@
   "bugs": { "url": "https://github.com/dal-go/dalgo-http-adapters/issues" },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/libsql#readme",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "engines": { "node": ">=24" },
-  "peerDependencies": { "@dal-go/dalgo": "^0.1.0" },
+  "peerDependencies": {
+    "@dalgo/adapter-runtime": ">=0.1.0 <1.0.0",
+    "@dalgo/core": ">=0.7.4 <0.9.0"
+  },
   "devDependencies": {
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d",
+    "@dalgo/adapter-runtime": "workspace:^",
+    "@dalgo/core": "^0.7.4",
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.6.5",
+    "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",

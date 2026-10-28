@@ -1,45 +1,99 @@
+// Runs inside the throwaway packed consumer. Imports every adapter through a
+// dynamic import so the check proves the installed ESM entry points resolve,
+// evaluate and share one @dalgo/core instance at runtime.
 import assert from "node:assert/strict";
 
-import { UnsupportedError, key } from "@dalgo/core";
-import { isCancellableQueryExecutor } from "@dalgo/adapter-runtime";
-import { CouchDbDatabase, NativeCouchDbDatabase } from "@dal-go/dalgo2couchdb";
-import { PostgrestDatabase } from "@dal-go/dalgo2postgrest";
+const [core, runtime, couchdb, postgrest, libsql] = await Promise.all([
+  import("@dalgo/core"),
+  import("@dalgo/adapter-runtime"),
+  import("@dal-go/dalgo2couchdb"),
+  import("@dal-go/dalgo2postgrest"),
+  import("@dal-go/dalgo2libsql"),
+]);
 
-const postgrest = new PostgrestDatabase({ baseUrl: "https://api.example.test/rest/v1" });
-const couch = new CouchDbDatabase({ databaseUrl: "https://couch.example.test/app" });
-const native = new NativeCouchDbDatabase({ databaseUrl: "https://couch.example.test/app", collection: "items" });
+assert.equal(typeof core.collection, "function");
+assert.equal(typeof core.key, "function");
+assert.equal(typeof runtime.isCancellableQueryExecutor, "function");
+assert.equal(typeof couchdb.CouchDbDatabase, "function");
+assert.equal(typeof couchdb.NativeCouchDbDatabase, "function");
+assert.equal(typeof postgrest.PostgrestDatabase, "function");
+assert.equal(typeof libsql.LibSQLDatabase, "function");
+assert.equal(typeof libsql.NativeLibSQLDatabase, "function");
 
-assert.equal(isCancellableQueryExecutor(postgrest), true);
-assert.equal(isCancellableQueryExecutor(couch), true);
-assert.equal(typeof postgrest.queryWithSignal, "function");
+const couch = new couchdb.CouchDbDatabase({ databaseUrl: "https://couch.example.test/app" });
+const nativeCouch = new couchdb.NativeCouchDbDatabase({ databaseUrl: "https://couch.example.test/app", collection: "items" });
+const post = new postgrest.PostgrestDatabase({ baseUrl: "https://api.example.test/rest/v1" });
+const managed = new libsql.LibSQLDatabase({
+  serverUrl: "https://libsql.example.test",
+  tables: { items: { table: "items", keyColumn: { column: "id" }, columns: { title: { column: "title" } } } },
+});
+const nativeLibsql = new libsql.NativeLibSQLDatabase({
+  serverUrl: "https://libsql.example.test",
+  tables: { items: { table: "items", uniqueKey: true, key: { column: "id", type: "integer" }, columns: { title: { column: "title", nullable: false } } } },
+});
+
+assert.equal(runtime.isCancellableQueryExecutor(couch), true);
+assert.equal(runtime.isCancellableQueryExecutor(post), true);
+assert.equal(runtime.isCancellableQueryExecutor(managed), true);
+assert.equal(runtime.isCancellableQueryExecutor(nativeLibsql), true);
 assert.equal(typeof couch.queryWithSignal, "function");
-assert.equal(typeof postgrest.discover, "function");
-assert.equal(typeof postgrest.testConnection, "function");
-assert.equal(typeof postgrest.runReadwriteTransaction, "function");
+assert.equal(typeof post.queryWithSignal, "function");
+assert.equal(typeof managed.queryWithSignal, "function");
+assert.equal(typeof nativeLibsql.queryWithSignal, "function");
+assert.equal(typeof post.discover, "function");
+assert.equal(typeof post.testConnection, "function");
+assert.equal(typeof post.runReadwriteTransaction, "function");
 assert.equal(typeof couch.runReadwriteTransaction, "function");
-assert.equal(native.readOnly, true);
-assert.equal(typeof native.queryWithSignal, "function");
-assert.equal(typeof native.testConnection, "function");
-assert.equal(typeof native.describe, "function");
-await assert.rejects(native.insert(key("items", "milk"), { done: false }), UnsupportedError);
-await assert.rejects(native.runReadwriteTransaction(() => Promise.resolve("no")), UnsupportedError);
+assert.equal(typeof managed.discover, "function");
+assert.equal(typeof nativeLibsql.discover, "function");
+assert.equal(typeof nativeLibsql.testConnection, "function");
+assert.equal(typeof nativeLibsql.describe, "function");
+assert.equal(nativeCouch.readOnly, true);
+assert.equal(typeof nativeCouch.queryWithSignal, "function");
+assert.equal(typeof nativeCouch.testConnection, "function");
+assert.equal(typeof nativeCouch.describe, "function");
+assert.equal(nativeLibsql.readOnly, true);
+await assert.rejects(nativeCouch.insert(core.key("items", "milk"), { done: false }), core.UnsupportedError);
+await assert.rejects(nativeCouch.runReadwriteTransaction(async () => "no"), core.UnsupportedError);
+
+const insertRefused = await nativeLibsql.insert(new core.Key("items", 1), {}).then(() => false, (error) => error?.name === "UnsupportedError");
+const transactionRefused = await nativeLibsql.runReadwriteTransaction(async () => "x").then(() => false, (error) => error?.name === "UnsupportedError");
+assert.equal(insertRefused, true);
+assert.equal(transactionRefused, true);
 
 console.log(JSON.stringify({
-  postgrest: {
-    queryWithSignal: typeof postgrest.queryWithSignal,
-    discover: typeof postgrest.discover,
-    testConnection: typeof postgrest.testConnection,
-    runReadwriteTransaction: typeof postgrest.runReadwriteTransaction,
-  },
+  core: { collection: typeof core.collection, key: typeof core.key },
+  runtime: { isCancellableQueryExecutor: typeof runtime.isCancellableQueryExecutor },
   couch: {
     queryWithSignal: typeof couch.queryWithSignal,
     runReadwriteTransaction: typeof couch.runReadwriteTransaction,
   },
+  postgrest: {
+    queryWithSignal: typeof post.queryWithSignal,
+    discover: typeof post.discover,
+    testConnection: typeof post.testConnection,
+    runReadwriteTransaction: typeof post.runReadwriteTransaction,
+  },
+  libsql: {
+    queryWithSignal: typeof managed.queryWithSignal,
+    discover: typeof managed.discover,
+    testConnection: typeof managed.testConnection,
+    managedQueryWithSignal: typeof managed.queryWithSignal,
+  },
+  nativeLibsql: {
+    readOnly: nativeLibsql.readOnly,
+    queryWithSignal: typeof nativeLibsql.queryWithSignal,
+    discover: typeof nativeLibsql.discover,
+    testConnection: typeof nativeLibsql.testConnection,
+    describe: typeof nativeLibsql.describe,
+    insertRefused,
+    transactionRefused,
+  },
   native: {
-    readOnly: native.readOnly,
-    queryWithSignal: typeof native.queryWithSignal,
-    testConnection: typeof native.testConnection,
-    describe: typeof native.describe,
+    readOnly: nativeCouch.readOnly,
+    queryWithSignal: typeof nativeCouch.queryWithSignal,
+    testConnection: typeof nativeCouch.testConnection,
+    describe: typeof nativeCouch.describe,
     insertRefused: true,
     transactionRefused: true,
   },

@@ -62,6 +62,13 @@ interface BadCredentialResult {
   readonly connection: { readonly ok: boolean; readonly status: string; readonly httpStatus?: number };
 }
 
+interface NativeResult {
+  readonly discovery: { readonly status: string; readonly relationCount: number };
+  readonly connection: { readonly ok: boolean; readonly status: string; readonly schema?: string };
+  readonly recordCount: number;
+  readonly ids: readonly string[];
+}
+
 function baseUrl(): string {
   const value = new URLSearchParams(location.search).get("postgrest");
   if (value === null || value === "") throw new Error("the postgrest query parameter is required");
@@ -174,6 +181,33 @@ const harness = {
 
   async attempt(token: string): Promise<Attempt<AllowedResult>> {
     return attempt(() => this.allowed(token));
+  },
+
+  async native(token: string): Promise<NativeResult> {
+    // Deliberately no fetch option: Chromium must accept the SDK's default
+    // global fetch, which only works when the adapter calls it with the
+    // globalThis receiver.
+    const db = new PostgrestDatabase({
+      baseUrl: baseUrl(),
+      allowInsecureLoopbackHttp: true,
+      schema: "api",
+      headers: () => ({
+        authorization: `Bearer ${token}`,
+        apikey: "synthetic-publishable-anon-key",
+      }),
+    });
+    const discovery = await db.discover();
+    const connection = await db.testConnection();
+    const page = await db.queryWithSignal(
+      items.query().orderBy("id").limit(5).build(),
+      new AbortController().signal,
+    );
+    return {
+      discovery: { status: discovery.status, relationCount: discovery.relationCount },
+      connection,
+      recordCount: page.records.length,
+      ids: page.records.map((record) => String(record.key.id)),
+    };
   },
 
   async badCredential(token: string): Promise<BadCredentialResult> {
