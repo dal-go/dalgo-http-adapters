@@ -43,6 +43,7 @@ const ADAPTERS = [
   { name: "@dal-go/dalgo2couchdb", directory: "packages/couchdb" },
   { name: "@dal-go/dalgo2libsql", directory: "packages/libsql" },
   { name: "@dal-go/dalgo2postgrest", directory: "packages/postgrest" },
+  { name: "@dal-go/dalgo2typesense", directory: "packages/typesense" },
 ];
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
 
@@ -331,6 +332,15 @@ try {
       testConnection: "function",
       describe: "function",
       insertRefused: true,
+      transactionRefused: true,
+    },
+    typesense: {
+      readOnly: true,
+      queryWithSignal: "function",
+      search: "function",
+      schema: "function",
+      describe: "function",
+      textMatch: "string",
       transactionRefused: true,
     },
   });

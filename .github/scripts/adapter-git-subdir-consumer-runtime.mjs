@@ -3,12 +3,13 @@
 // resolve, evaluate and share one @dalgo/core instance at runtime.
 import assert from "node:assert/strict";
 
-const [core, runtime, couchdb, postgrest, libs] = await Promise.all([
+const [core, runtime, couchdb, postgrest, libs, typesense] = await Promise.all([
   import("@dalgo/core"),
   import("@dalgo/adapter-runtime"),
   import("@dal-go/dalgo2couchdb"),
   import("@dal-go/dalgo2postgrest"),
   import("@dal-go/dalgo2libsql"),
+  import("@dal-go/dalgo2typesense"),
 ]);
 
 assert.equal(typeof core.collection, "function");
@@ -18,6 +19,8 @@ assert.equal(typeof couchdb.CouchDbDatabase, "function");
 assert.equal(typeof postgrest.PostgrestDatabase, "function");
 assert.equal(typeof libs.LibSQLDatabase, "function");
 assert.equal(typeof libs.NativeLibSQLDatabase, "function");
+assert.equal(typeof typesense.TypesenseDatabase, "function");
+assert.equal(typeof typesense.decodeSearchResponse, "function");
 
 const couch = new couchdb.CouchDbDatabase({ databaseUrl: "https://couch.example.test/app" });
 const post = new postgrest.PostgrestDatabase({ baseUrl: "https://api.example.test/rest/v1" });
@@ -51,6 +54,25 @@ const transactionRefused = await native.runReadwriteTransaction(async () => "x")
 assert.equal(insertRefused, true);
 assert.equal(transactionRefused, true);
 
+const typesenseDb = new typesense.TypesenseDatabase({
+  baseUrl: "https://typesense.example.test:8108",
+  collection: "items",
+  headers: () => ({ "X-TYPESENSE-API-KEY": "scoped-readonly-key" }),
+});
+const typesenseTransactionRefused = await typesenseDb.runReadwriteTransaction(async () => "x").then(() => false, (error) => error?.name === "UnsupportedError");
+assert.equal(typesenseDb.readOnly, true);
+assert.equal(runtime.isCancellableQueryExecutor(typesenseDb), true);
+assert.equal(typeof typesenseDb.queryWithSignal, "function");
+assert.equal(typeof typesenseDb.search, "function");
+assert.equal(typeof typesenseDb.schema, "function");
+assert.equal(typeof typesenseDb.describe, "function");
+assert.equal(typesenseTransactionRefused, true);
+const typesenseDecoded = typesense.decodeSearchResponse(
+  { found: 1, out_of: 1, hits: [{ document: { id: "x" }, text_match: 1 }] },
+  { limit: 1, offset: 0, facetFields: [], maxFacetValues: 0, maxRowBytes: 1024 },
+);
+assert.equal(typeof typesenseDecoded.hits[0].textMatch, "string");
+
 console.log(JSON.stringify({
   core: { collection: typeof core.collection, key: typeof core.key },
   runtime: { isCancellableQueryExecutor: typeof runtime.isCancellableQueryExecutor },
@@ -78,5 +100,14 @@ console.log(JSON.stringify({
     describe: typeof native.describe,
     insertRefused,
     transactionRefused,
+  },
+  typesense: {
+    readOnly: typesenseDb.readOnly,
+    queryWithSignal: typeof typesenseDb.queryWithSignal,
+    search: typeof typesenseDb.search,
+    schema: typeof typesenseDb.schema,
+    describe: typeof typesenseDb.describe,
+    textMatch: typeof typesenseDecoded.hits[0].textMatch,
+    transactionRefused: typesenseTransactionRefused,
   },
 }));
