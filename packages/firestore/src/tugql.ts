@@ -1,6 +1,6 @@
 // Read-only TugQL execution against the Firestore Web SDK. This module must
-// never import a Firestore write API (setDoc, updateDoc, deleteDoc, addDoc,
-// writeBatch, runTransaction): browser hosts import it as `@dalgo/firestore/tugql`
+// never import a Firestore write API (test/tugql.test.ts checks the import
+// graph statically): browser hosts import it as `@dalgo/firestore/tugql`
 // to run user queries on the signed-in user's own session.
 import {
   executeRecursiveTugQLQuery,
@@ -45,6 +45,9 @@ export interface FirestoreTugQLResult {
  * of non-empty segments.
  */
 export function firestoreParentKey(schema: string): Key<string> {
+  if (schema.split("/").includes("")) {
+    throw new TypeError(`Firestore parent path "${schema}" has an empty segment`);
+  }
   try {
     return keyFromDocumentPath(schema);
   } catch {
@@ -120,6 +123,9 @@ interface KeyedRead {
 
 /** Recognizes a WHERE whose only condition is `__key__ = <literal>`. */
 function keyEquality(query: RecursiveTugQLQuery): KeyedRead | undefined {
+  // Only a direct collection scan can be answered by one document read; a
+  // derived FROM (or a join) filters rows the inner query produced.
+  if (query.from.kind !== "table" || query.from.joins.length > 0) return undefined;
   const where = query.where;
   if (where?.kind !== "comparison" || where.operator !== "==") return undefined;
   const names = new Set(["", query.from.alias, query.from.name]);

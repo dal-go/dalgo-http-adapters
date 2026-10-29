@@ -50,7 +50,7 @@
     "firebase": "^12.19.0"
   },
   "devDependencies": {
-    "@dalgo/core": "github:dal-go/dalgo-js#b51dd2ab083df1cead2dc24f92b32cf0ecf9fdc0",
+    "@dalgo/core": "github:dal-go/dalgo-js#e86f2aba51f560a71945e18f0ec1a53a947a3ae4",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "firebase": "12.19.0",

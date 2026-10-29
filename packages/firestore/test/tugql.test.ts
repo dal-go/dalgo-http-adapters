@@ -1,6 +1,9 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, type DocumentReference, type Query } from "firebase/firestore";
-import { parseTugQL, resolveTugQL, type TugQLResolved } from "@dalgo/core";
+import { parseRecursiveTugQL, parseTugQL, resolveTugQL, type TugQLResolved } from "@dalgo/core";
+import pathSource from "../src/path.ts?raw";
+import querySource from "../src/query.ts?raw";
+import tugqlSource from "../src/tugql.ts?raw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const reads = vi.hoisted(() => ({
@@ -70,6 +73,10 @@ describe("firestoreParentKey", () => {
     expect(parent.path).toBe("spaces/abc/ext/datatug");
     expect(parent.collection).toBe("ext");
     expect(parent.parent?.path).toBe("spaces/abc");
+  });
+
+  it("refuses an empty parent path segment naming the path", () => {
+    expect(() => firestoreParentKey("spaces//x/y")).toThrow('Firestore parent path "spaces//x/y" has an empty segment');
   });
 
   it("refuses an odd parent path naming it", () => {
@@ -176,5 +183,43 @@ describe("runFirestoreTugQL", () => {
     reads.documents.set("users/u1", { name: "Alex" });
     const result = await runFirestoreTugQL(firestore, resolve("FROM users\nWHERE __key__ = 'u1'").query);
     expect(result.rows).toEqual([{ __key__: "u1", name: "Alex" }]);
+  });
+
+  it("does not shortcut a key equality over a derived FROM", async () => {
+    reads.documents.set("users/u1", { name: "Alex" });
+    reads.documents.set("users/u2", { name: "Zed" });
+    const schema = { tables: [{ name: "users", fields: ["name", "__key__"] }] };
+    const firstByName = parseRecursiveTugQL({
+      from: { query: { as: "x", from: { name: "users" }, orderBy: [{ field: "name" }], limit: 1 } },
+      where: { left: { field: "__key__" }, op: "==", right: { value: "u2" } },
+    }, schema);
+    expect((await runFirestoreTugQL(firestore, firstByName)).rows).toEqual([]);
+    expect(reads.getDoc).toEqual([]);
+
+    const renamed = parseRecursiveTugQL({
+      from: { query: { as: "x", from: { name: "users" }, columns: [{ field: "name", as: "__key__" }] } },
+      where: { left: { field: "__key__" }, op: "==", right: { value: "Alex" } },
+    }, schema);
+    expect((await runFirestoreTugQL(firestore, renamed)).rows).toEqual([{ __key__: "Alex" }]);
+    expect(reads.getDoc).toEqual([]);
+  });
+});
+
+describe("@dalgo/firestore/tugql read-only by construction", () => {
+  it("never names a Firestore write API in tugql.ts or anything it imports", () => {
+    const writes = /\b(setDoc|updateDoc|deleteDoc|addDoc|writeBatch|runTransaction)\b/u;
+    const sources: Record<string, string> = { "./tugql.js": tugqlSource, "./path.js": pathSource, "./query.js": querySource };
+    const seen = new Set<string>();
+    const visit = (specifier: string): void => {
+      if (seen.has(specifier)) return;
+      seen.add(specifier);
+      const text = sources[specifier];
+      // A new relative import must be added to `sources` so it is checked too.
+      expect(text, specifier).toBeDefined();
+      expect(text, specifier).not.toMatch(writes);
+      for (const match of (text ?? "").matchAll(/from\s+"(\.[^"]+)"/gu)) visit(match[1] ?? "");
+    };
+    visit("./tugql.js");
+    expect([...seen]).toEqual(["./tugql.js", "./path.js", "./query.js"]);
   });
 });

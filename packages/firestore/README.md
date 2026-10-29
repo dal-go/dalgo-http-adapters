@@ -94,8 +94,10 @@ user's own session.
 - A query over one collection whose only condition is `__key__ = <value>`
   reads that one document (`getDoc`) and returns zero or one row.
 
-Other conditions and orderings are evaluated by the core recursive executor
-over one bounded collection scan.
+Other conditions and orderings (including `__key__` comparisons other than a
+lone equality) run in memory in the core recursive executor over one bounded
+collection scan (`maxFetchedRows`, default 10,000); nothing else is pushed down
+to Firestore yet. Pushing filters and sorts down is a follow-up.
 
 ## Point reads and transactions
 
