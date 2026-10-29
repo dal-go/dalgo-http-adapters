@@ -325,7 +325,9 @@ export async function seedTypesense(fixture) {
     const body = documents
       .map((document) => typeof document === "string" ? document : JSON.stringify(document))
       .join("\n");
-    const text = await adminText(fixture, "POST", `/collections/${collection}/documents/import?action=upsert`, body);
+    // `return_id=true` is required: without it the import acknowledgement rows
+    // carry no `id`, so the per-row seeded-id assertion below cannot pass.
+    const text = await adminText(fixture, "POST", `/collections/${collection}/documents/import?action=upsert&return_id=true`, body);
     // The import endpoint returns one NDJSON row per input document. Every row
     // is parsed and checked, so a malformed, false or missing acknowledgement
     // can never be inferred away by a later read-only test.
