@@ -7,7 +7,7 @@ settings:
 overrides:
   '@dalgo/http>@dalgo/core': 0.8.0
   '@dalgo/d1>@dalgo/core': 0.8.0
-  '@dalgo/firestore>@dalgo/core': github:dal-go/dalgo-js#e86f2aba51f560a71945e18f0ec1a53a947a3ae4
+  '@dalgo/firestore>@dalgo/core': github:dal-go/dalgo-js#c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7
   '@dal-go/dalgo': github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
   '@dalgo/bigquery>@dalgo/core': 0.1.0
   '@dalgo/core': github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d
@@ -401,8 +401,8 @@ importers:
   packages/firestore:
     dependencies:
       '@dalgo/core':
-        specifier: github:dal-go/dalgo-js#e86f2aba51f560a71945e18f0ec1a53a947a3ae4
-        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/e86f2aba51f560a71945e18f0ec1a53a947a3ae4
+        specifier: github:dal-go/dalgo-js#c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7
+        version: https://codeload.github.com/dal-go/dalgo-js/tar.gz/c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
@@ -1228,8 +1228,8 @@ packages:
     version: 0.7.4
     engines: {node: '>=20'}
 
-  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/e86f2aba51f560a71945e18f0ec1a53a947a3ae4':
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/e86f2aba51f560a71945e18f0ec1a53a947a3ae4}
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7':
+    resolution: {gitHosted: true, integrity: sha512-AuHjjKVxMJckOvSy/2haTpJb92OypxlIAst4nVQkNgMkGpx60uMwztyQvL+JEeT5748QR2Ni1275SgKkzr4Ltg==, tarball: https://codeload.github.com/dal-go/dalgo-js/tar.gz/c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7}
     version: 0.8.0
     engines: {node: '>=20'}
 
@@ -3229,7 +3229,7 @@ snapshots:
     dependencies:
       yaml: 2.9.1
 
-  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/e86f2aba51f560a71945e18f0ec1a53a947a3ae4':
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7':
     dependencies:
       yaml: 2.9.1
 
