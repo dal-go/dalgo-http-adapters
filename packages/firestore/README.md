@@ -76,6 +76,29 @@ is rejected before Firestore query compilation. `EXISTS` can stop its logical
 evaluation after a match, while each Firestore leaf query remains a Web SDK
 page request and cannot promise physical first-record stopping within that page.
 
+### TugQL from a browser (read-only)
+
+`runFirestoreTugQL(firestore, resolved, options?)` runs a query resolved by
+`resolveTugQL(document, { ..., schemaless: true })` and returns
+`{ columns, rows }`. Import it from `@dalgo/firestore/tugql`, which imports no
+Firestore write API, so a browser host can run user queries on the signed-in
+user's own session.
+
+- A slash `FROM` (`FROM spaces/abc/ext/datatug/projects`) resolves to
+  `schema: spaces/abc/ext/datatug`, read as the parent document path
+  (`firestoreParentKey`). An odd segment count is refused, naming the path,
+  before any read.
+- `__key__` is the document id. It may be selected, compared and ordered on;
+  every row of a query without `SELECT` carries it as its first column,
+  followed by the union of the returned documents' fields in first-seen order.
+- A query over one collection whose only condition is `__key__ = <value>`
+  reads that one document (`getDoc`) and returns zero or one row.
+
+Other conditions and orderings (including `__key__` comparisons other than a
+lone equality) run in memory in the core recursive executor over one bounded
+collection scan (`maxFetchedRows`, default 10,000); nothing else is pushed down
+to Firestore yet. Pushing filters and sorts down is a follow-up.
+
 ## Point reads and transactions
 
 ```ts
