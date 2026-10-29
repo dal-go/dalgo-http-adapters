@@ -87,7 +87,9 @@ jobs:
         run: pnpm check:packed-consumer
 
   ovdb-artifact:
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04: the pinned playwright 1.58.2 does not support
+    # ubuntu-26.04-x64, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -133,7 +135,9 @@ jobs:
           if-no-files-found: ignore
 
   bigquery-core-matrix:
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04: the pinned playwright 1.58.2 does not support
+    # ubuntu-26.04-x64, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
