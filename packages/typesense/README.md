@@ -18,14 +18,15 @@ fixture uses the GPL-3.0 Typesense server only as a disposable test dependency.
 import { collection } from "@dalgo/core";
 import { TypesenseDatabase } from "@dal-go/dalgo2typesense";
 
+// One per-physical-request callback. A pure `documents:search` credential can
+// search and read exact ids; a separately scoped read-only credential with
+// `collections:get`/`list` is used by a second adapter instance when schema
+// metadata is genuinely needed. There is no separate metadata option, no
+// fallback and no admin upgrade.
 const db = new TypesenseDatabase({
   baseUrl: "https://typesense.example.com:8108",
   collection: "books",
-  // Re-evaluated for every physical request, so a rotated scoped key is picked up.
   headers: () => ({ "X-TYPESENSE-API-KEY": searchKey }),
-  // Optional read-only metadata credential (`collections:get`). A pure
-  // `documents:search` key is denied explicitly and never upgraded.
-  metadataHeaders: () => ({ "X-TYPESENSE-API-KEY": metadataKey }),
 });
 
 const books = collection<{ title: string; year: number }>("books");
@@ -40,9 +41,12 @@ const page = await db.queryWithSignal(
 
 `queryWithSignal` is the additive shared cancellable surface. The caller signal
 and one adapter deadline cover header acquisition, fetch, body reading and every
-verification/page step. A caller abort, adapter deadline or `close()` rejects
-with the canonical `QueryCancelledError`; the producer never copies
-`AbortSignal.reason`, a transport error or a response body into the message.
+verification/page step. Verification yields a real macrotask on a bounded,
+operation-wide work budget, so a caller timer can abort a large buffered
+verification instead of waiting behind a microtask chain. A caller abort,
+adapter deadline or `close()` rejects with the canonical `QueryCancelledError`;
+the producer never copies `AbortSignal.reason`, a transport error or a response
+body into the message.
 
 ## Typed native search
 
@@ -62,9 +66,24 @@ const result = await db.searchWithSignal({
 }, signal);
 ```
 
-Facet values, counts and statistics are the server's real native values. A
-cutoff, short page or `found` mismatch is reported as `partial`/`truncated`; it
-is never turned into a clean end-of-data claim.
+Facet values, counts and statistics are the server's real native values (an
+optional server `highlighted` string is retained). A cutoff, short page or
+`found` mismatch is reported as `partial`/`truncated`; it is never turned into a
+clean end-of-data claim.
+
+### Native full-text score
+
+An ordinary native full-text query (`q != "*"`) returns the server's uint64
+`text_match` wrapper as an **exact decimal string** in
+`TypesenseNativeSearchHit.textMatch`. Typesense serialises a ranking such as
+`578730123373578361`, which a JavaScript `number` would round. The raw response
+scanner therefore admits one unsafe integer only at the exact
+`hits[].text_match` protocol path (validated as an unsigned uint64), preserves
+its decimal lexeme, and cross-checks the server's
+`text_match_info.score` counterpart. Every application document value, facet
+identity or other JSON number still has to round-trip losslessly and is refused
+before codec, record or cursor exposure. There is no generic unsafe-number
+exemption and no rounding.
 
 Every read path — structured, native, point and batch — sets
 `enable_curations=false` and `filter_curated_hits=true`. A curated or pinned
@@ -120,6 +139,12 @@ Filtered reads fetch the whole candidate window from offset zero through
 apply the offset locally. This is why a later-page mismatch cannot leave an
 apparently successful earlier prefix.
 
+An unfiltered read whose DALgo limit is larger than the configured
+`maxRowsPerPage` (and the absolute 250-row Typesense page cap) is served by
+bounded physical paging. If the required physical page/window work would exceed
+`maxQueryPages`/`maxQueryOffset`, the query is refused before I/O rather than
+silently truncated or sent as one oversized page.
+
 ### Numeric candidates and documented differences
 
 Typesense indexes `float` values in quantised buckets. A strict native `>` or
@@ -163,8 +188,16 @@ collection, exact compiled query, projection, sort, page size, filtered/unfilter
 mode and credential scope (or the explicit non-secret `identityScope`).
 
 - A foreign, malformed, already-used or changed-query handle is refused.
-- The handle is committed only after a successful page. A canceled or failed
-  attempt can retry the same handle.
+- Identity binds the **exact admitted predicate AST**, including original
+  operators and literal classes, not only the rendered native candidate filter.
+  Typesense widens `>`/`<` to `>=`/`<=`, so `>n` and `>=n` can render the same
+  native filter; their handles are still different and swapping them is refused.
+- The handle is leased only after every remaining planning bound passes. It is
+  committed only after a successful page, including codec decoding. A canceled
+  or failed attempt releases the lease and can retry the same handle.
+- A page that has more rows but whose next position would exceed a configured
+  offset/window/page bound is refused explicitly with
+  `TypesenseContinuationBoundError`; an unusable handle is never returned.
 - The registry, token bytes and conserved handles are bounded.
 - Filtered continuation re-verifies the entire prefix from zero on every page.
 
@@ -176,12 +209,20 @@ sort or claim snapshot isolation. Use explicit sort fields where order matters.
 ## Metadata
 
 `schema()`, `listCollections()`, `testConnection()` and `describe()` make
-read-only metadata requests. They report the real collection schema, keeping
-native array types such as `string[]` in `field.type`. The implicit `id` is
-reported exactly once as a non-nullable string, including when the server marks
-an explicitly declared `id` as optional. A 401/403/404 is an explicit
-`unavailable` reason with its status, never an empty list and never an admin
-fallback.
+read-only metadata requests through the same `headers` callback as every other
+request. A pure `documents:search` adapter instance cannot read metadata and is
+denied explicitly; a second instance with a scoped read-only credential that
+carries `collections:get`/`list` can. There is no separate metadata option and no
+admin fallback.
+
+They report the real collection schema, keeping native array types such as
+`string[]` in `field.type`. Typesense 30.2 always emits
+`default_sorting_field`; a collection created without one reports the empty
+string, which the adapter accepts as an honest sentinel rather than a malformed
+schema (it is not a sorting guarantee). The implicit `id` is reported exactly
+once as a non-nullable string, including when the server marks an explicitly
+declared `id` as optional. A 401/403/404 is an explicit `unavailable` reason with
+its status, never an empty list and never an admin fallback.
 
 A pure `documents:search` key can search and read exact ids but cannot read
 metadata. Numeric-range structured queries need readable schema to prove the
@@ -194,7 +235,10 @@ and one cumulative response-byte bound. Rows have a full pre-projection JSON
 size bound, requests have an encoded byte bound, filters/projections/sorts/
 facets have explicit maxima, and `getMany` has key and retained-byte bounds.
 Exhausting a budget stops further HTTP and fails the operation; it never returns
-a partial success.
+a partial success. Removing adapter ownership is explicit: every listener the
+operation registered on the container or the shared root is removed on success,
+error, cancellation and `close()` alike, so completed operations are not
+retained and an in-flight operation still observes `close()`.
 
 `close()`/`dispose()` is idempotent. It cancels owned operations, retires issued
 cursors and rejects new work. A caller-supplied `fetch` is never mutated; the

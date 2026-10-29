@@ -6,6 +6,7 @@ export {
   type TypesenseReadCapabilities,
 } from "./capabilities.js";
 export {
+  TypesenseContinuationBoundError,
   TypesenseCursorError,
   TypesenseHttpError,
   TypesenseRequestError,

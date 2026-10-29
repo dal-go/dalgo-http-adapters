@@ -139,7 +139,6 @@ export interface TypesenseOperation {
 export class TypesenseTransport {
   readonly #origin: string;
   readonly #headers: TypesenseHeaderProvider | undefined;
-  readonly #metadataHeaders: TypesenseHeaderProvider | undefined;
   readonly #fetch: TypesenseFetch;
   readonly #timeoutMs: number;
   readonly #maxRequestBytes: number;
@@ -152,7 +151,6 @@ export class TypesenseTransport {
     readonly baseUrl: string;
     readonly allowInsecureLoopbackHttp: boolean;
     readonly headers?: TypesenseHeaderProvider;
-    readonly metadataHeaders?: TypesenseHeaderProvider;
     readonly fetch?: TypesenseFetch;
     readonly timeoutMs: number;
     readonly maxRequestBytes: number;
@@ -163,7 +161,6 @@ export class TypesenseTransport {
   }) {
     this.#origin = validBaseUrl(options.baseUrl, options.allowInsecureLoopbackHttp);
     this.#headers = options.headers;
-    this.#metadataHeaders = options.metadataHeaders;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#timeoutMs = options.timeoutMs;
     this.#maxRequestBytes = options.maxRequestBytes;
@@ -184,17 +181,15 @@ export class TypesenseTransport {
     path: string,
     parameters: URLSearchParams,
     operation: TypesenseOperation,
-    metadata = false,
     accepted: readonly number[] = [],
     observeHeaders?: (headers: TypesenseHeaders) => void,
   ): Promise<{ readonly status: number; readonly body: unknown; readonly bytes: number }> {
     operation.check();
     if (operation.bytes >= this.#maxTotalBytes) throw new TypesenseResponseSizeError();
-    const provider = metadata ? (this.#metadataHeaders ?? this.#headers) : this.#headers;
     let supplied: unknown;
     try {
       supplied = await raceAbort(
-        Promise.resolve().then(() => typeof provider === "function" ? provider() : (provider ?? {})),
+        Promise.resolve().then(() => typeof this.#headers === "function" ? this.#headers() : (this.#headers ?? {})),
         operation.signal,
         operation.cancelled,
       );
@@ -202,7 +197,18 @@ export class TypesenseTransport {
       if (operation.signal.aborted) throw operation.cancelled();
       throw operation.failed();
     }
-    const headers = headersFrom(supplied);
+    // Accessing an enumerable getter can throw an arbitrary error (including a
+    // RangeError that quotes a secret). Validation failures must therefore
+    // leave through one fixed, cause-free public error.
+    let headers: TypesenseHeaders;
+    try {
+      headers = headersFrom(supplied);
+    } catch {
+      if (operation.signal.aborted) throw operation.cancelled();
+      throw operation.failed();
+    }
+    // The internal credential-scope observer may raise a typed cursor refusal,
+    // which must survive; it is adapter-owned and never carries a secret.
     observeHeaders?.(headers);
     operation.check();
     const query = parameters.toString();
@@ -305,7 +311,9 @@ class Operation implements TypesenseOperation {
   readonly #root: AbortSignal;
   readonly #controller = new AbortController();
   readonly #onDispose: (operation: TypesenseOperation) => void;
+  readonly #forward = (): void => { this.#controller.abort(); };
   readonly deadlineAt: number;
+  #listening = false;
   #requests = 0;
   #bytes = 0;
   #disposed = false;
@@ -320,11 +328,11 @@ class Operation implements TypesenseOperation {
     this.#onDispose = onDispose;
     this.#scope = createAbortScope(callerSignal, timeoutMs);
     this.deadlineAt = Date.now() + timeoutMs;
-    const forward = (): void => { this.#controller.abort(); };
     if (this.#scope.signal.aborted || root.aborted) this.#controller.abort();
     else {
-      this.#scope.signal.addEventListener("abort", forward, { once: true });
-      root.addEventListener("abort", forward, { once: true });
+      this.#listening = true;
+      this.#scope.signal.addEventListener("abort", this.#forward, { once: true });
+      root.addEventListener("abort", this.#forward, { once: true });
     }
   }
 
@@ -351,6 +359,14 @@ class Operation implements TypesenseOperation {
   public dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    // Ownership transfer is explicit: every listener this operation registered
+    // on the shared root or the scope is removed on success, error, cancel and
+    // close alike, so completed operations cannot remain retained.
+    if (this.#listening) {
+      this.#listening = false;
+      this.#scope.signal.removeEventListener("abort", this.#forward);
+      this.#root.removeEventListener("abort", this.#forward);
+    }
     this.#scope.dispose();
     this.#onDispose(this);
   }

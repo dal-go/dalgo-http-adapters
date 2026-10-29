@@ -2,12 +2,14 @@ import { collection } from "@dalgo/core";
 
 import { TypesenseDatabase, type TypesenseQuery } from "@dal-go/dalgo2typesense";
 
+// One per-physical-request header callback. Use a scoped read-only key with
+// `collections:get`/`list` only when schema metadata or numeric ranges are
+// genuinely needed; never an admin key and never a separate metadata fallback.
 const db = new TypesenseDatabase({
   baseUrl: "http://127.0.0.1:8108",
   allowInsecureLoopbackHttp: true,
   collection: "books",
   headers: () => ({ "X-TYPESENSE-API-KEY": "search-key" }),
-  metadataHeaders: () => ({ "X-TYPESENSE-API-KEY": "metadata-key" }),
 });
 
 const books = collection<{ title: string; genre: string; year: number }>("books");
@@ -48,6 +50,8 @@ const native = await db.search({
   facetBy: ["year"],
   limit: 10,
 });
-console.log(native.hits.map((hit) => hit.id), native.facets);
+// `textMatch` is the server's uint64 ranking as an exact decimal string, never
+// a rounded JavaScript number.
+console.log(native.hits.map((hit) => [hit.id, hit.textMatch]), native.facets);
 
 db.close();

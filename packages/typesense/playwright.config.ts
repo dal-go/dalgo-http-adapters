@@ -17,7 +17,7 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
   ],
   webServer: {
-    command: "node test/browser/server.ts",
+    command: "node test/browser/server.mjs",
     url: `http://127.0.0.1:${String(port)}/health`,
     reuseExistingServer: false,
     stdout: "pipe",

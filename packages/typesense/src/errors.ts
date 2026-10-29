@@ -56,6 +56,19 @@ export class TypesenseCursorError extends UnsupportedError {
   }
 }
 
+/**
+ * The current page has more matching rows, but an adapter-issued continuation
+ * position would exceed a configured offset/window/page bound. Returning an
+ * unusable handle or silently claiming end-of-data would both be dishonest, so
+ * the whole page is refused.
+ */
+export class TypesenseContinuationBoundError extends UnsupportedError {
+  public constructor() {
+    super("Typesense query continuation exceeds the configured offset, window or page bound");
+    this.name = "TypesenseContinuationBoundError";
+  }
+}
+
 export type TypesenseMetadataFailure =
   | "unauthorized"
   | "forbidden"

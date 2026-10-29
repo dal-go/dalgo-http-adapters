@@ -55,11 +55,11 @@ export const TYPESENSE_READ_CAPABILITIES = {
     },
     sort: {
       status: "native",
-      detail: "explicit simple fields and asc/desc by sort_by, up to the Typesense limit; no id sort is invented and offset pagination is not mutation-stable",
+      detail: "explicit simple fields and asc/desc by sort_by, up to the Typesense limit; no id sort is invented and offset pagination is not mutation-stable; an unfiltered limit above maxRowsPerPage is served by bounded physical paging or refused before I/O",
     },
     pagination: {
       status: "native",
-      detail: "adapter-issued opaque single-use cursors bound to the endpoint, collection, query, page size, credential scope and configuration; each filtered page verifies the whole candidate prefix from zero; offset continuation is documented as non-snapshot-stable",
+      detail: "adapter-issued opaque single-use cursors bound to the endpoint, collection, exact admitted predicate AST (original operator and literal class, not only the widened native filter), page size, credential scope and configuration; a lease is taken only after all planning bounds pass and committed only after a successful page; each filtered page verifies the whole candidate prefix from zero; offset continuation is documented as non-snapshot-stable",
     },
     joins: { status: "unsupported" },
     aggregation: { status: "unsupported" },
@@ -67,7 +67,7 @@ export const TYPESENSE_READ_CAPABILITIES = {
     subquery: { status: "unsupported" },
     fulltext: {
       status: "native",
-      detail: "only through the typed native search path, which keeps Typesense typo/prefix/drop-token semantics",
+      detail: "only through the typed native search path, which keeps Typesense typo/prefix/drop-token semantics; the uint64 text_match ranking is exposed as an exact decimal string, never a rounded JavaScript number",
     },
     timeseries: { status: "unsupported" },
     native: {
@@ -76,7 +76,7 @@ export const TYPESENSE_READ_CAPABILITIES = {
     },
     discovery: {
       status: "native",
-      detail: "read-only collection schema via GET /collections/{name}; a pure documents:search key is denied explicitly and there is no admin fallback",
+      detail: "read-only collection schema via GET /collections/{name} with the same per-request header callback; a pure documents:search credential is denied explicitly and there is no separate metadata option or admin fallback; the official empty default_sorting_field sentinel is accepted",
     },
   },
   bounds: {

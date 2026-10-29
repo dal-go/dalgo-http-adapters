@@ -21,6 +21,7 @@ import {
   type TypesenseQueryBounds,
 } from "./capabilities.js";
 import {
+  TypesenseContinuationBoundError,
   TypesenseCursorError,
   TypesenseSemanticError,
   type TypesenseMetadataFailure,
@@ -41,6 +42,7 @@ import {
   type TypesenseNativeSearchResult,
 } from "./search.js";
 import {
+  canonicalPredicate,
   collectPredicate,
   createVerifier,
   orderFields,
@@ -114,12 +116,6 @@ export interface TypesenseDatabaseOptions {
   readonly collection: string;
   /** Re-evaluated for every physical request; must include X-TYPESENSE-API-KEY. */
   readonly headers?: TypesenseHeaderProvider;
-  /**
-   * Optional credential scope for metadata (`collections:get`/`list`). When
-   * omitted, metadata uses the search credential and a pure `documents:search`
-   * key is denied explicitly. It is never upgraded to an admin credential.
-   */
-  readonly metadataHeaders?: TypesenseHeaderProvider;
   /** Stable non-secret identity label bound into cursors instead of header digests. */
   readonly identityScope?: string;
   readonly fetch?: TypesenseFetch;
@@ -372,7 +368,6 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
       baseUrl: options.baseUrl,
       allowInsecureLoopbackHttp: options.allowInsecureLoopbackHttp === true,
       ...(options.headers === undefined ? {} : { headers: options.headers }),
-      ...(options.metadataHeaders === undefined ? {} : { metadataHeaders: options.metadataHeaders }),
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       timeoutMs: this.#timeoutMs,
       maxRequestBytes: this.#maxRequestBytes,
@@ -464,7 +459,6 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
         "/collections",
         new URLSearchParams(),
         operation,
-        true,
         [401, 403, 404],
       );
       if (response.status !== 200) {
@@ -619,6 +613,8 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
   }
 
   async #plan<T>(query: StructuredQuery<T>, operation: TypesenseOperation): Promise<Planner> {
+    // Preflight the cheap, secret-free request shape before any metadata or
+    // search I/O.
     if (query.source.kind !== "collection" || query.source.parent !== undefined) {
       throw new UnsupportedError("Typesense collection-group or nested-collection queries");
     }
@@ -638,9 +634,12 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#maxQueryLimit) {
       throw new UnsupportedError(`Typesense query limit must be from 1 to ${String(this.#maxQueryLimit)}`);
     }
-    let offset = query.offset ?? 0;
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > this.#maxQueryOffset) {
+    const requestedOffset = query.offset ?? 0;
+    if (!Number.isSafeInteger(requestedOffset) || requestedOffset < 0 || requestedOffset > this.#maxQueryOffset) {
       throw new UnsupportedError(`Typesense query offset is outside the configured bound`);
+    }
+    if (requestedOffset + limit > this.#maxQueryOffset) {
+      throw new UnsupportedError("Typesense query offset plus limit exceeds maxQueryOffset");
     }
     const root = predicateRoot(extended, { maxFilterBytes: this.#maxFilterBytes });
     const { fields, ranges } = root === undefined ? { fields: [], ranges: [] } : collectPredicate(root);
@@ -657,26 +656,39 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
     const fingerprint = digest(this.#cursorSecret, JSON.stringify({
       endpoint: this.#transport.origin,
       collection: this.#collection,
-      filter: filter ?? null,
+      // The exact admitted AST, not only the widened native candidate string:
+      // `>` and `>=` (or `<` and `<=`) normalise to the same native filter and
+      // must never share a continuation identity.
+      predicate: canonicalPredicate(root),
       orders,
       projection: projection ?? null,
       limit,
       filtered,
     }));
-    const cursor = query.startAfter === undefined ? undefined : this.#prepareCursor(query.startAfter, fingerprint, limit, filtered);
-    if (cursor !== undefined) offset = cursor.binding.nextOffset;
+    const prepared = query.startAfter === undefined
+      ? undefined
+      : this.#prepareCursor(query.startAfter, fingerprint, limit, filtered);
+    const offset = prepared === undefined ? requestedOffset : prepared.binding.nextOffset;
     const window = filtered ? offset + limit : limit;
-    const pageSize = filtered ? Math.min(this.#maxRowsPerPage, Math.max(window, 1)) : limit;
+    const pageSize = filtered ? Math.min(this.#maxRowsPerPage, Math.max(window, 1)) : Math.min(this.#maxRowsPerPage, limit);
     if (filtered) {
+      if (window > this.#maxQueryOffset) {
+        throw new UnsupportedError("Typesense filtered candidate window exceeds maxQueryOffset");
+      }
       const pages = Math.ceil(window / pageSize);
       if (pages > this.#maxQueryPages) {
         throw new UnsupportedError(`Typesense filtered candidate window needs more pages than maxQueryPages (${String(this.#maxQueryPages)})`);
       }
-      if (window > this.#maxQueryOffset) {
-        throw new UnsupportedError("Typesense filtered candidate window exceeds maxQueryOffset");
+    } else {
+      if (offset + limit > this.#maxQueryOffset) {
+        throw new UnsupportedError("Typesense query offset plus limit exceeds maxQueryOffset");
+      }
+      const pages = Math.ceil(limit / this.#maxRowsPerPage);
+      if (pages > this.#maxQueryPages) {
+        throw new UnsupportedError(`Typesense unfiltered page needs more requests than maxQueryPages (${String(this.#maxQueryPages)})`);
       }
     }
-    return {
+    const planner: Planner = {
       collection: this.#collection,
       limit,
       offset,
@@ -689,8 +701,15 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
       pageSize,
       window,
       fingerprint,
-      ...(cursor === undefined ? {} : { cursor }),
+      ...(prepared === undefined ? {} : { cursor: prepared }),
     };
+    // Activation is the final, non-throwing step: no remaining planning error
+    // can strand an active lease with an undefined plan.
+    if (prepared !== undefined) {
+      if (this.#activeCursors.has(prepared.token)) throw new TypesenseCursorError("used");
+      this.#activeCursors.add(prepared.token);
+    }
+    return planner;
   }
 
   #includeFields(
@@ -712,29 +731,61 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
   async #execute<T>(plan: Planner, query: StructuredQuery<T>, operation: TypesenseOperation): Promise<QueryPage<T>> {
     const cursor = plan.cursor;
     const scope = this.#bindCursor(cursor, operation);
-    const page = plan.filtered
-      ? await this.#filteredPage(plan, scope.observe, operation)
-      : await this.#unfilteredPage(plan, scope.observe, operation);
-    operation.check();
-    const records = page.hits.slice(plan.filtered ? plan.offset : 0, plan.filtered ? plan.offset + plan.limit : plan.limit)
-      .map((hit) => this.#recordHit(hit, plan, query.source.codec));
-    const hasMore = plan.filtered
-      ? page.scanned >= plan.window && page.found > plan.window
-      : page.hits.length === plan.limit && page.found > plan.offset + page.hits.length;
-    let nextCursor: QueryPage<T>["nextCursor"];
-    if (hasMore) {
-      const token = this.#issueCursor({
-        fingerprint: plan.fingerprint,
-        scope: scope.value(),
-        limit: plan.limit,
-        nextOffset: plan.offset + plan.limit,
-        filtered: plan.filtered,
-      });
-      nextCursor = { values: [token] };
+    try {
+      const page = plan.filtered
+        ? await this.#filteredPage(plan, scope.observe, operation)
+        : await this.#unfilteredPage(plan, scope.observe, operation);
+      operation.check();
+      const records = page.hits.slice(plan.filtered ? plan.offset : 0, plan.filtered ? plan.offset + plan.limit : plan.limit)
+        .map((hit) => this.#recordHit(hit, plan, query.source.codec));
+      // A codec can synchronously abort or close the database. The previous
+      // attempt must not be consumed and a next handle must not be issued until
+      // the complete page, including codec decoding, has succeeded.
+      operation.check();
+      const hasMore = plan.filtered
+        ? page.scanned >= plan.window && page.found > plan.window
+        : page.hits.length === plan.limit && page.found > plan.offset + page.hits.length;
+      let nextCursor: QueryPage<T>["nextCursor"];
+      let issued: { readonly token: string; readonly binding: CursorBinding } | undefined;
+      if (hasMore) {
+        if (!this.#continuationUsable(plan)) throw new TypesenseContinuationBoundError();
+        // Staging performs all fallible token work without touching the cache.
+        // The cursor transaction commits only after the final cancellability
+        // check, so a failed attempt cannot evict the handle it is resuming.
+        issued = {
+          token: this.#stageCursor(),
+          binding: {
+            fingerprint: plan.fingerprint,
+            scope: scope.value(),
+            limit: plan.limit,
+            nextOffset: plan.offset + plan.limit,
+            filtered: plan.filtered,
+          },
+        };
+        nextCursor = { values: [issued.token] };
+      }
+      operation.check();
+      this.#commitCursorPage(cursor?.token, issued);
+      return nextCursor === undefined ? { records } : { records, nextCursor };
+    } catch (error) {
+      // Failed or canceled execute releases the lease and never commits it.
+      if (cursor !== undefined) this.#activeCursors.delete(cursor.token);
+      throw error;
     }
-    if (cursor !== undefined) this.#commitCursor(cursor.token);
-    operation.check();
-    return nextCursor === undefined ? { records } : { records, nextCursor };
+  }
+
+  /** True when the position after this page is inside every configured bound. */
+  #continuationUsable(plan: Planner): boolean {
+    const nextOffset = plan.offset + plan.limit;
+    if (!Number.isSafeInteger(nextOffset) || nextOffset < 0 || nextOffset > this.#maxQueryOffset) return false;
+    if (plan.filtered) {
+      const nextWindow = nextOffset + plan.limit;
+      if (nextWindow > this.#maxQueryOffset) return false;
+      const pageSize = Math.min(this.#maxRowsPerPage, Math.max(nextWindow, 1));
+      return Math.ceil(nextWindow / pageSize) <= this.#maxQueryPages;
+    }
+    if (nextOffset + plan.limit > this.#maxQueryOffset) return false;
+    return Math.ceil(plan.limit / this.#maxRowsPerPage) <= this.#maxQueryPages;
   }
 
   #bindCursor(prepared: CursorPreparation | undefined, operation: TypesenseOperation): { observe(headers: TypesenseHeaders): void; value(): string } {
@@ -760,24 +811,49 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
   }
 
   async #unfilteredPage(plan: Planner, observe: (headers: TypesenseHeaders) => void, operation: TypesenseOperation): Promise<{ readonly hits: ReturnType<typeof decodeSearchResponse>["hits"]; readonly found: number; readonly scanned: number }> {
-    const response = await this.#searchRequest(plan, plan.offset, plan.limit, operation, observe);
-    if (operation.signal.aborted) throw operation.cancelled();
-    const decoded = decodeSearchResponse(response, {
-      limit: plan.limit,
-      offset: plan.offset,
-      facetFields: [],
-      maxFacetValues: 0,
-      maxRowBytes: this.#maxRowBytes,
-    });
+    // The native Typesense physical page is at most the configured
+    // maxRowsPerPage (and the absolute 250-row server cap). A larger DALgo
+    // query limit is honoured with bounded paging, never by asking one physical
+    // page for more rows than the adapter admits.
+    const hits: ReturnType<typeof decodeSearchResponse>["hits"][number][] = [];
+    const seen = new Set<string>();
+    let found = 0;
+    let physicalOffset = plan.offset;
+    let pages = 0;
+    while (hits.length < plan.limit) {
+      operation.check();
+      if (pages >= this.#maxQueryPages) throw new UnsupportedError("Typesense query exceeded maxQueryPages");
+      const size = Math.min(this.#maxRowsPerPage, plan.limit - hits.length);
+      const response = await this.#searchRequest(plan, physicalOffset, size, operation, observe);
+      if (operation.signal.aborted) throw operation.cancelled();
+      const decoded = decodeSearchResponse(response, {
+        limit: size,
+        offset: physicalOffset,
+        facetFields: [],
+        maxFacetValues: 0,
+        maxRowBytes: this.#maxRowBytes,
+      });
+      pages += 1;
+      found = decoded.found;
+      operation.check();
+      if (decoded.cutoff) throw new UnsupportedError("Typesense search returned a partial cutoff result");
+      if (decoded.hits.length === 0) {
+        if (decoded.found > physicalOffset) throw new UnsupportedError("Typesense search returned a partial result");
+        break;
+      }
+      for (const hit of decoded.hits) {
+        if (seen.has(hit.id)) throw new TypeError("Typesense search response repeated a document id across pages");
+        seen.add(hit.id);
+        hits.push(hit);
+      }
+      physicalOffset += decoded.hits.length;
+      if (decoded.hits.length < size) {
+        if (decoded.found > physicalOffset) throw new UnsupportedError("Typesense search returned a partial result");
+        break;
+      }
+    }
     operation.check();
-    if (decoded.cutoff) throw new UnsupportedError("Typesense search returned a partial cutoff result");
-    if (decoded.hits.length === 0 && decoded.found > plan.offset) {
-      throw new UnsupportedError("Typesense search returned a partial result");
-    }
-    if (decoded.hits.length < plan.limit && decoded.found > plan.offset + decoded.hits.length) {
-      throw new UnsupportedError("Typesense search returned a partial result");
-    }
-    return { hits: decoded.hits, found: decoded.found, scanned: decoded.hits.length };
+    return { hits, found, scanned: hits.length };
   }
 
   async #filteredPage(
@@ -848,7 +924,7 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
     parameters.set("limit", String(limit));
     if (offset > 0) parameters.set("offset", String(offset));
     this.#structuredPolicy(parameters);
-    const response = await this.#transport.request(this.#searchPath(), parameters, operation, false, [], observe);
+    const response = await this.#transport.request(this.#searchPath(), parameters, operation, [], observe);
     return response.body;
   }
 
@@ -969,7 +1045,6 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
       `/collections/${encodeURIComponent(this.#collection)}`,
       new URLSearchParams(),
       operation,
-      true,
       [401, 403, 404],
     );
     if (response.status !== 200) {
@@ -983,7 +1058,6 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
       `/collections/${encodeURIComponent(this.#collection)}`,
       new URLSearchParams(),
       operation,
-      true,
       [401, 403, 404],
     );
     if (response.status !== 200) {
@@ -1024,6 +1098,10 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
     return { key: new Key(plan.collection, hit.id), exists: true, data: decoded };
   }
 
+  /**
+   * Validates a presented continuation without taking its lease. The caller
+   * activates it only after every remaining planning bound has passed.
+   */
   #prepareCursor(cursor: StructuredQuery<unknown>["startAfter"], fingerprint: string, limit: number, filtered: boolean): CursorPreparation {
     if (cursor === undefined) throw new TypesenseCursorError("malformed");
     if (cursor.values.length !== 1) throw new TypesenseCursorError("malformed");
@@ -1039,23 +1117,38 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
     if (binding.fingerprint !== fingerprint || binding.limit !== limit || binding.filtered !== filtered) {
       throw new TypesenseCursorError("changed-query");
     }
-    this.#activeCursors.add(token);
+    if (!Number.isSafeInteger(binding.nextOffset) || binding.nextOffset < 0 || binding.nextOffset > this.#maxQueryOffset) {
+      throw new TypesenseCursorError("malformed");
+    }
     return { token, binding };
   }
 
-  #issueCursor(binding: CursorBinding): string {
-    while (this.#issuedCursors.size >= this.#maxIssuedCursors) {
-      const oldest = this.#issuedCursors.keys().next().value;
-      if (typeof oldest !== "string") break;
-      this.#issuedCursors.delete(oldest);
-    }
+  /** Generates a token without mutating cursor state; this step may fail. */
+  #stageCursor(): string {
     let token = `ts1_${randomId()}`;
     while (this.#issuedCursors.has(token) || this.#activeCursors.has(token) || this.#consumedCursors.has(token)) {
       token = `ts1_${randomId()}`;
     }
     if (byteLength(token) > this.#maxCursorBytes) throw new RangeError("Typesense query cursor exceeds maxCursorBytes");
-    this.#issuedCursors.set(token, binding);
     return token;
+  }
+
+  /** One synchronous, non-throwing commit for a fully successful page. */
+  #commitCursorPage(previous: string | undefined, issued: { readonly token: string; readonly binding: CursorBinding } | undefined): void {
+    // Retire the resumed handle before publishing its replacement: consuming a
+    // handle frees the slot it occupied, so a resume at the cache bound must not
+    // evict an unrelated, still-outstanding handle. All fallible work has
+    // already completed, and these synchronous map updates cannot throw, so the
+    // transaction stays atomic.
+    if (previous !== undefined) this.#commitCursor(previous);
+    if (issued !== undefined) {
+      while (this.#issuedCursors.size >= this.#maxIssuedCursors) {
+        const oldest = this.#issuedCursors.keys().next().value;
+        if (typeof oldest !== "string") break;
+        this.#issuedCursors.delete(oldest);
+      }
+      this.#issuedCursors.set(issued.token, issued.binding);
+    }
   }
 
   #commitCursor(token: string): void {

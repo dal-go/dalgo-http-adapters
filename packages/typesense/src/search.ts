@@ -1,4 +1,4 @@
-import { isLosslessNumber } from "./json.js";
+import { isExactUint64, isLosslessNumber } from "./json.js";
 import { isObject, isPlainObject } from "./transport.js";
 
 export interface TypesenseSort {
@@ -25,7 +25,14 @@ export interface TypesenseNativeSearchHit {
   readonly id: string;
   /** The complete native document, including its string id. */
   readonly document: Readonly<Record<string, unknown>>;
-  readonly textMatch?: number;
+  /**
+   * The server's native full-text ranking score as its **exact decimal
+   * string**. Typesense serialises the uint64 `text_match` wrapper, which
+   * routinely exceeds Number.MAX_SAFE_INTEGER, so a JavaScript number would
+   * silently round the ranking. The string is never converted to a number and
+   * is cross-checked against `text_match_info.score` when the server sends it.
+   */
+  readonly textMatch?: string;
   readonly curated: boolean;
 }
 
@@ -106,6 +113,49 @@ function rowBytes(document: Readonly<Record<string, unknown>>, maximum: number):
   }
 }
 
+/**
+ * Reads the native score at its known protocol location. An unsafe uint64
+ * `text_match` token was already proven to be exactly this path by the raw
+ * scanner, so the parsed value is its exact decimal string. A safe integer is
+ * normalised to the same string representation. If the server also emits
+ * `text_match_info.score`, the two exact decimals must agree.
+ */
+function nativeTextMatch(raw: Readonly<Record<string, unknown>>): string | undefined {
+  let exact: string | undefined;
+  const value = raw.text_match;
+  if (value !== undefined) {
+    if (typeof value === "number") {
+      if (!Number.isSafeInteger(value) || value < 0) throw new TypeError("malformed Typesense text_match");
+      exact = String(value);
+    } else if (typeof value === "string") {
+      if (!isExactUint64(value)) throw new TypeError("malformed Typesense text_match");
+      exact = value;
+    } else {
+      throw new TypeError("malformed Typesense text_match");
+    }
+  }
+  const info = raw.text_match_info;
+  if (info !== undefined) {
+    if (!isPlainObject(info)) throw new TypeError("malformed Typesense text_match_info");
+    const score = info.score;
+    if (score !== undefined) {
+      let counterpart: string;
+      if (typeof score === "number") {
+        if (!Number.isSafeInteger(score) || score < 0) throw new TypeError("malformed Typesense text_match_info.score");
+        counterpart = String(score);
+      } else if (typeof score === "string") {
+        if (!isExactUint64(score)) throw new TypeError("malformed Typesense text_match_info.score");
+        counterpart = score;
+      } else {
+        throw new TypeError("malformed Typesense text_match_info.score");
+      }
+      if (exact === undefined) exact = counterpart;
+      else if (exact !== counterpart) throw new TypeError("Typesense text_match and text_match_info.score disagree");
+    }
+  }
+  return exact;
+}
+
 /** Decodes one search response strictly. No array, id or count is inferred. */
 export function decodeSearchResponse(value: unknown, options: SearchDecodeOptions): DecodedSearch {
   if (!isObject(value)) throw new TypeError("malformed Typesense search response");
@@ -135,7 +185,7 @@ export function decodeSearchResponse(value: unknown, options: SearchDecodeOption
     if (seen.has(id)) throw new TypeError("Typesense search response contains a duplicate document id");
     seen.add(id);
     rowBytes(raw.document, options.maxRowBytes);
-    const textMatch = optionalInteger(raw.text_match, "text_match");
+    const textMatch = nativeTextMatch(raw);
     const curated = raw.curated === undefined ? false : raw.curated;
     if (typeof curated !== "boolean") throw new TypeError("malformed Typesense curated flag");
     hits.push(Object.freeze({

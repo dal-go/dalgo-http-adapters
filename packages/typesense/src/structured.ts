@@ -25,7 +25,13 @@ const DEFAULT_MAX_DEPTH = 8;
 const DEFAULT_MAX_CONDITIONS = 64;
 const MAX_STRING_BYTES = 1_024;
 const MAX_IN_VALUES = 100;
-const YIELD_EVERY = 256;
+/**
+ * Units of verification work charged between two macrotask pulses. An ordinary
+ * AND/OR leaf costs one unit and every IN literal costs one more, so a bounded
+ * tree smaller than this budget still yields once enough rows are verified. A
+ * shared operation/window state is used, never a per-row counter.
+ */
+const YIELD_WORK = 32;
 
 export type Truth = "true" | "false" | "unknown";
 
@@ -293,24 +299,74 @@ export function collectPredicate(node: ConditionNode): { readonly fields: readon
   return { fields: Object.freeze([...fields].sort()), ranges: Object.freeze([...ranges].sort()) };
 }
 
-export function createVerifier(node: ConditionNode): (data: Readonly<Record<string, unknown>>, check: () => void) => Promise<boolean> {
+/**
+ * A deterministic, secret-free serialisation of the admitted predicate that
+ * retains the original operators and literal classes.
+ *
+ * The rendered native filter is deliberately not enough to identify a query:
+ * Typesense candidate normalisation widens `>`/`<` to `>=`/`<=` and two
+ * different exact predicates can therefore render one identical filter string.
+ * Cursor identity must bind the exact validated AST so a stricter handle can
+ * never be replayed as its widened neighbour.
+ */
+export function canonicalPredicate(node: ConditionNode | undefined): unknown {
+  return node === undefined ? null : canonicalNode(node);
+}
+
+function canonicalNode(node: ConditionNode): unknown {
+  if (node.kind === "group") {
+    return { kind: "group", operator: node.operator, children: node.children.map(canonicalNode) };
+  }
+  if (node.operator === "in") {
+    return {
+      kind: "comparison",
+      field: node.field,
+      operator: node.operator,
+      literals: (node.literals ?? []).map((literal) => ({ class: literal.class, value: literal.value })),
+    };
+  }
+  return {
+    kind: "comparison",
+    field: node.field,
+    operator: node.operator,
+    literal: node.literal === undefined ? null : { class: node.literal.class, value: node.literal.value },
+  };
+}
+
+/** Mutable work budget shared by every row verified for one operation/window. */
+export interface VerificationState { work: number; }
+
+export function createVerifierState(): VerificationState {
+  return { work: 0 };
+}
+
+/**
+ * Creates an exact verifier. The work budget is shared across all rows of one
+ * operation, so a query that verifies many small rows still reaches the
+ * macrotask cadence: a bounded per-row counter could never yield for trees
+ * smaller than the old 256-node threshold.
+ */
+export function createVerifier(
+  node: ConditionNode,
+  state: VerificationState = createVerifierState(),
+): (data: Readonly<Record<string, unknown>>, check: () => void) => Promise<boolean> {
   return async (data, check) => {
-    const state = { count: 0 };
+    check();
     const truth = await evaluate(node, data, state, check);
+    check();
     return truth === "true";
   };
 }
 
-interface EvalState { count: number; }
-
 async function evaluate(
   node: ConditionNode,
   data: Readonly<Record<string, unknown>>,
-  state: EvalState,
+  state: VerificationState,
   check: () => void,
 ): Promise<Truth> {
   check();
   if (node.kind === "group") {
+    state.work += 1;
     const stopOn = node.operator === "or" ? "true" : "false";
     let unknown = false;
     for (const child of node.children) {
@@ -322,11 +378,14 @@ async function evaluate(
     if (unknown) return "unknown";
     return node.operator === "or" ? "false" : "true";
   }
-  state.count += 1;
+  state.work += 1;
   const value = Object.hasOwn(data, node.field) ? data[node.field] : undefined;
   let result: Truth;
   if (node.operator === "in") {
     result = inTruth(value, node.literals ?? []);
+    // The whole RHS list is real comparison work; charge every item so a long
+    // IN list cannot hide a large synchronous block from the pulse budget.
+    state.work += (node.literals ?? []).length;
   } else {
     const literal = node.literal;
     if (literal === undefined) throw new UnsupportedError("Typesense comparison has no literal");
@@ -344,8 +403,9 @@ async function evaluate(
   return result;
 }
 
-async function pulse(state: EvalState, check: () => void): Promise<void> {
-  if (state.count % YIELD_EVERY !== 0) return;
+async function pulse(state: VerificationState, check: () => void): Promise<void> {
+  if (state.work < YIELD_WORK) return;
+  state.work = 0;
   check();
   await yieldToEventLoop();
   check();

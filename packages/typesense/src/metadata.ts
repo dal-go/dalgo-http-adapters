@@ -16,6 +16,12 @@ export interface TypesenseFieldDefinition {
 export interface TypesenseCollectionSchema {
   readonly name: string;
   readonly fields: readonly TypesenseFieldDefinition[];
+  /**
+   * The server's declared default sorting field. Typesense 30.2 always emits
+   * `default_sorting_field` in its collection summary and uses the empty string
+   * when a collection was created without one. An empty value is an honest
+   * sentinel for "no default sorting field"; it is never a sorting guarantee.
+   */
   readonly defaultSortingField?: string;
   readonly numDocuments?: number;
 }
@@ -74,6 +80,24 @@ function optionalBoolean(value: unknown, label: string, fallback: boolean): bool
   return value;
 }
 
+/**
+ * The official 30.2 `Collection.get_summary_json` always includes
+ * `default_sorting_field`, and a collection created without one carries the
+ * empty string. An empty sentinel is valid; a non-string, non-well-formed or
+ * control-bearing value is still malformed.
+ */
+function defaultSortingField(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length > 256 || !value.isWellFormed()) {
+    throw new TypeError("malformed Typesense default_sorting_field");
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) throw new TypeError("malformed Typesense default_sorting_field");
+  }
+  return value;
+}
+
 function optionalNumber(value: unknown, label: string): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
@@ -124,14 +148,12 @@ export function parseCollectionSchema(value: unknown, expectedName: string, maxF
       infix: false,
     }));
   }
-  const defaultSortingField = value.default_sorting_field === undefined
-    ? undefined
-    : requiredString(value.default_sorting_field, "default_sorting_field", 256);
+  const defaultSortingFieldValue = defaultSortingField(value.default_sorting_field);
   const numDocuments = optionalNumber(value.num_documents, "num_documents");
   return Object.freeze({
     name,
     fields: Object.freeze(fields),
-    ...(defaultSortingField === undefined ? {} : { defaultSortingField }),
+    ...(defaultSortingFieldValue === undefined ? {} : { defaultSortingField: defaultSortingFieldValue }),
     ...(numDocuments === undefined ? {} : { numDocuments }),
   });
 }

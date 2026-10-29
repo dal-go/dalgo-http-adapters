@@ -83,12 +83,13 @@ try {
     "--filter", "@dal-go/dalgo2couchdb",
     "--filter", "@dal-go/dalgo2libsql",
     "--filter", "@dal-go/dalgo2postgrest",
+    "--filter", "@dal-go/dalgo2typesense",
     "pack",
     "--pack-destination", tarballs,
   ]);
 
   const packFiles = readdirSync(tarballs).filter((name) => name.endsWith(".tgz")).sort();
-  assert.equal(packFiles.length, 4, "expected exactly four packed adapter tarballs");
+  assert.equal(packFiles.length, 5, "expected exactly five packed adapter tarballs");
   const tarball = (prefix) => {
     const matches = packFiles.filter((name) => name.startsWith(prefix));
     assert.equal(matches.length, 1, `expected one tarball for ${prefix}`);
@@ -131,6 +132,7 @@ try {
     tarball("dal-go-dalgo2couchdb-"),
     tarball("dal-go-dalgo2libsql-"),
     tarball("dal-go-dalgo2postgrest-"),
+    tarball("dal-go-dalgo2typesense-"),
     CORE_SPEC,
     TYPESCRIPT_SPEC,
   ], { cwd: consumer });
@@ -158,7 +160,7 @@ try {
   assert.equal(coreManifest.name, "@dalgo/core");
   assert.equal(coreManifest.version, "0.7.4");
 
-  for (const name of ["postgrest", "couchdb", "libsql", "adapter-runtime"]) {
+  for (const name of ["postgrest", "couchdb", "libsql", "typesense", "adapter-runtime"]) {
     for (const file of walk(join(repository, "packages", name, "src"))) {
       assert.ok(!legacySpecifier.test(readFileSync(file, "utf8")), `${file} references @dal-go/dalgo`);
     }
@@ -168,6 +170,7 @@ try {
     postgrest: join(consumer, "node_modules", "@dal-go", "dalgo2postgrest"),
     couch: join(consumer, "node_modules", "@dal-go", "dalgo2couchdb"),
     libsql: join(consumer, "node_modules", "@dal-go", "dalgo2libsql"),
+    typesense: join(consumer, "node_modules", "@dal-go", "dalgo2typesense"),
     runtime: join(consumer, "node_modules", "@dalgo", "adapter-runtime"),
   };
   for (const [label, root] of Object.entries(packageRoots)) {
@@ -211,6 +214,18 @@ try {
   assert.match(libsqlCapabilitiesDeclaration, /storage: "native-rows"/u);
   assert.ok(!legacySpecifier.test(libsqlNativeDeclaration), "packed native libSQL declarations reference the legacy package");
 
+  const typesenseIndexDeclaration = readFileSync(join(packageRoots.typesense, "dist", "index.d.ts"), "utf8");
+  const typesenseDatabaseDeclaration = readFileSync(join(packageRoots.typesense, "dist", "database.d.ts"), "utf8");
+  const typesenseSearchDeclaration = readFileSync(join(packageRoots.typesense, "dist", "search.d.ts"), "utf8");
+  assert.match(typesenseIndexDeclaration, /TypesenseDatabase/u);
+  assert.match(typesenseIndexDeclaration, /TypesenseContinuationBoundError/u);
+  assert.match(typesenseIndexDeclaration, /TYPESENSE_READ_CAPABILITIES/u);
+  assert.match(typesenseDatabaseDeclaration, /export declare class TypesenseDatabase implements Database, CancellableQueryExecutor/u);
+  assert.match(typesenseDatabaseDeclaration, /readonly readOnly: true/u);
+  assert.match(typesenseDatabaseDeclaration, /from "@dalgo\/core"/u);
+  assert.match(typesenseSearchDeclaration, /readonly textMatch\?: string/u);
+  assert.ok(!legacySpecifier.test(typesenseDatabaseDeclaration), "packed Typesense declarations reference the legacy package");
+
   run(join(consumer, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], { cwd: consumer });
 
   copyFileSync(
@@ -251,6 +266,15 @@ try {
       insertRefused: true,
       transactionRefused: true,
     },
+    typesense: {
+      readOnly: true,
+      queryWithSignal: "function",
+      search: "function",
+      schema: "function",
+      describe: "function",
+      textMatch: "string",
+      transactionRefused: true,
+    },
   });
 
   const tree = JSON.parse(run("npm", [
@@ -262,6 +286,7 @@ try {
     "@dal-go/dalgo2couchdb",
     "@dal-go/dalgo2libsql",
     "@dal-go/dalgo2postgrest",
+    "@dal-go/dalgo2typesense",
   ], { cwd: consumer }));
   assertNoLegacyTree(tree, "installed npm");
 

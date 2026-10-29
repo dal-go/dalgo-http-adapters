@@ -31,6 +31,15 @@ import {
   type PostgrestDiscovery,
 } from "@dal-go/dalgo2postgrest";
 import {
+  TYPESENSE_READ_CAPABILITIES,
+  TypesenseContinuationBoundError,
+  TypesenseDatabase,
+  TypesenseJsonNumberError,
+  type TypesenseDatabaseOptions,
+  type TypesenseNativeSearchResult,
+  type TypesenseQuery,
+} from "@dal-go/dalgo2typesense";
+import {
   isCancellableQueryExecutor,
   type CancellableQueryExecutor,
 } from "@dalgo/adapter-runtime";
@@ -92,7 +101,15 @@ const nativeLibsqlOptions: NativeLibSQLDatabaseOptions = {
     },
   },
 };
+const typesenseOptions: TypesenseDatabaseOptions = {
+  baseUrl: "https://typesense.example.test:8108",
+  collection: "items",
+  headers: () => ({ "X-TYPESENSE-API-KEY": "scoped-readonly-key" }),
+  maxQueryLimit: 10,
+  maxRowsPerPage: 10,
+};
 const postgrest = new PostgrestDatabase(postgrestOptions);
+const typesense = new TypesenseDatabase(typesenseOptions);
 const couch = new CouchDbDatabase(couchOptions);
 const nativeCouch = new NativeCouchDbDatabase(nativeOptions);
 const libsql = new LibSQLDatabase(libsqlOptions);
@@ -104,6 +121,7 @@ const couchDatabase: Database & WriteSession = couch;
 const nativeDatabase: Database = nativeCouch;
 const libsqlDatabase: Database & WriteSession = libsql;
 const nativeLibsqlDatabase: Database = nativeLibsql;
+const typesenseDatabase: Database = typesense;
 const nativeStorage: "native-rows" = NATIVE_COUCHDB_READ_CAPABILITIES.storage;
 const libsqlStorage: "native-rows" = NATIVE_LIBSQL_READ_CAPABILITIES.storage;
 const nativeLibsqlStorage: "native-rows" = LIBSQL_READ_CAPABILITIES.storage;
@@ -113,6 +131,7 @@ const postgrestCancellable: CancellableQueryExecutor = postgrest;
 const couchCancellable: CancellableQueryExecutor = couch;
 const libsqlCancellable: CancellableQueryExecutor = libsql;
 const nativeLibsqlCancellable: CancellableQueryExecutor = nativeLibsql;
+const typesenseCancellable: CancellableQueryExecutor = typesense;
 
 const items = collection<{ done: boolean }>("items");
 const numericItems = collection<{ title: string }, number>("items");
@@ -133,6 +152,14 @@ const nativeLibsqlDiscovery: Promise<LibSQLDiscovery> = nativeLibsql.discover(si
 const nativeLibsqlConnection = nativeLibsql.testConnection(signal);
 const nativeLibsqlDescription: Promise<NativeLibSQLDescribe> = nativeLibsql.describe(signal);
 const numericKey: number = numericItems.key(7).id;
+const typesenseQuery: TypesenseQuery<{ done: boolean }> = { ...query, projection: ["done"] };
+const typesensePage: Promise<QueryPage<{ done: boolean }>> = typesense.queryWithSignal(typesenseQuery, signal);
+const typesenseSearch: Promise<TypesenseNativeSearchResult> = typesense.searchWithSignal({
+  q: "ordinary full text",
+  queryBy: ["title"],
+  limit: 1,
+}, signal);
+const typesenseStorage: "native-rows" = TYPESENSE_READ_CAPABILITIES.storage;
 
 // The callback parameter must be the modern @dalgo/core type, not a legacy
 // @dal-go/dalgo type and not `any`.
@@ -175,6 +202,13 @@ void postTransaction;
 void couchTransaction;
 void libsqlTransaction;
 void nativeLibsqlTransaction;
+void typesenseDatabase;
+void typesenseCancellable;
+void typesensePage;
+void typesenseSearch;
+void typesenseStorage;
+void TypesenseContinuationBoundError;
+void TypesenseJsonNumberError;
 void PostgrestRequestError;
 void CouchDbRequestError;
 void LibSQLHttpError;
@@ -191,4 +225,5 @@ export const cancellable = {
   couch: isCancellableQueryExecutor(couch),
   libsql: isCancellableQueryExecutor(libsql),
   nativeLibsql: isCancellableQueryExecutor(nativeLibsql),
+  typesense: isCancellableQueryExecutor(typesense),
 };
