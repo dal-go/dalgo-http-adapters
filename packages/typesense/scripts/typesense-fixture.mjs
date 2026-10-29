@@ -383,9 +383,16 @@ export async function seedTypesense(fixture) {
   if (curation.name !== "books_curations" || !Array.isArray(curation.items)) {
     throw new Error("fixture setup create books curations did not return the created curation set");
   }
-  const attached = requireRecord(await adminJSON(fixture, "PATCH", "/collections/books", { curation_sets: ["books_curations"] }), "attach books curations");
+  // PATCH /collections/:name echoes the request document (30.2 core_api.cpp),
+  // so its acknowledgement carries curation_sets but no collection name; the
+  // persisted state is therefore read back independently with GET.
+  const attachAck = requireRecord(await adminJSON(fixture, "PATCH", "/collections/books", { curation_sets: ["books_curations"] }), "attach books curations");
+  if (!Array.isArray(attachAck.curation_sets) || !attachAck.curation_sets.includes("books_curations")) {
+    throw new Error("fixture setup attach books curations did not acknowledge the curation set");
+  }
+  const attached = requireRecord(await adminJSON(fixture, "GET", "/collections/books"), "read back books curations");
   if (attached.name !== "books" || !Array.isArray(attached.curation_sets) || !attached.curation_sets.includes("books_curations")) {
-    throw new Error("fixture setup attach books curations did not confirm the curation set");
+    throw new Error("fixture setup attach books curations did not persist the curation set");
   }
 
   const searchKey = await createKey(fixture, "fixture-pure-search", ["documents:search"], ["books", "semantics", "bulk", "unsafe", "nodesort"]);
