@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tugql": {
+      "types": "./dist/tugql.d.ts",
+      "import": "./dist/tugql.js"
     }
   },
   "files": [
@@ -46,7 +50,7 @@
     "firebase": "^12.19.0"
   },
   "devDependencies": {
-    "@dalgo/core": "^0.8.0",
+    "@dalgo/core": "github:dal-go/dalgo-js#b51dd2ab083df1cead2dc24f92b32cf0ecf9fdc0",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "firebase": "12.19.0",
