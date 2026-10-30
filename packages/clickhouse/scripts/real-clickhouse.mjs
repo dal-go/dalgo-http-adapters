@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { NativeClickHouseDatabase } from "../dist/index.js";
-import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, assertReaderProbes, exactQuery, fixtureUrl, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, readerProbeSql, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
+import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertHealthyControl, assertLateFramingEvidence, assertReaderProbes, exactQuery, fixtureResponseFacts, fixtureUrl, healthyControlSql, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, readerProbeSql, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
 
 const serverUrl = fixtureUrl();
 const version = await assertFixtureVersion(serverUrl);
@@ -24,17 +24,25 @@ let unsafeRequests = 0;
 const structuredOnly = new NativeClickHouseDatabase({ ...nativeOptions(serverUrl), allowNativeSql: false, fetch: (...args) => { unsafeRequests += 1; return fetch(...args); } });
 for (const query of unsafeAliasQueries) await assert.rejects(structuredOnly.queryOrdinal(query), (error) => error.code === "unsupported");
 assert.equal(unsafeRequests, 0, "unsafe aliases must refuse before HTTP");
+let healthyObserved;
+const healthyReader = new NativeClickHouseDatabase({ ...nativeOptions(serverUrl), fetch: async (value, init) => {
+  const url = new URL(value); url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0"); url.searchParams.set("max_block_size", "1");
+  const started = performance.now(); const response = await fetch(url, init);
+  healthyObserved = fixtureResponseFacts(response, started); return response;
+} });
+const healthy = await healthyReader.queryOrdinal({ kind: "native", sql: healthyControlSql }).then((result) => ({ result }), (error) => ({ errorCode: error.code }));
+const healthyProof = assertHealthyControl({ ...healthy, observed: healthyObserved });
 let lateObserved;
 const lateReader = new NativeClickHouseDatabase({ ...nativeOptions(serverUrl), fetch: async (value, init) => {
   // Exercise the actual early-response protocol without changing SQL or any
   // read/resource constraints. Do not normalize a broken stream into success.
   const url = new URL(value);
   url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0"); url.searchParams.set("max_block_size", "1");
-  const response = await fetch(url, init);
+  const started = performance.now(); const response = await fetch(url, init);
   const tag = response.headers.get("x-clickhouse-exception-tag");
   const exceptionCode = response.headers.get("x-clickhouse-exception-code");
   lateObserved = { status: response.status, format: response.headers.get("x-clickhouse-format"), tagLength: tag?.length, tagValid: /^[a-z]{16}$/.test(tag ?? ""), exceptionCodePresent: response.headers.has("x-clickhouse-exception-code"),
-    exceptionCode: exceptionCode !== null && /^(?:0|[1-9][0-9]{0,9})$/.test(exceptionCode) && Number(exceptionCode) <= 1_000_000_000 ? Number(exceptionCode) : null };
+    exceptionCode: exceptionCode !== null && /^(?:0|[1-9][0-9]{0,9})$/.test(exceptionCode) && Number(exceptionCode) <= 1_000_000_000 ? Number(exceptionCode) : null, ...fixtureResponseFacts(response, started) };
   return response;
 } });
 const lateError = await lateReader.queryOrdinal({ kind: "native", sql: lateErrorSql }).then(() => null, (error) => error);
@@ -61,4 +69,4 @@ await waitForProcess(serverUrl, id, 1);
 controller.abort();
 assert.equal((await outcome).error?.reason, "caller");
 await waitForProcess(serverUrl, id, 0, 1000);
-recordProof(process.versions.node.startsWith("20.") ? "node20" : "node24", { image: PINNED_IMAGE, version, profileProof, readerProof, lateProof, exactOrdinal: "pass", duplicateRowsAndLabels: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", mapEntries: "pass", serverWriteSettingsAndScopeRefusal: "pass", nativeOptInRefused: "pass", serverCancellationObserved: { before: 1, after: 0 } });
+recordProof(process.versions.node.startsWith("20.") ? "node20" : "node24", { image: PINNED_IMAGE, version, profileProof, readerProof, healthyProof, lateProof, exactOrdinal: "pass", duplicateRowsAndLabels: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", mapEntries: "pass", serverWriteSettingsAndScopeRefusal: "pass", nativeOptInRefused: "pass", serverCancellationObserved: { before: 1, after: 0 } });

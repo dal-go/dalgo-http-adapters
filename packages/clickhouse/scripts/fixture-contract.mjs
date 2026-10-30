@@ -60,7 +60,47 @@ export const slowSql = "SELECT sleepEachRow(0.05) FROM numbers(50)";
 //512rows/~4MiB/2.56s scheduled sleep versus unchanged1000row/8MiB/30s limits.
 // The intended ~3MiB prefix exceeds the current upstream1MiB response buffer;
 // only real CI establishes the pinned server's actual HTTP200 late framing.
-export const lateErrorSql = "SELECT sleepEachRow(0.005) AS delay, throwIf(number = 384) AS n, repeat('x', 8192) AS padding FROM numbers(512)";
+export const lateErrorSql = "SELECT sleepEachRow(0.005) AS delay, throwIf(number = 384) AS n, toUInt64(blockSize()) AS block_rows, hex(randomString(4096)) AS padding FROM numbers(512)";
+export const healthyControlSql = "SELECT sleepEachRow(0.005) AS delay, throwIf(number = 512) AS n, toUInt64(blockSize()) AS block_rows, hex(randomString(4096)) AS padding FROM numbers(512)";
+const encodings = ["identity", "gzip", "br", "deflate", "zstd", "lz4", "snappy", "xz", "bzip2", "other", "missing-or-not-exposed"];
+const finiteFact = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000_000_000 ? value : null;
+function safeHttpDetails(observed) {
+  return { status: Number.isInteger(observed?.status) && observed.status >= 100 && observed.status <= 599 ? observed.status : null,
+    contentEncoding: encodings.includes(observed?.contentEncoding) ? observed.contentEncoding : "missing-or-not-exposed",
+    resultRows: finiteFact(observed?.resultRows), resultBytes: finiteFact(observed?.resultBytes), elapsedNs: finiteFact(observed?.elapsedNs),
+    headerElapsedMs: finiteFact(observed?.headerElapsedMs) };
+}
+export function fixtureResponseFacts(response, started) {
+  const encoding = response.headers.get("content-encoding");
+  let summary = null;
+  const text = response.headers.get("x-clickhouse-summary");
+  if (text !== null && text.length <= 8192) {
+    try { const value = JSON.parse(text); if (value !== null && typeof value === "object" && !Array.isArray(value)) summary = value; } catch { /* Do not log untrusted header text. */ }
+  }
+  const count = (key) => {
+    const value = summary?.[key];
+    return typeof value === "string" && /^(?:0|[1-9][0-9]{0,15})$/.test(value) ? finiteFact(Number(value)) : finiteFact(value);
+  };
+  return safeHttpDetails({ status: response.status, contentEncoding: encoding === null ? "missing-or-not-exposed" : encodings.includes(encoding) ? encoding : "other",
+    resultRows: count("result_rows"), resultBytes: count("result_bytes"), elapsedNs: count("elapsed_ns"), headerElapsedMs: Math.round(performance.now() - started) });
+}
+export function assertHealthyControl(probe) {
+  const rows = Array.isArray(probe?.result?.rows) && probe.result.rows.length <= 1000 ? probe.result.rows : [];
+  const integer = (value, expected) => value?.kind === "integer" && value.value === expected;
+  const summary = { diagnostic: "clickhouse-healthy-control", rowCount: rows.length,
+    shapeValid: rows.length > 0 && rows.every((row) => Array.isArray(row) && row.length === 4),
+    delayAndThrowZeros: rows.length > 0 && rows.every((row) => Array.isArray(row) && integer(row[0], "0") && integer(row[1], "0")),
+    blocksAreOne: rows.length > 0 && rows.every((row) => Array.isArray(row) && integer(row[2], "1")),
+    paddingValid: rows.length > 0 && rows.every((row) => Array.isArray(row) && typeof row[3] === "string" && row[3].length === 8192 && /^[0-9A-F]+$/.test(row[3])),
+    errorCode: ["transport", "response", "framing", "unsupported", "bounds", "permission"].includes(probe?.errorCode) ? probe.errorCode : null,
+    ...safeHttpDetails(probe?.observed) };
+  console.error(JSON.stringify(summary));
+  assert.equal(summary.errorCode, null); assert.equal(summary.rowCount, 512);
+  for (const key of ["shapeValid", "delayAndThrowZeros", "blocksAreOne", "paddingValid"]) assert.equal(summary[key], true, `healthy control ${key} mismatch`);
+  assert.deepEqual(probe?.result?.columns, [{ name: "delay", nativeType: "UInt8" }, { name: "n", nativeType: "UInt8" }, { name: "block_rows", nativeType: "UInt64" }, { name: "padding", nativeType: "String" }]);
+  // This control proves only its own pipeline, never the late query's pipeline.
+  return summary;
+}
 export const readerProbeSql = "SELECT currentUser() AS reader, toUInt64(getSetting('max_block_size')) AS max_block_size, toUInt64(getSetting('readonly')) AS reader_readonly, toUInt64(blockSize()) AS block_rows FROM numbers(512)";
 export function assertReaderProbes(baseline, explicit) {
   const summarize = (probe, phase) => {
@@ -174,6 +214,7 @@ export function assertLateFramingEvidence(error, observed) {
     tagLength: Number.isSafeInteger(observed?.tagLength) && observed.tagLength >= 0 && observed.tagLength <= 8192 ? observed.tagLength : null,
     tagValid: observed?.tagValid === true, exceptionCodePresent: observed?.exceptionCodePresent === true,
     exceptionCode: Number.isSafeInteger(observed?.exceptionCode) && observed.exceptionCode >= 0 && observed.exceptionCode <= 1_000_000_000 ? observed.exceptionCode : null,
+    ...safeHttpDetails(observed),
     errorCode: ["transport", "response", "framing", "unsupported", "bounds", "permission"].includes(error?.code) ? error.code : "other-or-missing",
   }));
   assert.equal(error?.code, "framing", "a decoder, transport, format or row-budget refusal is not framing proof");

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { build } from "esbuild";
 import { chromium } from "@playwright/test";
-import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, assertReaderProbes, exactQuery, fixtureUrl, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, readerProbeSql, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
+import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertHealthyControl, assertLateFramingEvidence, assertReaderProbes, exactQuery, fixtureUrl, healthyControlSql, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, readerProbeSql, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
 
 const serverUrl = fixtureUrl();
 const version = await assertFixtureVersion(serverUrl);
@@ -91,20 +91,41 @@ try {
     return response.status;
   }, serverUrl);
   assert.ok([401, 403].includes(noAuthStatus), "browser must not reach default admin by omitting reader credentials");
-  const late = await page.evaluate(async ({ options, sql }) => {
-    let observed;
-    const database = new window.NativeClickHouseDatabase({ ...options, headers: () => ({ "X-ClickHouse-User": "fixture_reader", "X-ClickHouse-Key": "synthetic-reader" }), fetch: async (value, init) => {
-      const url = new URL(value); url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0"); url.searchParams.set("max_block_size", "1");
-      const response = await fetch(url, init);
-      const tag = response.headers.get("x-clickhouse-exception-tag");
-      const exceptionCode = response.headers.get("x-clickhouse-exception-code");
-      observed = { status: response.status, format: response.headers.get("x-clickhouse-format"), tagLength: tag?.length, tagValid: /^[a-z]{16}$/.test(tag ?? ""), exceptionCodePresent: response.headers.has("x-clickhouse-exception-code"),
-        exceptionCode: exceptionCode !== null && /^(?:0|[1-9][0-9]{0,9})$/.test(exceptionCode) && Number(exceptionCode) <= 1_000_000_000 ? Number(exceptionCode) : null };
-      return response;
-    } });
-    try { await database.queryOrdinal({ kind: "native", sql }); return { success: true, observed }; }
-    catch (error) { return { success: false, observed, error: { code: error.code, framing: error.framing } }; }
-  }, { options: browserOptions, sql: lateErrorSql });
+  const controls = await page.evaluate(async ({ options, sql, healthySql }) => {
+    // Same bounded primitive facts as Node. CORS may hide these headers;
+    // absence never proves identity encoding or zero output.
+    const facts = (response, started) => {
+      const finite = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000_000_000 ? value : null;
+      const encodings = ["identity", "gzip", "br", "deflate", "zstd", "lz4", "snappy", "xz", "bzip2"];
+      const encoding = response.headers.get("content-encoding");
+      let summary = null; const text = response.headers.get("x-clickhouse-summary");
+      if (text !== null && text.length <= 8192) {
+        try { const value = JSON.parse(text); if (value !== null && typeof value === "object" && !Array.isArray(value)) summary = value; } catch { /* Never return the raw header. */ }
+      }
+      const count = (key) => { const value = summary?.[key]; return typeof value === "string" && /^(?:0|[1-9][0-9]{0,15})$/.test(value) ? finite(Number(value)) : finite(value); };
+      return { status: Number.isInteger(response.status) && response.status >= 100 && response.status <= 599 ? response.status : null,
+        contentEncoding: encoding === null ? "missing-or-not-exposed" : encodings.includes(encoding) ? encoding : "other",
+        resultRows: count("result_rows"), resultBytes: count("result_bytes"), elapsedNs: count("elapsed_ns"), headerElapsedMs: finite(Math.round(performance.now() - started)) };
+    };
+    const run = async (query) => {
+      let observed;
+      const database = new window.NativeClickHouseDatabase({ ...options, headers: () => ({ "X-ClickHouse-User": "fixture_reader", "X-ClickHouse-Key": "synthetic-reader" }), fetch: async (value, init) => {
+        const url = new URL(value); url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0"); url.searchParams.set("max_block_size", "1");
+        const started = performance.now(); const response = await fetch(url, init);
+        const tag = response.headers.get("x-clickhouse-exception-tag");
+        const exceptionCode = response.headers.get("x-clickhouse-exception-code");
+        observed = { status: response.status, format: response.headers.get("x-clickhouse-format"), tagLength: tag?.length, tagValid: /^[a-z]{16}$/.test(tag ?? ""), exceptionCodePresent: response.headers.has("x-clickhouse-exception-code"),
+          exceptionCode: exceptionCode !== null && /^(?:0|[1-9][0-9]{0,9})$/.test(exceptionCode) && Number(exceptionCode) <= 1_000_000_000 ? Number(exceptionCode) : null, ...facts(response, started) };
+        return response;
+      } });
+      try { return { success: true, result: await database.queryOrdinal({ kind: "native", sql: query }), observed }; }
+      catch (error) { return { success: false, observed, error: { code: error.code, framing: error.framing } }; }
+    };
+    const healthy = await run(healthySql); const late = await run(sql);
+    return { healthy, late };
+  }, { options: browserOptions, sql: lateErrorSql, healthySql: healthyControlSql });
+  const healthyProof = assertHealthyControl({ result: controls.healthy.result, errorCode: controls.healthy.error?.code, observed: controls.healthy.observed });
+  const late = controls.late;
   assert.equal(late.success, false);
   const lateProof = assertLateFramingEvidence(late.error, late.observed);
   for (const sql of refusedSql) {
@@ -138,7 +159,7 @@ try {
   }, { options: browserOptions, query: exactQuery });
   assert.equal(deniedResult, "transport");
   await page.evaluate((result) => { document.querySelector("#proof").textContent = JSON.stringify(result, null, 2); }, result);
-  recordProof("chromium", { image: PINNED_IMAGE, version, browser: "Chromium", exactOrigin: origin, profileProof, readerProof, lateProof, wrongOriginRefused: "pass", noAuthAdminRefused: "pass", precisionAndDuplicates: "pass", duplicateMapKeys: "pass", nativeOptInRefused: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", writeSettingsAndScopeRefusal: "pass", serverCancellationObserved: { before: 1, after: 0 } });
+  recordProof("chromium", { image: PINNED_IMAGE, version, browser: "Chromium", exactOrigin: origin, profileProof, readerProof, healthyProof, lateProof, wrongOriginRefused: "pass", noAuthAdminRefused: "pass", precisionAndDuplicates: "pass", duplicateMapKeys: "pass", nativeOptInRefused: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", writeSettingsAndScopeRefusal: "pass", serverCancellationObserved: { before: 1, after: 0 } });
 } finally {
   await browser?.close();
   if (allowedServer !== undefined) await new Promise((resolve, reject) => allowedServer.close((error) => error ? reject(error) : resolve()));
