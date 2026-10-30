@@ -22,11 +22,11 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "eslint . && vitest run --exclude test/firestore.integration.test.ts && tsc -p tsconfig.build.json",
+    "check": "eslint . && vitest run --exclude 'test/*.integration.test.ts' && tsc -p tsconfig.build.json",
     "lint": "eslint .",
     "prepack": "npm run build",
-    "test": "vitest run --exclude test/firestore.integration.test.ts",
-    "test:emulator": "pnpm --package firebase-tools@15.30.2 dlx firebase emulators:exec --only firestore --project demo-dalgo-js-e2e \"vitest run test/firestore.integration.test.ts\"",
+    "test": "vitest run --exclude 'test/*.integration.test.ts'",
+    "test:emulator": "pnpm --package firebase-tools@15.30.2 dlx firebase emulators:exec --only firestore --project demo-dalgo-js-e2e \"vitest run integration.test\"",
     "test:watch": "vitest"
   },
   "repository": {
