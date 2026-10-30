@@ -99,8 +99,8 @@ by the adapter.
 
 The two current reference adapters export their own constants:
 
-- `COUCHDB_READ_CAPABILITIES` from `@dal-go/dalgo2couchdb`
-- `POSTGREST_READ_CAPABILITIES` from `@dal-go/dalgo2postgrest`
+- `COUCHDB_READ_CAPABILITIES` from `@dalgo/dalgo2couchdb`
+- `POSTGREST_READ_CAPABILITIES` from `@dalgo/dalgo2postgrest`
 
 A small consumer-side admission check looks like this:
 

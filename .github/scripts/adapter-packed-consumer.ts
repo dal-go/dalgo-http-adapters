@@ -9,7 +9,7 @@ import {
   type NativeCouchDbDatabaseOptions,
   type NativeCouchDbDescribe,
   type NativeCouchDbQuery,
-} from "@dal-go/dalgo2couchdb";
+} from "@dalgo/dalgo2couchdb";
 import {
   LIBSQL_READ_CAPABILITIES,
   LibSQLCursorError,
@@ -21,7 +21,7 @@ import {
   type LibSQLDiscovery,
   type NativeLibSQLDatabaseOptions,
   type NativeLibSQLDescribe,
-} from "@dal-go/dalgo2libsql";
+} from "@dalgo/dalgo2libsql";
 import {
   POSTGREST_READ_CAPABILITIES,
   PostgrestDatabase,
@@ -29,7 +29,7 @@ import {
   type PostgrestConnectionStatus,
   type PostgrestDatabaseOptions,
   type PostgrestDiscovery,
-} from "@dal-go/dalgo2postgrest";
+} from "@dalgo/dalgo2postgrest";
 import {
   TYPESENSE_READ_CAPABILITIES,
   TypesenseContinuationBoundError,
@@ -38,7 +38,7 @@ import {
   type TypesenseDatabaseOptions,
   type TypesenseNativeSearchResult,
   type TypesenseQuery,
-} from "@dal-go/dalgo2typesense";
+} from "@dalgo/dalgo2typesense";
 import {
   isCancellableQueryExecutor,
   type CancellableQueryExecutor,

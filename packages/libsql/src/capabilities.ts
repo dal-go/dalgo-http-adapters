@@ -30,7 +30,7 @@ export interface LibSQLCapabilityDescriptor extends Omit<AdapterReadCapabilities
  * unsupported rather than silently emulated.
  */
 export const LIBSQL_READ_CAPABILITIES = {
-  adapter: "@dal-go/dalgo2libsql",
+  adapter: "@dalgo/dalgo2libsql",
   storage: "native-rows",
   read: {
     get: true,

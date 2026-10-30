@@ -1,4 +1,4 @@
-# @dal-go/dalgo2postgrest
+# @dalgo/dalgo2postgrest
 
 ## 0.2.0
 

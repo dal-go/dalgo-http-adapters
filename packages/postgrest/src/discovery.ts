@@ -79,7 +79,7 @@ export interface PostgrestDiscoveryBounds {
  * role that sees zero relations are all reported explicitly.
  */
 export interface PostgrestDiscovery {
-  readonly adapter: "@dal-go/dalgo2postgrest";
+  readonly adapter: "@dalgo/dalgo2postgrest";
   readonly protocol: "postgrest-openapi";
   readonly endpoint: string;
   readonly schema?: string;

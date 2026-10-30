@@ -1,6 +1,6 @@
 # DALgo adapter for PostgREST
 
-`@dal-go/dalgo2postgrest` is a deliberately bounded, dependency-free TypeScript
+`@dalgo/dalgo2postgrest` is a deliberately bounded, dependency-free TypeScript
 adapter from [`@dalgo/core`](https://github.com/dal-go/dalgo-js) to exposed
 PostgREST tables or updatable views. It uses the platform `fetch` API only. It
 does not call PostgreSQL directly, an administration endpoint, RPC, or resource
@@ -59,7 +59,7 @@ Substitute the full 40-character SHA of the reviewed merged commit for
 // package.json
 "@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559",
 "@dalgo/adapter-runtime": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/adapter-runtime",
-"@dal-go/dalgo2postgrest": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/postgrest"
+"@dalgo/dalgo2postgrest": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/postgrest"
 ```
 
 ```yaml
@@ -67,7 +67,7 @@ Substitute the full 40-character SHA of the reviewed merged commit for
 allowBuilds:
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559': true
   '@dalgo/adapter-runtime@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/adapter-runtime': true
-  '@dal-go/dalgo2postgrest@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/postgrest': true
+  '@dalgo/dalgo2postgrest@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/postgrest': true
 ```
 
 If an entry is missing, pnpm names the exact key it needs; approve only the
@@ -82,13 +82,13 @@ commit with
 The `@dalgo/core` peer range is `>=0.7.4 <0.9.0`; the workspace tests against the
 exact `0.7.4` commit the web UI pins, so the browser contains one `Key`/query
 identity. From the repository root, `pnpm install --frozen-lockfile` and
-`pnpm --filter @dal-go/dalgo2postgrest check` run the workspace gate.
+`pnpm --filter @dalgo/dalgo2postgrest check` run the workspace gate.
 
 ## Minimal setup
 
 ```ts
 import { collection } from "@dalgo/core";
-import { PostgrestDatabase } from "@dal-go/dalgo2postgrest";
+import { PostgrestDatabase } from "@dalgo/dalgo2postgrest";
 
 const db = new PostgrestDatabase({
   baseUrl: "https://api.example.com/rest/v1",
@@ -119,7 +119,7 @@ actually declares, bounded by relation count, fields per relation, document
 bytes and local `$ref` depth. Remote `$ref` documents are never fetched.
 
 ```ts
-import { POSTGREST_READ_CAPABILITIES, PostgrestDatabase } from "@dal-go/dalgo2postgrest";
+import { POSTGREST_READ_CAPABILITIES, PostgrestDatabase } from "@dalgo/dalgo2postgrest";
 
 const db = new PostgrestDatabase({ baseUrl, headers });
 const status = await db.testConnection(controller.signal);
@@ -236,7 +236,7 @@ by `maxCursorBytes`.
 
 ```ts
 import { QueryCancelledError } from "@dalgo/adapter-runtime";
-import { POSTGREST_READ_CAPABILITIES, PostgrestDatabase } from "@dal-go/dalgo2postgrest";
+import { POSTGREST_READ_CAPABILITIES, PostgrestDatabase } from "@dalgo/dalgo2postgrest";
 import { collection } from "@dalgo/core";
 
 const capabilities = POSTGREST_READ_CAPABILITIES;

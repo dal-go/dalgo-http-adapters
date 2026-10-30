@@ -82,10 +82,10 @@ try {
 
   run("pnpm", [
     "--filter", "@dalgo/adapter-runtime",
-    "--filter", "@dal-go/dalgo2couchdb",
-    "--filter", "@dal-go/dalgo2libsql",
-    "--filter", "@dal-go/dalgo2postgrest",
-    "--filter", "@dal-go/dalgo2typesense",
+    "--filter", "@dalgo/dalgo2couchdb",
+    "--filter", "@dalgo/dalgo2libsql",
+    "--filter", "@dalgo/dalgo2postgrest",
+    "--filter", "@dalgo/dalgo2typesense",
     "pack",
     "--pack-destination", tarballs,
   ]);
@@ -132,10 +132,10 @@ try {
     "--save-exact",
     "--registry=https://registry.npmjs.org",
     tarball("dalgo-adapter-runtime-"),
-    tarball("dal-go-dalgo2couchdb-"),
-    tarball("dal-go-dalgo2libsql-"),
-    tarball("dal-go-dalgo2postgrest-"),
-    tarball("dal-go-dalgo2typesense-"),
+    tarball("dalgo-dalgo2couchdb-"),
+    tarball("dalgo-dalgo2libsql-"),
+    tarball("dalgo-dalgo2postgrest-"),
+    tarball("dalgo-dalgo2typesense-"),
     CORE_SPEC,
     TYPESCRIPT_SPEC,
   ], { cwd: consumer });
@@ -171,14 +171,15 @@ try {
   }
 
   const packageRoots = {
-    postgrest: join(consumer, "node_modules", "@dal-go", "dalgo2postgrest"),
-    couch: join(consumer, "node_modules", "@dal-go", "dalgo2couchdb"),
-    libsql: join(consumer, "node_modules", "@dal-go", "dalgo2libsql"),
-    typesense: join(consumer, "node_modules", "@dal-go", "dalgo2typesense"),
+    postgrest: join(consumer, "node_modules", "@dalgo", "dalgo2postgrest"),
+    couch: join(consumer, "node_modules", "@dalgo", "dalgo2couchdb"),
+    libsql: join(consumer, "node_modules", "@dalgo", "dalgo2libsql"),
+    typesense: join(consumer, "node_modules", "@dalgo", "dalgo2typesense"),
     runtime: join(consumer, "node_modules", "@dalgo", "adapter-runtime"),
   };
   for (const [label, root] of Object.entries(packageRoots)) {
     const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    assert.equal(manifest.name, relative(join(consumer, "node_modules"), root).split(sep).join("/"));
     assertNoLegacyDependency(manifest, label);
     assert.deepEqual(manifest.exports["."], { types: "./dist/index.d.ts", import: "./dist/index.js" });
     for (const file of walk(root)) {
@@ -287,10 +288,10 @@ try {
     "--json",
     "@dalgo/core",
     "@dalgo/adapter-runtime",
-    "@dal-go/dalgo2couchdb",
-    "@dal-go/dalgo2libsql",
-    "@dal-go/dalgo2postgrest",
-    "@dal-go/dalgo2typesense",
+    "@dalgo/dalgo2couchdb",
+    "@dalgo/dalgo2libsql",
+    "@dalgo/dalgo2postgrest",
+    "@dalgo/dalgo2typesense",
   ], { cwd: consumer }));
   assertNoLegacyTree(tree, "installed npm");
 

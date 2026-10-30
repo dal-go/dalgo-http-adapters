@@ -209,7 +209,7 @@ export interface LibSQLDiscoveryBounds {
  * from an available database that currently has no user tables.
  */
 export interface LibSQLDiscovery {
-  readonly adapter: "@dal-go/dalgo2libsql";
+  readonly adapter: "@dalgo/dalgo2libsql";
   readonly protocol: "sqlite-hrana-pipeline";
   readonly endpoint: string;
   readonly status: "available" | "unavailable";
@@ -238,7 +238,7 @@ export interface LibSQLConnectionStatus {
 }
 
 export interface NativeLibSQLDescribe {
-  readonly adapter: "@dal-go/dalgo2libsql";
+  readonly adapter: "@dalgo/dalgo2libsql";
   readonly storage: "native-rows";
   readonly readOnly: true;
   readonly endpoint: string;

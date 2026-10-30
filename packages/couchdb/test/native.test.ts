@@ -540,7 +540,7 @@ describe("NativeCouchDbDatabase cursor binding", () => {
   it("rejects a changed bookmark even with every legacy binding field retained", async () => {
     const { database, fetch, built, cursor } = await firstPage();
     const forged = legacyCursor({
-      a: "@dal-go/dalgo2couchdb",
+      a: "@dalgo/dalgo2couchdb",
       v: 2,
       m: "native",
       i: cursor.slice(4, 20),
@@ -562,7 +562,7 @@ describe("NativeCouchDbDatabase cursor binding", () => {
   it("rejects reconstructed tokens, foreign instances and foreign endpoints", async () => {
     const { database, fetch, built, cursor } = await firstPage();
     const reconstructed = legacyCursor({
-      adapter: "@dal-go/dalgo2couchdb",
+      adapter: "@dalgo/dalgo2couchdb",
       version: 2,
       bookmark: "provider-bookmark",
       cursor,
@@ -920,7 +920,7 @@ describe("NativeCouchDbDatabase metadata discovery", () => {
     fetch.mockResolvedValueOnce(response(200, { rows: [] }));
     const described = await database.describe();
     expect(described).toMatchObject({
-      adapter: "@dal-go/dalgo2couchdb",
+      adapter: "@dalgo/dalgo2couchdb",
       storage: "native-rows",
       readOnly: true,
       resource: { database: "app", collection: "items" },

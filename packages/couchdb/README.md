@@ -1,6 +1,6 @@
 # DALgo adapter for Apache CouchDB
 
-`@dal-go/dalgo2couchdb` is a deliberately bounded TypeScript adapter from
+`@dalgo/dalgo2couchdb` is a deliberately bounded TypeScript adapter from
 [`@dalgo/core`](https://github.com/dal-go/dalgo-js) to an existing Apache
 CouchDB database using its document and [Mango query API](https://docs.couchdb.org/en/stable/api/database/find.html).
 It offers two explicit storage modes: a managed `__dalgo_*` envelope, and a
@@ -45,7 +45,7 @@ Substitute the full 40-character SHA of the reviewed merged commit for
 // package.json
 "@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559",
 "@dalgo/adapter-runtime": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/adapter-runtime",
-"@dal-go/dalgo2couchdb": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/couchdb"
+"@dalgo/dalgo2couchdb": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/couchdb"
 ```
 
 ```yaml
@@ -53,7 +53,7 @@ Substitute the full 40-character SHA of the reviewed merged commit for
 allowBuilds:
   '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559': true
   '@dalgo/adapter-runtime@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/adapter-runtime': true
-  '@dal-go/dalgo2couchdb@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/couchdb': true
+  '@dalgo/dalgo2couchdb@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/couchdb': true
 ```
 
 If an entry is missing, pnpm names the exact key it needs; approve only the
@@ -68,13 +68,13 @@ commit with
 The `@dalgo/core` peer range is `>=0.7.4 <0.9.0`; the workspace tests against the
 exact `0.7.4` commit the web UI pins, so the browser contains one `Key`/query
 identity. From the repository root, `pnpm install --frozen-lockfile` and
-`pnpm --filter @dal-go/dalgo2couchdb check` run the workspace gate.
+`pnpm --filter @dalgo/dalgo2couchdb check` run the workspace gate.
 
 ## Minimal setup
 
 ```ts
 import { collection } from "@dalgo/core";
-import { CouchDbDatabase } from "@dal-go/dalgo2couchdb";
+import { CouchDbDatabase } from "@dalgo/dalgo2couchdb";
 
 const db = new CouchDbDatabase({
   databaseUrl: "https://couch.example.com/app",
@@ -126,7 +126,7 @@ the adapter never infers schema-less collections inside it. No `__dalgo_*` or
 
 ```ts
 import { collection } from "@dalgo/core";
-import { NativeCouchDbDatabase } from "@dal-go/dalgo2couchdb";
+import { NativeCouchDbDatabase } from "@dalgo/dalgo2couchdb";
 
 const db = new NativeCouchDbDatabase({
   databaseUrl: "https://couch.example.com/app",
@@ -315,7 +315,7 @@ contract. Create and monitor the appropriate Mango indexes yourself.
 
 ```ts
 import { QueryCancelledError } from "@dalgo/adapter-runtime";
-import { COUCHDB_READ_CAPABILITIES, CouchDbDatabase } from "@dal-go/dalgo2couchdb";
+import { COUCHDB_READ_CAPABILITIES, CouchDbDatabase } from "@dalgo/dalgo2couchdb";
 import { collection } from "@dalgo/core";
 
 const capabilities = COUCHDB_READ_CAPABILITIES;

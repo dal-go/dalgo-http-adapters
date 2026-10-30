@@ -1,10 +1,10 @@
-# @dal-go/dalgo2libsql
+# @dalgo/dalgo2libsql
 
 ## 0.2.0
 
 ### Minor Changes
 
-- c96a57e: Migrate `@dal-go/dalgo2libsql` from the legacy `@dal-go/dalgo` package name to
+- c96a57e: Migrate `@dalgo/dalgo2libsql` from the legacy `@dal-go/dalgo` package name to
   the exact modern `@dalgo/core` 0.7.4 snapshot
   `99165e9e1a39c32abee2b39d6395677843bc3559`, share
   `@dalgo/adapter-runtime`, and keep the installed package name. The managed

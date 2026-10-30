@@ -3,7 +3,7 @@ import {
   NATIVE_COUCHDB_READ_CAPABILITIES,
   NativeCouchDbDatabase,
   type NativeCouchDbQuery,
-} from "@dal-go/dalgo2couchdb";
+} from "@dalgo/dalgo2couchdb";
 
 const db = new NativeCouchDbDatabase({
   // One existing CouchDB database maps to one logical DALgo collection.

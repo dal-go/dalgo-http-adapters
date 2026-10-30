@@ -8,7 +8,7 @@ import type { AdapterReadCapabilities } from "@dalgo/adapter-runtime";
  * `NATIVE_COUCHDB_READ_CAPABILITIES` descriptor and read-only facade.
  */
 export const COUCHDB_READ_CAPABILITIES = {
-  adapter: "@dal-go/dalgo2couchdb",
+  adapter: "@dalgo/dalgo2couchdb",
   storage: "managed-envelope",
   read: {
     get: true,
@@ -68,7 +68,7 @@ export type CouchDbReadCapabilities = typeof COUCHDB_READ_CAPABILITIES;
  * explicit permitted index; no raw Mango selector escape hatch is exposed.
  */
 export const NATIVE_COUCHDB_READ_CAPABILITIES = {
-  adapter: "@dal-go/dalgo2couchdb",
+  adapter: "@dalgo/dalgo2couchdb",
   storage: "native-rows",
   read: {
     get: true,

@@ -58,7 +58,7 @@ interface CouchDocument {
 }
 
 interface MangoResponse { readonly docs: readonly CouchDocument[]; readonly bookmark?: string; }
-interface CouchCursor { readonly adapter: "@dal-go/dalgo2couchdb"; readonly version: 1; readonly databaseUrl: string; readonly bookmark: string; }
+interface CouchCursor { readonly adapter: "@dalgo/dalgo2couchdb"; readonly version: 1; readonly databaseUrl: string; readonly bookmark: string; }
 
 /** A 409 returned while applying an explicit document revision. */
 export class CouchDbConflictError extends Error {
@@ -203,7 +203,7 @@ export class CouchDbDatabase implements Database, WriteSession {
     let bookmark: string | undefined;
     if (query.startAfter !== undefined) {
       const cursor = query.startAfter.values[0];
-      if (!isObject(cursor) || cursor.adapter !== "@dal-go/dalgo2couchdb" || cursor.version !== 1 || cursor.databaseUrl !== this.#databaseUrl || typeof cursor.bookmark !== "string" || query.startAfter.values.length !== 1) throw new TypeError("CouchDB query cursor must be returned by this adapter");
+      if (!isObject(cursor) || cursor.adapter !== "@dalgo/dalgo2couchdb" || cursor.version !== 1 || cursor.databaseUrl !== this.#databaseUrl || typeof cursor.bookmark !== "string" || query.startAfter.values.length !== 1) throw new TypeError("CouchDB query cursor must be returned by this adapter");
       bookmark = cursor.bookmark;
     }
     const body = { selector: { $and: [{ __dalgo_collection: { $eq: query.source.name } }, ...query.filters.map((filter) => selectorFilter(filter))] }, limit, ...(bookmark === undefined ? {} : { bookmark }) };
@@ -219,7 +219,7 @@ export class CouchDbDatabase implements Database, WriteSession {
       const valid = couchDocument(document, key);
       return { key, exists: true, data: codecOrIdentity(query.source.codec).decode(valid.data), metadata: metadata(valid) };
     });
-    const nextCursor = records.length === limit && mango.bookmark !== undefined ? { values: [{ adapter: "@dal-go/dalgo2couchdb", version: 1, databaseUrl: this.#databaseUrl, bookmark: mango.bookmark } satisfies CouchCursor] } : undefined;
+    const nextCursor = records.length === limit && mango.bookmark !== undefined ? { values: [{ adapter: "@dalgo/dalgo2couchdb", version: 1, databaseUrl: this.#databaseUrl, bookmark: mango.bookmark } satisfies CouchCursor] } : undefined;
     return { records, ...(nextCursor === undefined ? {} : { nextCursor }) };
   }
 

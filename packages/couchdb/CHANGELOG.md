@@ -1,4 +1,4 @@
-# @dal-go/dalgo2couchdb
+# @dalgo/dalgo2couchdb
 
 ## 0.2.0
 

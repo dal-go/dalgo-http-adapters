@@ -1,6 +1,6 @@
 import { QueryCancelledError } from "@dalgo/adapter-runtime";
 import { collection } from "@dalgo/core";
-import { COUCHDB_READ_CAPABILITIES, CouchDbDatabase } from "@dal-go/dalgo2couchdb";
+import { COUCHDB_READ_CAPABILITIES, CouchDbDatabase } from "@dalgo/dalgo2couchdb";
 
 const db = new CouchDbDatabase({
   databaseUrl: "https://couch.example.com/app",

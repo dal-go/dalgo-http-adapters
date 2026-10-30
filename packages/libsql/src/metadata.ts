@@ -323,7 +323,7 @@ export function discoveryUnavailable(
   httpStatus?: number,
 ): LibSQLDiscovery {
   return {
-    adapter: "@dal-go/dalgo2libsql",
+    adapter: "@dalgo/dalgo2libsql",
     protocol: "sqlite-hrana-pipeline",
     endpoint,
     status: "unavailable",
@@ -453,7 +453,7 @@ export async function discoverLibSQL(
   }
   const truncated = truncatedList || omittedByStatements > 0 || discovered.some((table) => table.fieldsStatus !== "declared");
   return {
-    adapter: "@dal-go/dalgo2libsql",
+    adapter: "@dalgo/dalgo2libsql",
     protocol: "sqlite-hrana-pipeline",
     endpoint: transport.origin,
     status: "available",

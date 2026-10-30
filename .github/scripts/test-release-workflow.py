@@ -3,10 +3,13 @@ import os, subprocess, tempfile, json, shutil, hashlib, base64, tarfile, io
 workflow = (Path(__file__).resolve().parents[1] / 'workflows/release.yml').read_text()
 native_packages = ['adapter-runtime', 'couchdb', 'libsql', 'postgrest', 'typesense']
 public_packages = native_packages + ['firestore', 'indexeddb', 'bigquery', 'http', 'ovdb', 'sqlite-sql', 'sqlite-wasm', 'd1']
-package_names = {package: '@dal-go/dalgo2'+package if package in native_packages[1:] else '@dalgo/'+package for package in public_packages}
+package_names = {package: '@dalgo/dalgo2'+package if package in native_packages[1:] else '@dalgo/'+package for package in public_packages}
+native_old_scope_cases = {f'native_old_scope_{package}': package for package in native_packages[1:]}
 for package in public_packages:
     assert f'pnpm --filter {package_names[package]} check' in workflow, package
-assert workflow.index('pnpm --filter @dalgo/adapter-runtime check') < workflow.index('pnpm --filter @dal-go/dalgo2couchdb check')
+    manifest = json.loads((Path(__file__).resolve().parents[2] / 'packages' / package / 'package.json').read_text())
+    assert manifest['name'] == package_names[package], (package, manifest['name'])
+assert workflow.index('pnpm --filter @dalgo/adapter-runtime check') < workflow.index('pnpm --filter @dalgo/dalgo2couchdb check')
 start = workflow.index('          pr=$(gh pr list')
 end = workflow.index('          gh workflow run ci.yml --ref changeset-release/main', start)
 end += len('          gh workflow run ci.yml --ref changeset-release/main')
@@ -224,7 +227,7 @@ fi
     (root/'sleep').write_text('#!/usr/bin/env bash\necho sleep >> "$MOCK_SLEEP_LOG"\n')
     for executable in ['git', 'npm', 'curl', 'node', 'sleep', 'timeout']:
         (root/executable).chmod(0o755)
-    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http', 'sqlite_changed', 'd1_changed', 'native_changed', 'native_wrong_name', 'native_runtime_failure']:
+    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http', 'sqlite_changed', 'd1_changed', 'native_changed', 'native_wrong_name', 'native_runtime_failure'] + list(native_old_scope_cases):
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
         for package in public_packages:
             manifest = root/'packages'/package/'package.json'
@@ -239,7 +242,11 @@ fi
             if package == 'd1': version = '0.2.0' if case == 'd1_changed' else '0.1.0'
             if case.startswith('native_'):
                 version = '0.2.0' if package in native_packages and (case != 'native_wrong_name' or package == 'couchdb') else '0.1.0'
+            if case in native_old_scope_cases:
+                version = '0.2.0' if package == native_old_scope_cases[case] else '0.1.0'
             name = '@dalgo/couchdb' if case == 'native_wrong_name' and package == 'couchdb' else package_names[package]
+            if package == native_old_scope_cases.get(case):
+                name = '@dal-go/dalgo2' + package
             manifest.write_text(json.dumps({'name': name, 'version': version}))
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
@@ -376,7 +383,7 @@ with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
     (root/'npm').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 name="@dalgo/$PACKAGE"
-case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dal-go/dalgo2$PACKAGE" ;; esac
+case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;; esac
 version=$VERSION
 source_sha=$MOCK_SHA
 [[ "$CASE" != wrong_name ]] || name=@dalgo/other
@@ -392,7 +399,7 @@ elif [[ "$1" == show ]]; then
   version=$VERSION
   [[ "$CASE" != wrong_manifest ]] || version=9.9.9
   name="@dalgo/$PACKAGE"
-  case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dal-go/dalgo2$PACKAGE" ;; esac
+  case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;; esac
   printf '{"name":"%s","version":"%s"}\\n' "$name" "$version"
 else exit 99
 fi

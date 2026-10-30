@@ -210,7 +210,7 @@ export type NativeCouchDbFieldDiscovery =
   };
 
 export interface NativeCouchDbDescribe {
-  readonly adapter: "@dal-go/dalgo2couchdb";
+  readonly adapter: "@dalgo/dalgo2couchdb";
   readonly storage: "native-rows";
   readonly readOnly: true;
   readonly resource: {
@@ -663,7 +663,7 @@ export class NativeCouchDbDatabase implements Database {
       this.sampleFields(signal),
     ]);
     return {
-      adapter: "@dal-go/dalgo2couchdb",
+      adapter: "@dalgo/dalgo2couchdb",
       storage: "native-rows",
       readOnly: true,
       resource: { database: this.#databaseName, collection: this.#collection },

@@ -289,10 +289,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Chromium
         if: steps.changes.outputs.run == 'true'
-        run: pnpm --filter @dal-go/dalgo2postgrest exec playwright install --with-deps chromium
+        run: pnpm --filter @dalgo/dalgo2postgrest exec playwright install --with-deps chromium
       - name: Real browser against disposable PostgREST
         if: steps.changes.outputs.run == 'true'
-        run: pnpm --filter @dal-go/dalgo2postgrest test:browser
+        run: pnpm --filter @dalgo/dalgo2postgrest test:browser
       - name: Retain Playwright results
         if: failure() && steps.changes.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -344,13 +344,13 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Chromium
         if: steps.changes.outputs.run == 'true'
-        run: pnpm --filter @dal-go/dalgo2libsql exec playwright install --with-deps chromium
+        run: pnpm --filter @dalgo/dalgo2libsql exec playwright install --with-deps chromium
       - name: Real libSQL server over Hrana HTTP
         if: steps.changes.outputs.run == 'true'
-        run: pnpm --filter @dal-go/dalgo2libsql test:real
+        run: pnpm --filter @dalgo/dalgo2libsql test:real
       - name: Real Chromium against disposable libSQL
         if: steps.changes.outputs.run == 'true'
-        run: pnpm --filter @dal-go/dalgo2libsql test:browser
+        run: pnpm --filter @dalgo/dalgo2libsql test:browser
       - name: Retain Playwright results
         if: failure() && steps.changes.outputs.run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -381,11 +381,11 @@ jobs:
       - name: Verify the pinned Typesense image metadata
         run: docker manifest inspect typesense/typesense:30.2@sha256:610f2d34b1f93d00762869da2c67736775e5798d19a2c8b91b014b8a0cc1e110 >/dev/null
       - name: Install Chromium
-        run: pnpm --filter @dal-go/dalgo2typesense exec playwright install --with-deps chromium
+        run: pnpm --filter @dalgo/dalgo2typesense exec playwright install --with-deps chromium
       - name: Real Typesense 30.2 over the Node SDK
-        run: pnpm --filter @dal-go/dalgo2typesense test:real
+        run: pnpm --filter @dalgo/dalgo2typesense test:real
       - name: Real Chromium Typesense SDK native fetch and CORS
-        run: pnpm --filter @dal-go/dalgo2typesense test:browser
+        run: pnpm --filter @dalgo/dalgo2typesense test:browser
       - name: Retain Playwright results
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

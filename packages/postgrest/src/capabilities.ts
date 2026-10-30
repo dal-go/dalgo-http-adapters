@@ -30,7 +30,7 @@ export interface PostgrestCapabilityDescriptor extends Omit<AdapterReadCapabilit
  * silently ignored.
  */
 export const POSTGREST_READ_CAPABILITIES = {
-  adapter: "@dal-go/dalgo2postgrest",
+  adapter: "@dalgo/dalgo2postgrest",
   storage: "native-rows",
   read: {
     get: true,

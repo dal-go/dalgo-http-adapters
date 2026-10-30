@@ -1,5 +1,5 @@
 {
-  "name": "@dal-go/dalgo2libsql",
+  "name": "@dalgo/dalgo2libsql",
   "version": "0.2.0",
   "description": "Provider-neutral libSQL Hrana-over-HTTP adapter and read-only native-table facade for DALgo TypeScript",
   "type": "module",
@@ -14,7 +14,7 @@
   "files": ["dist", "LICENSE", "README.md"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "build:deps": "pnpm --filter \"@dal-go/dalgo2libsql...\" run build",
+    "build:deps": "pnpm --filter \"@dalgo/dalgo2libsql...\" run build",
     "check": "eslint . && vitest run && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json",
     "lint": "eslint .",
     "prepack": "npm --prefix ../adapter-runtime run build && npm run build",

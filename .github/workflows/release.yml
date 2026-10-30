@@ -178,10 +178,10 @@ jobs:
       - name: Check published adapters
         run: |
           pnpm --filter @dalgo/adapter-runtime check
-          pnpm --filter @dal-go/dalgo2couchdb check
-          pnpm --filter @dal-go/dalgo2libsql check
-          pnpm --filter @dal-go/dalgo2postgrest check
-          pnpm --filter @dal-go/dalgo2typesense check
+          pnpm --filter @dalgo/dalgo2couchdb check
+          pnpm --filter @dalgo/dalgo2libsql check
+          pnpm --filter @dalgo/dalgo2postgrest check
+          pnpm --filter @dalgo/dalgo2typesense check
           pnpm --filter @dalgo/firestore check
           pnpm --filter @dalgo/indexeddb check
           pnpm --filter @dalgo/bigquery check
@@ -221,7 +221,7 @@ jobs:
             previous_version=$(git show "HEAD^:$manifest" | jq -r '.version')
             case "$package" in
               adapter-runtime) expected_name='@dalgo/adapter-runtime' ;;
-              couchdb|libsql|postgrest|typesense) expected_name="@dal-go/dalgo2$package" ;;
+              couchdb|libsql|postgrest|typesense) expected_name="@dalgo/dalgo2$package" ;;
               firestore) expected_name='@dalgo/firestore' ;;
               indexeddb) expected_name='@dalgo/indexeddb' ;;
               bigquery) expected_name='@dalgo/bigquery' ;;

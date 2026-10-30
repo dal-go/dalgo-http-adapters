@@ -586,7 +586,7 @@ export class PostgrestDatabase implements Database, WriteSession {
         return this.discoveryUnavailable(parsed.reason, parsed.detail, 200);
       }
       return {
-        adapter: "@dal-go/dalgo2postgrest",
+        adapter: "@dalgo/dalgo2postgrest",
         protocol: "postgrest-openapi",
         endpoint: this.#baseUrl,
         ...(this.#schema === undefined ? {} : { schema: this.#schema }),
@@ -670,7 +670,7 @@ export class PostgrestDatabase implements Database, WriteSession {
     httpStatus?: number,
   ): PostgrestDiscovery {
     return {
-      adapter: "@dal-go/dalgo2postgrest",
+      adapter: "@dalgo/dalgo2postgrest",
       protocol: "postgrest-openapi",
       endpoint: this.#baseUrl,
       ...(this.#schema === undefined ? {} : { schema: this.#schema }),

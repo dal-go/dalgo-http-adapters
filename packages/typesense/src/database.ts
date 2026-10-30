@@ -147,7 +147,7 @@ export interface TypesenseConnectionTest {
 }
 
 export interface TypesenseDescribe {
-  readonly adapter: "@dal-go/dalgo2typesense";
+  readonly adapter: "@dalgo/dalgo2typesense";
   readonly storage: "native-rows";
   readonly readOnly: true;
   readonly endpoint: string;
@@ -503,7 +503,7 @@ export class TypesenseDatabase implements Database, CancellableQueryExecutor {
   public async describe(signal?: AbortSignal): Promise<TypesenseDescribe> {
     const schema = await this.schema(signal);
     return {
-      adapter: "@dal-go/dalgo2typesense",
+      adapter: "@dalgo/dalgo2typesense",
       storage: "native-rows",
       readOnly: true,
       endpoint: this.#transport.origin,

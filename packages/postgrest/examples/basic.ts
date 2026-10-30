@@ -5,7 +5,7 @@ import {
   PostgrestDatabase,
   type PostgrestConnectionStatus,
   type PostgrestDiscovery,
-} from "@dal-go/dalgo2postgrest";
+} from "@dalgo/dalgo2postgrest";
 
 const db = new PostgrestDatabase({
   baseUrl: "https://api.example.com/rest/v1",
