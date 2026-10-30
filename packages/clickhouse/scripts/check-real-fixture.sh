@@ -28,7 +28,13 @@ capture() {
   local name=$1
   shift
   local result=0
-  (ulimit -f 1024; timeout --kill-after=2s 120s "$@" > "$private/$name.raw" 2>&1) || result=$?
+  # Bound only this merged log. RLIMIT_FSIZE would also cap inherited Chrome
+  # profile/cache files and is deliberately absent from the runner process tree.
+  python3 scripts/bounded_capture.py "$private/$name.raw" "$CLICKHOUSE_PROOF_DIR/$name-capture.json" -- "$@" || result=$?
+  if ! jq -e '.maxLogBytes==1048576 and .logBytes<=1048576 and .timeoutSeconds==120 and .killAfterSeconds==2 and .inheritedFileSizeSoft=="unlimited" and .inheritedFileSizeHard=="unlimited" and .childFileSizeSoft=="unlimited" and .childFileSizeHard=="unlimited" and .singleThread==true and .preexistingChildrenAbsent==true and .subreaperEnabled==true and .ownedNoLiveDescendants==true' "$CLICKHOUSE_PROOF_DIR/$name-capture.json" >/dev/null; then
+    [[ "$result" != 0 ]] || result=1
+  fi
+  cat "$CLICKHOUSE_PROOF_DIR/$name-capture.json"
   redact "$private/$name.raw" "$CLICKHOUSE_PROOF_DIR/$name.log"
   cat "$CLICKHOUSE_PROOF_DIR/$name.log"
   return "$result"
@@ -79,6 +85,7 @@ a03c14ee8cf183910c8ae3b05bde5a95d8f3c6f7e9c01a6be33c27633e0e15dd  test/fixtures/
 a1d9d02e6ce31b7f6bfb5e1af6fe48055a54437fbc400c41ebd3e6d57a52cdb9  test/fixtures/upstream/access.xml
 c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4  test/fixtures/upstream/LICENSE
 HASHES
+python3 scripts/bounded_capture_test.py
 (ulimit -f 1024; timeout --kill-after=5s 180s docker pull "$CLICKHOUSE_FIXTURE_IMAGE" > "$private/pull.raw" 2>&1)
 created=true
 timeout --kill-after=2s 15s docker run --detach --name "$fixture" --memory=2g --memory-swap=2g --cpus=2 --pids-limit=128 \
