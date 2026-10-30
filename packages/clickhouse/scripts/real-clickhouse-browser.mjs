@@ -2,6 +2,7 @@
 // The Linux fixture runner owns a pinned server with exact-origin CORS for PORT.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { setImmediate } from "node:timers";
 import { build } from "esbuild";
 import { chromium } from "@playwright/test";
 import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertHealthyControl, assertLateFramingEvidence, assertReaderProbes, exactQuery, fixtureUrl, healthyControlSql, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, readerProbeSql, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
@@ -18,10 +19,15 @@ const bundle = await build({ entryPoints: [new URL("../dist/index.js", import.me
 const javascript = bundle.outputFiles[0]?.text;
 assert.ok(javascript);
 const pageHtml = '<!doctype html><title>ClickHouse ordinal browser proof</title><h1>ClickHouse browser adapter</h1><output id="proof">Running real adapter checks</output><script type="module">import { NativeClickHouseDatabase } from "/adapter.js";window.NativeClickHouseDatabase=NativeClickHouseDatabase;</script>';
-const rootRequests = { received: 0, finished: 0 };
+const rootRequests = { received: 0, finished: 0, method: "missing", aborted: 0, completeAtFinish: 0, closedBeforeFinish: 0, adapter: 0 };
 const increment = (value) => Math.min(value + 1, 1000);
 const mimeKind = (value) => value === null || value === undefined ? "missing" : value.split(";")[0].trim().toLowerCase() === "text/html" ? "html" : "other";
 const networkErrors = new Set(["net::ERR_ABORTED", "net::ERR_CONNECTION_REFUSED", "net::ERR_CONNECTION_RESET", "net::ERR_EMPTY_RESPONSE", "net::ERR_FAILED", "net::ERR_INSUFFICIENT_RESOURCES", "net::ERR_NETWORK_CHANGED", "net::ERR_TIMED_OUT", "net::ERR_CONNECTION_CLOSED", "net::ERR_INVALID_HTTP_RESPONSE", "net::ERR_BLOCKED_BY_CLIENT", "net::ERR_BLOCKED_BY_RESPONSE", "net::ERR_UNSAFE_PORT", "net::ERR_ADDRESS_UNREACHABLE", "net::ERR_NAME_NOT_RESOLVED", "net::ERR_HTTP_RESPONSE_CODE_FAILURE"]);
+const blockedReasons = new Set(["other", "csp", "mixed-content", "origin", "inspector", "integrity", "subresource-filter", "content-type", "coep-frame-resource-needs-coep-header", "coop-sandboxed-iframe-cannot-navigate-to-coop-page", "corp-not-same-origin", "corp-not-same-origin-after-defaulted-to-same-origin-by-coep", "corp-not-same-origin-after-defaulted-to-same-origin-by-dip", "corp-not-same-origin-after-defaulted-to-same-origin-by-coep-and-dip", "corp-not-same-site", "sri-message-signature-mismatch"]);
+const navigationReasons = new Set(["anchorClick", "formSubmissionGet", "formSubmissionPost", "httpHeaderRefresh", "initialFrameNavigation", "metaTagRefresh", "other", "pageBlockInterstitial", "reload", "scriptInitiated"]);
+const protocolKinds = new Set(["http/1.0", "http/1.1", "http/2", "http/3", "h2", "h3"]);
+const enumKind = (value, allowed) => value === undefined || value === null ? "missing" : allowed.has(value) ? value : "other";
+const statusCode = (value) => Number.isInteger(value) && value >= 100 && value <= 599 ? value : null;
 /** Initial document only: no query URLs, headers, bodies or raw Playwright
  * errors are retained. A Node GET discriminates owned HTTP readiness from
  * Chromium's navigation without replacing the genuine browser navigation. */
@@ -35,8 +41,61 @@ async function navigateInitialDocument(page, browser) {
   const onDownload = () => { facts.download = true; };
   const onDisconnected = () => { facts.browserDisconnected = true; };
   page.on("request", onRequest); page.on("response", onResponse); page.on("requestfailed", onRequestFailed); page.on("crash", onCrash); page.on("download", onDownload); browser.on("disconnected", onDisconnected);
-  const diagnostic = () => console.log(JSON.stringify({ diagnostic: "clickhouse-initial-document", ...facts, serverRootRequests: rootRequests.received, serverRootFinished: rootRequests.finished }));
+  const cdpResponse = { mainRequestSeen: false, method: "missing", extraInfoStatus: null, responseSeen: false, responseStatus: null, mime: "missing", protocol: "missing", loadingFinished: false, extraInfoOverflow: false };
+  const cdpFailure = { failed: false, canceled: null, error: "none", blocked: "missing", corsPresent: false };
+  const cdpPage = { started: false, navigated: false, ownedDocument: false, stopped: false, domContentLoaded: false, loaded: false, requestedNavigation: false, requestedReason: "missing", detached: false, detachReason: "missing" };
+  const pendingStatuses = new Map(); const cdpListeners = [];
+  let cdp; let rootFrameId; let mainRequestId; let observing = false;
+  let navigationFailed = false; let cleanupFailed = false;
+  const diagnostic = () => {
+    // Each fixed-shape line fits the runner's unchanged512-byte redaction cap.
+    for (const value of [
+      { diagnostic: "clickhouse-initial-document", ...facts, serverRootRequests: rootRequests.received, serverRootFinished: rootRequests.finished },
+      { diagnostic: "clickhouse-initial-cdp-response", ...cdpResponse },
+      { diagnostic: "clickhouse-initial-cdp-failure", ...cdpFailure },
+      { diagnostic: "clickhouse-initial-cdp-page", ...cdpPage },
+      { diagnostic: "clickhouse-initial-http", ...rootRequests },
+    ]) { const line = JSON.stringify(value); assert.ok(Buffer.byteLength(line) <= 512, "Initial document diagnostic exceeded its fixed line bound."); console.log(line); }
+  };
   try {
+    facts.stage = "cdp-setup";
+    cdp = await page.context().newCDPSession(page);
+    const tree = await cdp.send("Page.getFrameTree"); rootFrameId = tree.frameTree.frame.id;
+    assert.ok(typeof rootFrameId === "string" && rootFrameId, "Initial document root frame identity is missing.");
+    const listen = (event, callback) => { cdp.on(event, callback); cdpListeners.push([event, callback]); };
+    listen("Network.requestWillBeSent", (event) => {
+      if (!observing || event.type !== "Document" || event.frameId !== rootFrameId || event.request.url !== `${origin}/` || mainRequestId !== undefined) return;
+      mainRequestId = event.requestId; cdpResponse.mainRequestSeen = true; cdpResponse.method = event.request.method === "GET" ? "GET" : "other";
+      if (pendingStatuses.has(mainRequestId)) cdpResponse.extraInfoStatus = pendingStatuses.get(mainRequestId);
+      pendingStatuses.clear();
+    });
+    listen("Network.responseReceivedExtraInfo", (event) => {
+      if (!observing) return;
+      const status = statusCode(event.statusCode);
+      if (event.requestId === mainRequestId) cdpResponse.extraInfoStatus = status;
+      else if (mainRequestId === undefined) {
+        if (pendingStatuses.size < 4 || pendingStatuses.has(event.requestId)) pendingStatuses.set(event.requestId, status);
+        else cdpResponse.extraInfoOverflow = true;
+      }
+    });
+    listen("Network.responseReceived", (event) => {
+      if (!observing || event.requestId !== mainRequestId) return;
+      cdpResponse.responseSeen = true; cdpResponse.responseStatus = statusCode(event.response.status); cdpResponse.mime = mimeKind(event.response.mimeType); cdpResponse.protocol = enumKind(event.response.protocol, protocolKinds);
+    });
+    listen("Network.loadingFailed", (event) => {
+      if (!observing || event.requestId !== mainRequestId) return;
+      cdpFailure.failed = true; cdpFailure.canceled = typeof event.canceled === "boolean" ? event.canceled : null; cdpFailure.error = enumKind(event.errorText, networkErrors); cdpFailure.blocked = enumKind(event.blockedReason, blockedReasons); cdpFailure.corsPresent = event.corsErrorStatus !== undefined;
+    });
+    listen("Network.loadingFinished", (event) => { if (observing && event.requestId === mainRequestId) cdpResponse.loadingFinished = true; });
+    listen("Page.frameStartedLoading", (event) => { if (observing && event.frameId === rootFrameId) cdpPage.started = true; });
+    listen("Page.frameNavigated", (event) => { if (observing && event.frame.id === rootFrameId) { cdpPage.navigated = true; cdpPage.ownedDocument = event.frame.url === `${origin}/`; } });
+    listen("Page.frameStoppedLoading", (event) => { if (observing && event.frameId === rootFrameId) cdpPage.stopped = true; });
+    listen("Page.domContentEventFired", () => { if (observing && cdpPage.navigated) cdpPage.domContentLoaded = true; });
+    listen("Page.loadEventFired", () => { if (observing && cdpPage.navigated) cdpPage.loaded = true; });
+    listen("Page.frameRequestedNavigation", (event) => { if (observing && event.frameId === rootFrameId) { cdpPage.requestedNavigation = true; cdpPage.requestedReason = enumKind(event.reason, navigationReasons); } });
+    listen("Page.frameDetached", (event) => { if (observing && event.frameId === rootFrameId) { cdpPage.detached = true; cdpPage.detachReason = enumKind(event.reason, new Set(["remove", "swap"])); } });
+    await cdp.send("Network.enable"); await cdp.send("Page.enable");
+    facts.stage = "node-probe";
     const response = await fetch(origin, { redirect: "error", signal: AbortSignal.timeout(2000) });
     facts.nodeStatus = response.status; facts.nodeMime = mimeKind(response.headers.get("content-type"));
     if (facts.nodeStatus !== 200 || facts.nodeMime !== "html") { await response.body?.cancel(); throw new Error("Owned initial document HTTP probe failed."); }
@@ -52,20 +111,38 @@ async function navigateInitialDocument(page, browser) {
     } finally { reader.releaseLock(); }
     facts.nodeBodyMatches = Buffer.concat(chunks).equals(expected);
     assert.ok(facts.nodeBodyMatches, "Owned initial document does not match the fixed HTML.");
-    facts.stage = "browser-goto";
+    facts.stage = "browser-goto"; observing = true;
     await page.goto(origin);
     facts.gotoSucceeded = true; facts.stage = "complete"; diagnostic();
   } catch {
+    navigationFailed = true;
+    // One event-loop drain observes already queued failure/download events;
+    // this is neither another navigation nor a raised timeout.
+    await new Promise((resolve) => setImmediate(resolve));
     diagnostic();
-    throw new Error("Real initial document navigation failed; inspect the bounded navigation diagnostic.");
   } finally {
+    observing = false; pendingStatuses.clear();
     page.off("request", onRequest); page.off("response", onResponse); page.off("requestfailed", onRequestFailed); page.off("crash", onCrash); page.off("download", onDownload); browser.off("disconnected", onDisconnected);
+    if (cdp !== undefined) {
+      for (const [event, callback] of cdpListeners) cdp.off(event, callback);
+      try { await cdp.detach(); } catch { cleanupFailed = true; }
+    }
   }
+  if (cleanupFailed) console.log(JSON.stringify({ diagnostic: "clickhouse-initial-cdp-cleanup", detached: false, navigationFailed }));
+  // Report after cleanup, retaining navigation failure when both operations fail.
+  if (navigationFailed) throw new Error("Real initial document navigation failed; inspect the bounded navigation diagnostic.");
+  if (cleanupFailed) throw new Error("Initial document diagnostic session cleanup failed.");
 }
 function startServer(listenPort) {
   return new Promise((resolve, reject) => {
     const server = createServer((request, response) => {
-      if (listenPort === port && request.url === "/") { rootRequests.received = increment(rootRequests.received); response.once("finish", () => { rootRequests.finished = increment(rootRequests.finished); }); }
+      if (listenPort === port && request.url === "/adapter.js") rootRequests.adapter = increment(rootRequests.adapter);
+      if (listenPort === port && request.url === "/") {
+        rootRequests.received = increment(rootRequests.received); rootRequests.method = request.method === "GET" ? "GET" : "other";
+        request.once("aborted", () => { rootRequests.aborted = increment(rootRequests.aborted); });
+        response.once("finish", () => { rootRequests.finished = increment(rootRequests.finished); if (request.complete) rootRequests.completeAtFinish = increment(rootRequests.completeAtFinish); });
+        response.once("close", () => { if (!response.writableFinished) rootRequests.closedBeforeFinish = increment(rootRequests.closedBeforeFinish); });
+      }
       if (request.url === "/adapter.js") { response.writeHead(200, { "content-type": "text/javascript" }); response.end(javascript); }
       else { response.writeHead(200, { "content-type": "text/html" }); response.end(pageHtml); }
     });
