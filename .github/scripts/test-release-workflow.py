@@ -1,6 +1,12 @@
 from pathlib import Path
 import os, subprocess, tempfile, json, shutil, hashlib, base64, tarfile, io
 workflow = (Path(__file__).resolve().parents[1] / 'workflows/release.yml').read_text()
+native_packages = ['adapter-runtime', 'couchdb', 'libsql', 'postgrest', 'typesense']
+public_packages = native_packages + ['firestore', 'indexeddb', 'bigquery', 'http', 'ovdb', 'sqlite-sql', 'sqlite-wasm', 'd1']
+package_names = {package: '@dal-go/dalgo2'+package if package in native_packages[1:] else '@dalgo/'+package for package in public_packages}
+for package in public_packages:
+    assert f'pnpm --filter {package_names[package]} check' in workflow, package
+assert workflow.index('pnpm --filter @dalgo/adapter-runtime check') < workflow.index('pnpm --filter @dal-go/dalgo2couchdb check')
 start = workflow.index('          pr=$(gh pr list')
 end = workflow.index('          gh workflow run ci.yml --ref changeset-release/main', start)
 end += len('          gh workflow run ci.yml --ref changeset-release/main')
@@ -97,7 +103,7 @@ if [[ "$1" == publish ]]; then
     fi
     [[ "$*" == *--ignore-scripts* ]] || exit 98
   fi
-  [[ "$CASE" != publish_error && "$CASE" != mixed_preceding_failure && "$CASE" != mixed_firestore_failure ]] || exit 1
+  [[ "$CASE" != publish_error && "$CASE" != mixed_preceding_failure && "$CASE" != mixed_firestore_failure && "$CASE" != native_runtime_failure ]] || exit 1
 elif [[ "$1" == view ]]; then
   [[ "$*" == *--registry=https://registry.npmjs.org* && "$*" == *--prefer-online* && "$*" == *--fetch-retries=0* && "$*" == *--fetch-timeout=10000* ]] || exit 98
   printf 'view\\n' >> "$MOCK_VIEW_LOG"
@@ -218,9 +224,9 @@ fi
     (root/'sleep').write_text('#!/usr/bin/env bash\necho sleep >> "$MOCK_SLEEP_LOG"\n')
     for executable in ['git', 'npm', 'curl', 'node', 'sleep', 'timeout']:
         (root/executable).chmod(0o755)
-    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http', 'sqlite_changed', 'd1_changed']:
+    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http', 'sqlite_changed', 'd1_changed', 'native_changed', 'native_wrong_name', 'native_runtime_failure']:
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
-        for package in ['firestore','indexeddb','bigquery','http','ovdb','sqlite-sql','sqlite-wasm','d1']:
+        for package in public_packages:
             manifest = root/'packages'/package/'package.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
             version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed','sqlite_changed','d1_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure']) else '0.1.0'
@@ -231,10 +237,24 @@ fi
             if package == 'ovdb': version = '0.1.0'
             if package.startswith('sqlite-'): version = '0.2.0' if case == 'sqlite_changed' else '0.1.0'
             if package == 'd1': version = '0.2.0' if case == 'd1_changed' else '0.1.0'
-            manifest.write_text(json.dumps({'name': {'http':'@dalgo/http','ovdb':'@dalgo/ovdb'}.get(package, '@dalgo/'+package), 'version': version}))
+            if case.startswith('native_'):
+                version = '0.2.0' if package in native_packages and (case != 'native_wrong_name' or package == 'couchdb') else '0.1.0'
+            name = '@dalgo/couchdb' if case == 'native_wrong_name' and package == 'couchdb' else package_names[package]
+            manifest.write_text(json.dumps({'name': name, 'version': version}))
         env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''
+        if case.startswith('native_'):
+            assert (result.returncode == 0) == (case == 'native_changed'), (case,result.stderr,calls)
+            if case == 'native_changed':
+                expected = []
+                for package in native_packages:
+                    expected += [f'publish {package}', f'git tag -a {package}@v0.2.0 {sha} -m {package_names[package]} 0.2.0', f'git push origin refs/tags/{package}@v0.2.0']
+                assert calls.splitlines() == expected, (case,calls)
+            else:
+                assert calls.splitlines() == (['publish adapter-runtime'] if case == 'native_runtime_failure' else []), (case,calls)
+            print(f'PASS {case}: exit={result.returncode}, calls={calls.splitlines()}')
+            continue
         if case.startswith('http_') or case == 'mixed_bigquery_http':
             succeeds = case in ['http_changed','http_registry_existing','mixed_bigquery_http']
             assert (result.returncode == 0) == succeeds, (case,result.stderr,calls)
@@ -348,14 +368,15 @@ tag_workflow = (Path(__file__).resolve().parents[1] / 'workflows/tag-published-p
 start = tag_workflow.index('          set -euo pipefail', tag_workflow.index('id: release'))
 end = tag_workflow.index('      - name: Set tag-push credential', start)
 shell = '\n'.join(line[10:] for line in tag_workflow[start:end].splitlines())
-assert '          - bigquery\n' in tag_workflow
+for package in public_packages:
+    assert f'          - {package}\n' in tag_workflow, package
 with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
     root = Path(directory)
     (root/'run.sh').write_text(shell)
     (root/'npm').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 name="@dalgo/$PACKAGE"
-[[ "$PACKAGE" != http ]] || name=@dalgo/http
+case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dal-go/dalgo2$PACKAGE" ;; esac
 version=$VERSION
 source_sha=$MOCK_SHA
 [[ "$CASE" != wrong_name ]] || name=@dalgo/other
@@ -371,19 +392,19 @@ elif [[ "$1" == show ]]; then
   version=$VERSION
   [[ "$CASE" != wrong_manifest ]] || version=9.9.9
   name="@dalgo/$PACKAGE"
-  [[ "$PACKAGE" != http ]] || name=@dalgo/http
+  case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dal-go/dalgo2$PACKAGE" ;; esac
   printf '{"name":"%s","version":"%s"}\\n' "$name" "$version"
 else exit 99
 fi
 ''')
     (root/'npm').chmod(0o755)
     (root/'git').chmod(0o755)
-    for case in ['firestore', 'indexeddb', 'bigquery', 'http', 'sqlite-sql', 'sqlite-wasm', 'd1', 'private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
+    for case in public_packages + ['private_package', 'invalid_version', 'wrong_name', 'wrong_version', 'invalid_source', 'off_main', 'wrong_manifest']:
         output = root/f'{case}.output'
-        package = case if case in ['firestore', 'indexeddb', 'bigquery', 'http', 'sqlite-sql', 'sqlite-wasm', 'd1'] else 'algolia' if case == 'private_package' else 'bigquery'
+        package = case if case in public_packages else 'algolia' if case == 'private_package' else 'bigquery'
         env = dict(os.environ, PATH=f'{root}:'+os.environ['PATH'], CASE=case, PACKAGE=package, VERSION='v0.3.0' if case == 'invalid_version' else '0.3.0', MOCK_SHA=sha, GITHUB_OUTPUT=str(output))
         result = subprocess.run(['bash',str(root/'run.sh')],env=env,capture_output=True,text=True)
-        succeeds = case in ['firestore', 'indexeddb', 'bigquery', 'http', 'sqlite-sql', 'sqlite-wasm', 'd1']
+        succeeds = case in public_packages
         assert (result.returncode == 0) == succeeds, (case, result.stderr)
         assert output.exists() == succeeds, case
         if succeeds: assert f'tag={package}@v0.3.0' in output.read_text()

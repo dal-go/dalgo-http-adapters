@@ -177,6 +177,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Check published adapters
         run: |
+          pnpm --filter @dalgo/adapter-runtime check
+          pnpm --filter @dal-go/dalgo2couchdb check
+          pnpm --filter @dal-go/dalgo2libsql check
+          pnpm --filter @dal-go/dalgo2postgrest check
+          pnpm --filter @dal-go/dalgo2typesense check
           pnpm --filter @dalgo/firestore check
           pnpm --filter @dalgo/indexeddb check
           pnpm --filter @dalgo/bigquery check
@@ -208,13 +213,15 @@ jobs:
           registry_metadata=$(mktemp)
           metadata_error=$(mktemp)
           trap 'rm -f "$registry_metadata" "$metadata_error"' EXIT
-          # sqlite-sql precedes sqlite-wasm and d1, whose peer ranges require it.
-          for package in firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do
+          # Runtime precedes its adapters; sqlite-sql precedes sqlite-wasm and d1.
+          for package in adapter-runtime couchdb libsql postgrest typesense firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do
             manifest="packages/$package/package.json"
             name=$(jq -r '.name' "$manifest")
             version=$(jq -r '.version' "$manifest")
             previous_version=$(git show "HEAD^:$manifest" | jq -r '.version')
             case "$package" in
+              adapter-runtime) expected_name='@dalgo/adapter-runtime' ;;
+              couchdb|libsql|postgrest|typesense) expected_name="@dal-go/dalgo2$package" ;;
               firestore) expected_name='@dalgo/firestore' ;;
               indexeddb) expected_name='@dalgo/indexeddb' ;;
               bigquery) expected_name='@dalgo/bigquery' ;;
@@ -278,7 +285,7 @@ jobs:
               EXPECTED_SOURCE_SHA="$source_sha" EXPECTED_PACKAGE_VERSION="$version" \
                 EXPECTED_ARTIFACT_SHA256="$(jq -r '.sha256' "$receipt")" \
                 EXPECTED_ARTIFACT_INTEGRITY="$(jq -r '.integrity' "$receipt")" \
-                node .github/scripts/check-ovdb-tarball.mjs "$tarball" "$OVDB_CONSUMER_DIR" "$OVDB_NODE20" "$(command -v node)"
+                node .github/scripts/check-ovdb-core-matrix.mjs "$tarball" "$OVDB_CONSUMER_DIR" "$OVDB_NODE20" "$(command -v node)"
               cp "$OVDB_CONSUMER_DIR/artifact-receipt.json" "$OVDB_ARTIFACT_DIR/tested-artifact.json"
               node .github/scripts/prepare-ovdb-release.mjs verify "$OVDB_ARTIFACT_DIR" "$source_sha" "$version" "$OVDB_ARTIFACT_DIR/tested-artifact.json"
             fi

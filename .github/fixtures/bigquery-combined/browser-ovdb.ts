@@ -1,7 +1,6 @@
 // Authored synthetic responses only; no source admission or provider call.
-// BigQuery and OVDB sharing one strict registry core 0.6 instance. The OVDB npm
-// artifact is deliberately gated to core 0.6; when that gate moves to 0.8 this
-// consumer merges back into the core 0.8 one.
+// BigQuery and OVDB sharing one strict registry core 0.6 instance. This floor
+// pairing remains required alongside OVDB's own modern-core release matrix.
 import { collection, type QueryExecutor } from "@dalgo/core";
 import * as root from "@dalgo/ovdb";
 import * as tugql from "@dalgo/ovdb/tugql";

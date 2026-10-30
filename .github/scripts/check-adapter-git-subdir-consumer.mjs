@@ -34,9 +34,9 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CORE_COMMIT = "99165e9e1a39c32abee2b39d6395677843bc3559";
-const CORE_SPEC = `github:dal-go/dalgo-js#${CORE_COMMIT}`;
-const CORE_ALLOW_BUILD = `@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/${CORE_COMMIT}`;
+const CORE_VERSION = "0.8.1";
+const CORE_SPEC = CORE_VERSION;
+const CORE_INTEGRITY = "sha512-stXi8PPeR3G7AxCairfJEMDGd4KuiU5eyipPDgibCEVlRD435t2FvfQQj3mp+FgZEVzcdel4Z4Iwq3xm9URRSA==";
 const TYPESCRIPT_VERSION = "6.0.3";
 const ADAPTERS = [
   { name: "@dalgo/adapter-runtime", directory: "packages/adapter-runtime" },
@@ -171,8 +171,10 @@ try {
     [
       "# Exact build approvals for the reviewed dependencies only.",
       "allowBuilds:",
-      `  '${CORE_ALLOW_BUILD}': true`,
       ...ADAPTERS.map((adapter) => `  '${adapterAllowBuild(reference, adapter)}': true`),
+      "",
+      "minimumReleaseAgeExclude:",
+      `  - '@dalgo/core@${CORE_VERSION}'`,
       "",
     ].join("\n"),
   );
@@ -205,7 +207,7 @@ try {
   const pnpmVersion = run("pnpm", ["--version"]).trim();
   // No local tarball, no `file:`/`link:` specifier, no `--ignore-scripts`, no
   // blanket build approval: the Git fetch must run the reviewed prepack steps.
-  run("pnpm", ["install", "--no-frozen-lockfile"], { cwd: consumer });
+  run("pnpm", ["install", "--no-frozen-lockfile", "--registry=https://registry.npmjs.org"], { cwd: consumer });
 
   const lockfile = readFileSync(join(consumer, "pnpm-lock.yaml"), "utf8");
   assert.ok(!/^\s*(?:specifier|version):\s*(?:link|file):/mu.test(lockfile), "consumer lockfile uses a local link");
@@ -217,7 +219,15 @@ try {
     .filter(Boolean))];
   const coreKeys = lockKeys.filter((key) => key.startsWith("@dalgo/core@"));
   assert.equal(coreKeys.length, 1, `locked @dalgo/core resolutions: ${coreKeys.join(", ")}`);
-  assert.ok(coreKeys[0].includes(CORE_COMMIT), `@dalgo/core is not locked to ${CORE_COMMIT}`);
+  assert.equal(coreKeys[0], `@dalgo/core@${CORE_VERSION}`);
+  const corePackageBlock = lockfile.split("\n\n").find((block) =>
+    block.startsWith(`  '${coreKeys[0]}':\n`) && block.includes("    resolution: "));
+  assert.ok(corePackageBlock, "@dalgo/core registry resolution is missing");
+  assert.equal(
+    corePackageBlock.split("\n").find((line) => line.startsWith("    resolution: ")),
+    `    resolution: {integrity: ${CORE_INTEGRITY}}`,
+    "@dalgo/core must use the exact verified registry artifact",
+  );
   for (const adapter of ADAPTERS) {
     const locked = lockKeys.filter((key) => key.startsWith(`${adapter.name}@`)
       && key.includes(reference.sha)
@@ -226,9 +236,9 @@ try {
     assert.ok(locked.length > 0, `${adapter.name} is not locked to ${reference.url}#${reference.sha}&path:/${adapter.directory}`);
   }
   // Every core occurrence, including the peer suffixes on adapter resolutions,
-  // must name the one reviewed commit.
+  // must name the one released version.
   const lockedCores = new Set(lockKeys.flatMap((key) => [...key.matchAll(/@dalgo\/core@([^@()]+)/gu)].map((match) => match[1])));
-  assert.deepEqual([...lockedCores], [`https://codeload.github.com/dal-go/dalgo-js/tar.gz/${CORE_COMMIT}`]);
+  assert.deepEqual([...lockedCores], [CORE_VERSION]);
   assert.ok(
     !lockKeys.some((key) => key.startsWith("@dal-go/dalgo@")),
     "consumer lockfile resolves the legacy @dal-go/dalgo package",
@@ -294,13 +304,10 @@ try {
   const coreStoreDirectories = readdirSync(join(consumer, "node_modules", ".pnpm"))
     .filter((name) => name.startsWith("@dalgo+core@"));
   assert.equal(coreStoreDirectories.length, 1, `installed @dalgo/core copies: ${coreStoreDirectories.join(", ")}`);
-  assert.ok(
-    coreStoreDirectories[0].includes(CORE_COMMIT),
-    `installed @dalgo/core is not the reviewed commit: ${coreStoreDirectories[0]}`,
-  );
+  assert.equal(coreStoreDirectories[0], `@dalgo+core@${CORE_VERSION}`);
   const coreManifest = JSON.parse(readFileSync(join(consumer, "node_modules", "@dalgo", "core", "package.json"), "utf8"));
   assert.equal(coreManifest.name, "@dalgo/core");
-  assert.equal(coreManifest.version, "0.7.4");
+  assert.equal(coreManifest.version, CORE_VERSION);
 
   assert.ok(
     !existsSync(join(consumer, "node_modules", "@dal-go", "dalgo")),
@@ -348,9 +355,9 @@ try {
   const receipt = {
     source: { kind: reference.kind, sha: reference.sha, ...(reference.url.startsWith("git+file:") ? { url: reference.url } : {}) },
     pnpm: pnpmVersion,
-    core: { name: coreManifest.name, version: coreManifest.version, specifier: CORE_SPEC },
+    core: { name: coreManifest.name, version: coreManifest.version, specifier: CORE_SPEC, integrity: CORE_INTEGRITY },
     adapters: installed,
-    allowBuilds: [CORE_ALLOW_BUILD, ...ADAPTERS.map((adapter) => adapterAllowBuild(reference, adapter))],
+    allowBuilds: ADAPTERS.map((adapter) => adapterAllowBuild(reference, adapter)),
     prepack: "Git-fetched workspace; no prebuilt dist, no tarball, no local link",
     typecheck: `tsc ${TYPESCRIPT_VERSION} --strict --skipLibCheck=false (Git-installed declarations)`,
     runtimeImports: runtime,
