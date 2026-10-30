@@ -3,13 +3,14 @@
 // evaluate and share one @dalgo/core instance at runtime.
 import assert from "node:assert/strict";
 
-const [core, runtime, couchdb, postgrest, libsql, typesense] = await Promise.all([
+const [core, runtime, couchdb, postgrest, libsql, typesense, clickhouse] = await Promise.all([
   import("@dalgo/core"),
   import("@dalgo/adapter-runtime"),
   import("@dalgo/dalgo2couchdb"),
   import("@dalgo/dalgo2postgrest"),
   import("@dalgo/dalgo2libsql"),
   import("@dalgo/dalgo2typesense"),
+  import("@dalgo/dalgo2clickhouse"),
 ]);
 
 assert.equal(typeof core.collection, "function");
@@ -22,6 +23,11 @@ assert.equal(typeof libsql.LibSQLDatabase, "function");
 assert.equal(typeof libsql.NativeLibSQLDatabase, "function");
 assert.equal(typeof typesense.TypesenseDatabase, "function");
 assert.equal(typeof typesense.decodeSearchResponse, "function");
+const ordinal = new clickhouse.NativeClickHouseDatabase({ serverUrl: "https://clickhouse.example.test", tables: {} });
+assert.equal(clickhouse.ClickHouseDatabase, clickhouse.NativeClickHouseDatabase);
+assert.equal(runtime.isOrdinalQueryExecutor(ordinal), true);
+const keyedOrWriteMethods = ["get", "getMany", "query", "append", "insert", "set", "update", "delete", "runReadwriteTransaction"].some((name) => name in ordinal);
+assert.equal(keyedOrWriteMethods, false);
 
 const couch = new couchdb.CouchDbDatabase({ databaseUrl: "https://couch.example.test/app" });
 const nativeCouch = new couchdb.NativeCouchDbDatabase({ databaseUrl: "https://couch.example.test/app", collection: "items" });
@@ -86,6 +92,7 @@ assert.equal(typeof typesenseDecoded.hits[0].textMatch, "string");
 console.log(JSON.stringify({
   core: { collection: typeof core.collection, key: typeof core.key },
   runtime: { isCancellableQueryExecutor: typeof runtime.isCancellableQueryExecutor },
+  clickhouse: { readOnly: ordinal.readOnly, queryOrdinal: typeof ordinal.queryOrdinal, isOrdinal: runtime.isOrdinalQueryExecutor(ordinal), sameAlias: clickhouse.ClickHouseDatabase === clickhouse.NativeClickHouseDatabase, keyedOrWriteMethods },
   couch: {
     queryWithSignal: typeof couch.queryWithSignal,
     runReadwriteTransaction: typeof couch.runReadwriteTransaction,

@@ -1,6 +1,6 @@
 import { UnsupportedError, collection, key } from "@dal-go/dalgo";
 import { describe, expect, it, vi } from "vitest";
-import { ClickHouseDatabase, ClickHouseHttpError } from "../src/index.js";
+import { ClickHouseDatabase, ClickHouseHttpError } from "../src/database.js";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

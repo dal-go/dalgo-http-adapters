@@ -1,8 +1,7 @@
 {
-  "name": "@dal-go/dalgo2clickhouse",
-  "private": true,
+  "name": "@dalgo/dalgo2clickhouse",
   "version": "0.1.0",
-  "description": "DALgo read/query adapter for ClickHouse HTTP",
+  "description": "Read-only anonymous ordinal ClickHouse HTTP executor for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "sideEffects": false,
@@ -20,10 +19,13 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "check": "eslint . && vitest run && tsc -p tsconfig.build.json",
-    "prepack": "npm run build",
-    "test": "vitest run"
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
+    "check": "eslint . && vitest run && tsc -p tsconfig.json --noEmit && npm run build",
+    "lint": "eslint .",
+    "prepack": "npm --prefix ../adapter-runtime run build && npm run build",
+    "test": "vitest run",
+    "test:real": "node scripts/real-clickhouse.mjs",
+    "test:browser": "node scripts/real-clickhouse-browser.mjs"
   },
   "repository": {
     "type": "git",
@@ -35,15 +37,23 @@
   },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/clickhouse#readme",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "engines": {
     "node": ">=20"
   },
   "peerDependencies": {
-    "@dal-go/dalgo": "^0.1.0"
+    "@dalgo/core": ">=0.8.1 <0.9.0",
+    "@dalgo/adapter-runtime": ">=0.2.0 <1.0.0"
   },
   "devDependencies": {
-    "@dal-go/dalgo": "npm:@dalgo/core@0.8.1",
+    "@dalgo/core": "^0.8.1",
+    "@dalgo/adapter-runtime": "workspace:^",
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
+    "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
