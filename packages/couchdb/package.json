@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/dalgo2couchdb",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Apache CouchDB HTTP document and Mango adapter for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
