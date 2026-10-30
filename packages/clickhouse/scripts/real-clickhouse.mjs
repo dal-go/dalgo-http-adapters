@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { NativeClickHouseDatabase } from "../dist/index.js";
-import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, exactQuery, fixtureUrl, lateErrorSql, maximum, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
+import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, exactQuery, fixtureUrl, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
 
 const serverUrl = fixtureUrl();
 const version = await assertFixtureVersion(serverUrl);
@@ -8,8 +8,10 @@ const profileProof = await prepareLateErrorFixture(serverUrl);
 const database = new NativeClickHouseDatabase(nativeOptions(serverUrl));
 assertExact(await database.queryOrdinal(exactQuery));
 const alias = await database.queryOrdinal(aliasQuery);
-assert.equal(alias.rows.length, 2);
-assert.deepEqual(alias.rows[0], [maximum.value]);
+assert.deepEqual(alias, {
+  columns: [{ name: "amount", nativeType: "UInt64" }],
+  rows: [[{ kind: "integer", value: "7" }]],
+});
 const labels = await database.queryOrdinal(aliasRoundTripQuery);
 assert.deepEqual(labels.columns.map((column) => column.name), ["a`b", "native id"]);
 let unsafeRequests = 0;

@@ -56,7 +56,10 @@ try {
   assert.deepEqual(mapAndConsent.rows, [[{ kind: "map", entries: [["same", { kind: "integer", value: "1" }], ["same", { kind: "integer", value: "2" }]] }]]);
   assert.equal(mapAndConsent.refused, true);
   const alias = await page.evaluate(async ({ options, query }) => new window.NativeClickHouseDatabase({ ...options, headers: () => ({ "X-ClickHouse-User": "fixture_reader", "X-ClickHouse-Key": "synthetic-reader" }) }).queryOrdinal(query), { options: browserOptions, query: aliasQuery });
-  assert.equal(alias.rows.length, 2);
+  assert.deepEqual(alias, {
+    columns: [{ name: "amount", nativeType: "UInt64" }],
+    rows: [[{ kind: "integer", value: "7" }]],
+  });
   const aliasLabels = await page.evaluate(async ({ options, query }) => {
     const result = await new window.NativeClickHouseDatabase({ ...options, headers: () => ({ "X-ClickHouse-User": "fixture_reader", "X-ClickHouse-Key": "synthetic-reader" }) }).queryOrdinal(query);
     return result.columns.map((column) => column.name);

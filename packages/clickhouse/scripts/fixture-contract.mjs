@@ -39,7 +39,7 @@ export const maximum = { name: "maximum", nativeType: "UInt64", value: { kind: "
 export const exactQuery = { kind: "native", sql: "SELECT id AS duplicate, id AS duplicate, amount, items, label, at, attrs FROM explore.events WHERE id = {maximum:UInt64} ORDER BY at LIMIT 2", parameters: [maximum] };
 export const aliasQuery = { kind: "structured", query: { kind: "joined-tugql", from: { name: "events", alias: "e", joins: [] },
   columns: [{ expression: { kind: "field", field: { source: "e", field: "id" } }, as: "amount" }],
-  filters: [{ field: { source: "e", field: "amount" }, operator: ">", value: 1 }], orders: [{ field: { source: "e", field: "amount" }, direction: "asc" }], limit: 2 } };
+  filters: [{ field: { source: "e", field: "amount" }, operator: "<", value: 2 }], orders: [{ field: { source: "e", field: "amount" }, direction: "asc" }], limit: 2 } };
 export const aliasRoundTripQuery = { kind: "structured", query: { ...aliasQuery.query,
   columns: [{ expression: { kind: "field", field: { source: "e", field: "id" } }, as: "a`b" }, { expression: { kind: "field", field: { source: "e", field: "id" } }, as: "native id" }] } };
 export const unsafeAliasQueries = ["trailing\\", "literal\\n", "literal\\N", "x\\`, secret FROM forbidden.secret --"].map((as) => ({ kind: "structured", query: { ...aliasQuery.query, columns: [{ expression: { kind: "literal", value: 1 }, as }] } }));
