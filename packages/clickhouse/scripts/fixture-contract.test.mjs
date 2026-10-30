@@ -12,7 +12,7 @@ const block = { setting_name: "max_block_size", value: "1", min: null, max: null
 const compression = { setting_name: "enable_http_compression", value: "0", min: null, max: null, writability: "CONST", inherit_profile: null };
 const prepared = { originalEntries: 11, preserved: true, readonlyConst: true, maxBlockSizeConst: 1, httpCompressionConst: 0 };
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-function fixtureAdmin(changeAfter = (rows) => rows, initialRows = baseline, changeTargetAfter = (target) => target) {
+function fixtureAdmin(changeAfter = (rows) => rows, initialRows = baseline, changeTargetAfter = (target) => target, compressionRendering = "0 CONST") {
   let elements = initialRows.map((row) => ({ ...row }));
   const changes = [];
   vi.stubEnv("CLICKHOUSE_FIXTURE_ADMIN_PASSWORD", "synthetic-unit-admin-credential-unused-by-browser");
@@ -31,7 +31,7 @@ function fixtureAdmin(changeAfter = (rows) => rows, initialRows = baseline, chan
       const target = { name: "fixture_reader_profile", id: "synthetic-profile-id", apply_to_all: 0, apply_to_list: ["fixture_reader"], apply_to_except: [] };
       return Promise.resolve(new Response(JSON.stringify(changes.length ? changeTargetAfter(target) : target)));
     }
-    if (sql.startsWith("SHOW CREATE SETTINGS PROFILE")) return Promise.resolve(new Response(`CREATE SETTINGS PROFILE fixture_reader_profile SETTINGS readonly = 1 CONST${elements.some((entry) => entry.setting_name === "max_block_size") ? ", max_block_size = 1 CONST" : ""}${elements.some((entry) => entry.setting_name === "enable_http_compression") ? ", enable_http_compression = 0 CONST" : ""} TO fixture_reader\n`));
+    if (sql.startsWith("SHOW CREATE SETTINGS PROFILE")) return Promise.resolve(new Response(`CREATE SETTINGS PROFILE fixture_reader_profile SETTINGS readonly = 1 CONST${elements.some((entry) => entry.setting_name === "max_block_size") ? ", max_block_size = 1 CONST" : ""}${elements.some((entry) => entry.setting_name === "enable_http_compression") ? `, enable_http_compression = ${compressionRendering}` : ""} TO fixture_reader\n`));
     throw new Error("unexpected fixture admin query");
   }));
   return changes;
@@ -47,6 +47,14 @@ describe("reader fixture policy preparation", () => {
     const changes = fixtureAdmin((rows) => rows, baseline.filter((row) => row.setting_name !== "readonly"));
     await expect(prepareLateErrorFixture("http://127.0.0.1:8123")).rejects.toThrow();
     expect(changes).toEqual([]);
+  });
+  it.each(["0 CONST", "false CONST", "FALSE READONLY"])("accepts canonical SQL false rendering %s with strict stored zero", async (rendering) => {
+    fixtureAdmin((rows) => rows, baseline, (target) => target, rendering);
+    await expect(prepareLateErrorFixture("http://127.0.0.1:8123")).resolves.toEqual(prepared);
+  });
+  it.each(["1 CONST", "true CONST", "false", "0", "'false' CONST", "'0' CONST"])("refuses true, quoted or unconstrained compression rendering %s", async (rendering) => {
+    fixtureAdmin((rows) => rows, baseline, (target) => target, rendering);
+    await expect(prepareLateErrorFixture("http://127.0.0.1:8123")).rejects.toThrow("unquoted SQL false with CONST/READONLY");
   });
   it("revalidates an identical preparation without adding duplicate policy entries", async () => {
     const changes = fixtureAdmin((rows) => rows, [...baseline, block, compression]);

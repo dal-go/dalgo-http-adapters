@@ -214,7 +214,11 @@ export async function prepareLateErrorFixture(serverUrl) {
   assert.deepEqual(after.elements.filter(originalEntry), before.elements.filter(originalEntry), "every original policy entry and constraint must remain unchanged");
   for (const setting of TS_POLICY) assert.deepEqual(after.elements.find((entry) => entry.setting_name === setting.setting_name), setting);
   assert.match(after.showCreate, /\bmax_block_size\s*=\s*1\s+(?:CONST|READONLY)\b/);
-  assert.match(after.showCreate, /\benable_http_compression\s*=\s*0\s+(?:CONST|READONLY)\b/);
+  const renderedCompression = /\benable_http_compression\s*=\s*(0|false)(?=\s|[,;])/iu.exec(after.showCreate)?.[1];
+  const showCompressionSyntax = renderedCompression === "0" ? "0" : renderedCompression?.toLowerCase() === "false" ? "false"
+    : /\benable_http_compression\s*=/iu.test(after.showCreate) ? "other" : "missing";
+  console.error(JSON.stringify({ diagnostic: "clickhouse-profile-rendering", showCompressionSyntax }));
+  assert.equal(/\benable_http_compression\s*=\s*(?:0|false)\s+(?:CONST|READONLY)\b/iu.test(after.showCreate), true, "TS fixture compression must render as unquoted SQL false with CONST/READONLY");
   return { originalEntries: EXPECTED_POLICY.length, preserved: true, readonlyConst: true, maxBlockSizeConst: 1, httpCompressionConst: 0 };
 }
 export function assertLateFramingEvidence(error, observed) {
