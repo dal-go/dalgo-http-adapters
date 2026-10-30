@@ -178,6 +178,7 @@ jobs:
       - name: Check published adapters
         run: |
           pnpm --filter @dalgo/adapter-runtime check
+          pnpm --filter @dalgo/dalgo2clickhouse check
           pnpm --filter @dalgo/dalgo2couchdb check
           pnpm --filter @dalgo/dalgo2libsql check
           pnpm --filter @dalgo/dalgo2postgrest check
@@ -214,14 +215,14 @@ jobs:
           metadata_error=$(mktemp)
           trap 'rm -f "$registry_metadata" "$metadata_error"' EXIT
           # Runtime precedes its adapters; sqlite-sql precedes sqlite-wasm and d1.
-          for package in adapter-runtime couchdb libsql postgrest typesense firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do
+          for package in adapter-runtime clickhouse couchdb libsql postgrest typesense firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do
             manifest="packages/$package/package.json"
             name=$(jq -r '.name' "$manifest")
             version=$(jq -r '.version' "$manifest")
             previous_version=$(git show "HEAD^:$manifest" | jq -r '.version')
             case "$package" in
               adapter-runtime) expected_name='@dalgo/adapter-runtime' ;;
-              couchdb|libsql|postgrest|typesense) expected_name="@dalgo/dalgo2$package" ;;
+              clickhouse|couchdb|libsql|postgrest|typesense) expected_name="@dalgo/dalgo2$package" ;;
               firestore) expected_name='@dalgo/firestore' ;;
               indexeddb) expected_name='@dalgo/indexeddb' ;;
               bigquery) expected_name='@dalgo/bigquery' ;;

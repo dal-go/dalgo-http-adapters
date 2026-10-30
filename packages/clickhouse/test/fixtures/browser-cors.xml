@@ -1,0 +1,17 @@
+<!-- Mount alongside the released dalgo2clickhouse testdata/access.xml in the
+     owned pinned Linux fixture. This origin belongs only to that run's
+     static browser fixture. No wildcard and no admin browser credentials. -->
+<clickhouse>
+    <http_options_response replace="replace">
+        <header><name>Access-Control-Allow-Origin</name><value>http://127.0.0.1:14389</value></header>
+        <header><name>Access-Control-Allow-Methods</name><value>POST, OPTIONS</value></header>
+        <header><name>Access-Control-Allow-Headers</name><value>content-type,x-clickhouse-format,x-clickhouse-key,x-clickhouse-user,authorization</value></header>
+    </http_options_response>
+    <http_handlers>
+        <common_http_response_headers>
+            <Access-Control-Allow-Origin>http://127.0.0.1:14389</Access-Control-Allow-Origin>
+            <Access-Control-Expose-Headers>X-ClickHouse-Format,X-ClickHouse-Exception-Code,X-ClickHouse-Exception-Tag</Access-Control-Expose-Headers>
+        </common_http_response_headers>
+        <defaults/>
+    </http_handlers>
+</clickhouse>

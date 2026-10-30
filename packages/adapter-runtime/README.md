@@ -10,25 +10,24 @@ built-in and no DOM polyfill.
 
 ## Install
 
-The package is peer-compatible with the `@dalgo/core` identity pinned by the
-DataTug web UI (`0.7.4`, commit
-`99165e9e1a39c32abee2b39d6395677843bc3559`), and with the current `0.8.x`
-line:
+The ordinal declarations require the released `@dalgo/core` `0.8.1` query
+model (commit `52a466927b154aff019b5e13fdec66acfe24f609`). Earlier runtime
+releases supported core `0.7.4`; this source revision raises that minimum:
 
 ```jsonc
 // package.json, pnpm 11 subdirectory dependency before npm publication
-"@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559",
+"@dalgo/core": "github:dal-go/dalgo-js#52a466927b154aff019b5e13fdec66acfe24f609",
 "@dalgo/adapter-runtime": "github:dal-go/dalgo-http-adapters#<sha>&path:/packages/adapter-runtime"
 ```
 
 ```yaml
 # pnpm-workspace.yaml: GitHub tarballs build themselves on install
 allowBuilds:
-  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559': true
+  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/52a466927b154aff019b5e13fdec66acfe24f609': true
   '@dalgo/adapter-runtime@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<sha>#path:/packages/adapter-runtime': true
 ```
 
-The advisory peer range is `@dalgo/core >=0.7.4 <0.9.0`. It is not published to
+The peer range is `@dalgo/core >=0.8.1 <0.9.0`. This source is not published to
 npm by this change; see the distribution gates at the end.
 
 ## Cancellable query contract
@@ -148,3 +147,35 @@ Remaining owner gates are:
 ## License
 
 MIT
+
+## Anonymous ordinal SQL results
+
+`OrdinalQueryExecutor` is an optional additive surface for SQL adapters whose
+rows have no durable record identity. `isOrdinalQueryExecutor(value)` narrows it.
+Core `Database`, `QueryPage.records` and `ExistingRecord.key` remain unchanged.
+
+```ts
+if (isOrdinalQueryExecutor(adapter)) {
+  const result = await adapter.queryOrdinal({ kind: "native", sql: "SELECT 1" }, signal);
+  // Render result.columns[index] with result.rows[rowIndex][index].
+}
+```
+
+A result contains ordered `{name,nativeType}` columns and equally wide rows.
+Labels and rows may repeat; no label-keyed object or synthetic record key is
+introduced. JSON-safe `OrdinalValue` wrappers preserve exact integers, unscaled
+decimals plus scale, epoch days, timestamp ticks plus scale/timezone, arrays,
+and ordered map entry pairs including duplicate keys. Numbers represent only
+finite provider floating-point values.
+
+Structured requests use the released DALgo `ParsedTugQLQuery` model:
+`{kind:"structured",query,columns?,parameters?}`. `columns` supplies explicit
+core `QueryColumn` projections for legacy `StructuredQuery`; joined TugQL
+already has projections. Providers must state their supported subset and
+refuse unsupported expressions before I/O. Named `OrdinalParameter` values
+carry an explicit native type so an exact SQL integer/decimal never passes
+through an unsafe JavaScript numeric literal.
+
+An abort signal covers the complete operation. Prompt local cancellation is
+separate from server cancellation: provider-specific real tests must observe
+server work ending before claiming that the server stopped.

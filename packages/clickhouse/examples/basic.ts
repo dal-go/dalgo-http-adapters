@@ -1,5 +1,6 @@
 import { collection } from "@dal-go/dalgo";
-import { ClickHouseDatabase } from "../src/index.js";
+// Private historical prototype; excluded from the canonical public package.
+import { ClickHouseDatabase } from "../src/database.js";
 
 const events = collection<{ kind: string; occurredAt: string }>("events");
 const accessToken = "obtain a scoped short-lived token from your trusted backend";
