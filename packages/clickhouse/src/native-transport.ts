@@ -1,9 +1,15 @@
 import { cancelQuietly, raceAbort } from "@dalgo/adapter-runtime";
 import { ClickHouseNativeError } from "./native-errors.js";
 import { assertNoExceptionTrailer, requireExceptionTag } from "./http-exception.js";
+import { hasAsciiControl } from "./native-query.js";
 
-export interface NativeRequestContext { readonly signal: AbortSignal; cancelled(): Error; }
+export interface NativeRequestContext { readonly signal: AbortSignal; readonly cancelled: () => Error; }
 export const ROW_BINARY_FORMAT = "RowBinaryWithNamesAndTypes";
+// Read afresh after asynchronous work: AbortSignal changes outside TS control flow.
+export function isAborted(signal: AbortSignal): boolean { return signal.aborted; }
+export function isObjectMap(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 function joinedBytes(chunks: readonly Uint8Array[], size: number): Uint8Array {
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -19,13 +25,13 @@ export function nativeOrigin(value: string, insecure: boolean): string {
   return url.origin;
 }
 
-export function nativeHeaders(value: Readonly<Record<string, string>> | undefined): Readonly<Record<string, string>> {
+export function nativeHeaders(value: unknown): Readonly<Record<string, string>> {
   const result: Record<string, string> = Object.create(null) as Record<string, string>;
-  if (value !== undefined && (value === null || typeof value !== "object" || Array.isArray(value))) throw new ClickHouseNativeError("permission");
+  if (value !== undefined && !isObjectMap(value)) throw new ClickHouseNativeError("permission");
   for (const [name, content] of Object.entries(value ?? {})) {
     const lower = name.toLowerCase();
     if (!["authorization", "x-clickhouse-user", "x-clickhouse-key"].includes(lower) || Object.hasOwn(result, lower)
-      || typeof content !== "string" || content.length > 8192 || /[\u0000-\u001f\u007f]/u.test(content)) throw new ClickHouseNativeError("permission");
+      || typeof content !== "string" || content.length > 8192 || hasAsciiControl(content)) throw new ClickHouseNativeError("permission");
     result[lower] = content;
   }
   return Object.freeze(result);
@@ -33,15 +39,15 @@ export function nativeHeaders(value: Readonly<Record<string, string>> | undefine
 
 /** Bounded fetch, including implementations that ignore AbortSignal. */
 export async function nativeRequest(fetcher: typeof fetch, url: string, sql: string, headers: Readonly<Record<string, string>>, context: NativeRequestContext, maximum: number): Promise<Uint8Array> {
-  if (context.signal.aborted) throw context.cancelled();
+  if (isAborted(context.signal)) throw context.cancelled();
   const pending = Promise.resolve().then(() => fetcher(url, {
     method: "POST", redirect: "error", credentials: "omit", cache: "no-store", signal: context.signal,
     headers: { ...headers, accept: "application/octet-stream", "content-type": "text/plain; charset=utf-8", "x-clickhouse-format": ROW_BINARY_FORMAT }, body: sql,
   }));
-  void pending.then((late) => { if (context.signal.aborted) cancelQuietly(late.body); }, () => undefined);
+  void pending.then((late) => { if (isAborted(context.signal)) cancelQuietly(late.body); }, () => undefined);
   let response: Response;
   try { response = await raceAbort(pending, context.signal, context.cancelled); } catch {
-    if (context.signal.aborted) throw context.cancelled();
+    if (isAborted(context.signal)) throw context.cancelled();
     throw new ClickHouseNativeError("transport");
   }
   if (!response.ok) { cancelQuietly(response.body); throw new ClickHouseNativeError("response", response.status); }
@@ -59,7 +65,7 @@ export async function nativeRequest(fetcher: typeof fetch, url: string, sql: str
     for (;;) {
       let next: ReadableStreamReadResult<Uint8Array>;
       try { next = await raceAbort(reader.read(), context.signal, context.cancelled); } catch {
-        if (context.signal.aborted) throw context.cancelled();
+        if (isAborted(context.signal)) throw context.cancelled();
         throw new ClickHouseNativeError("transport");
       }
       if (next.done) break;
@@ -72,12 +78,12 @@ export async function nativeRequest(fetcher: typeof fetch, url: string, sql: str
     // ClickHouse intentionally breaks chunked/fixed-length HTTP after writing
     // a late exception. Attribute a captured exact nonce prefix to framing,
     // while retaining transport failure when no such bytes were received.
-    if (!context.signal.aborted && error instanceof ClickHouseNativeError && error.code === "transport") {
+    if (!isAborted(context.signal) && error instanceof ClickHouseNativeError && error.code === "transport") {
       assertNoExceptionTrailer(joinedBytes(chunks, size), exceptionTag, false);
     }
     throw error;
   } finally {
-    if (context.signal.aborted || size > maximum) cancelQuietly(reader);
+    if (isAborted(context.signal) || size > maximum) cancelQuietly(reader);
     try { reader.releaseLock(); } catch { /* Hostile or mocked pending reads. */ }
   }
   const bytes = joinedBytes(chunks, size);

@@ -1,17 +1,27 @@
 import type { QueryColumn, QueryFieldReference, TugQLCondition, TugQLExpression, TugQLQueryFilter } from "@dalgo/core";
 import type { OrdinalParameter, OrdinalQuery, OrdinalValue } from "@dalgo/adapter-runtime";
 import { ClickHouseNativeError } from "./native-errors.js";
-import { nativeIdentifier, nativeParameters } from "./native-query.js";
+import { hasAsciiControl, nativeIdentifier, nativeParameters } from "./native-query.js";
 import type { ClickHouseReadGrant } from "./native-types.js";
 
 interface CompiledOrdinalQuery { readonly sql: string; readonly parameters: readonly OrdinalParameter[]; }
 const refuse = (): never => { throw new ClickHouseNativeError("unsupported"); };
 function onlyKeys(value: object, allowed: readonly string[]): void { if (Object.keys(value).some((key) => !allowed.includes(key))) refuse(); }
+// TypeScript callers have discriminated unions; runtime callers remain untrusted.
+function requireKind(value: unknown, expected: string): void { if (value !== expected) refuse(); }
+function nullTest(value: unknown): "is-null" | "is-not-null" | undefined {
+  return value === "is-null" || value === "is-not-null" ? value : undefined;
+}
+function direction(value: unknown): "ASC" | "DESC" {
+  if (value === "asc") return "ASC";
+  if (value === "desc") return "DESC";
+  return refuse();
+}
 function label(value: string): string {
   // ClickHouse treats backslashes as escapes inside quoted identifiers. This
   // bounded surface explicitly refuses them rather than changing a label or
   // allowing an escaped delimiter to enter generated SQL.
-  if (value.length < 1 || value.length > 256 || /[\\\u0000-\u001f\u007f]/u.test(value)) refuse();
+  if (value.length < 1 || value.length > 256 || value.includes("\\") || hasAsciiControl(value)) refuse();
   return `\`${value.replace(/`/gu, "``")}\``;
 }
 function literal(value: unknown): { readonly nativeType: string; readonly value: OrdinalValue } {
@@ -33,7 +43,7 @@ export function compileOrdinalQuery(request: OrdinalQuery, tables: ReadonlyMap<s
     if (typeof request.sql !== "string" || request.sql.trim().length === 0) refuse();
     return { sql: request.sql, parameters: request.parameters ?? [] };
   }
-  if (request.kind !== "structured") return refuse();
+  requireKind(request.kind, "structured");
   onlyKeys(request, ["kind", "query", "columns", "parameters"]);
   const query = request.query;
   const joined = "kind" in query;
@@ -41,7 +51,7 @@ export function compileOrdinalQuery(request: OrdinalQuery, tables: ReadonlyMap<s
   let sourceName: string;
   let projection: readonly QueryColumn[] | undefined;
   if (joined) {
-    if (query.kind !== "joined-tugql") return refuse();
+    requireKind(query.kind, "joined-tugql");
     onlyKeys(query, ["kind", "from", "filters", "orders", "columns", "limit", "offset", "groupBy", "having"]);
     onlyKeys(query.from, ["name", "alias", "joins"]);
     if (query.from.joins.length !== 0 || query.groupBy !== undefined || query.having !== undefined || request.columns !== undefined) return refuse();
@@ -120,9 +130,11 @@ export function compileOrdinalQuery(request: OrdinalQuery, tables: ReadonlyMap<s
         if (value.conditions.length === 0 || value.conditions.length > 256) return refuse();
         return `(${value.conditions.map((child) => condition(child, depth + 1)).join(value.kind === "and" ? " AND " : " OR ")})`;
       }
-      if (value.kind === "is-null" || value.kind === "is-not-null") {
+      const test = nullTest(value.kind);
+      if (test !== undefined) {
         onlyKeys(value, ["kind", "operand"]);
-        return `(${expression(value.operand, depth + 1)} IS ${value.kind === "is-not-null" ? "NOT " : ""}NULL)`;
+        const operand = "operand" in value ? value.operand : refuse();
+        return `(${expression(operand, depth + 1)} IS ${test === "is-not-null" ? "NOT " : ""}NULL)`;
       }
       return refuse();
     }
@@ -164,12 +176,11 @@ export function compileOrdinalQuery(request: OrdinalQuery, tables: ReadonlyMap<s
   });
   const orders = joined ? query.orders.map((order) => {
     onlyKeys(order, ["field", "direction"]);
-    if (order.field === undefined || (order.direction !== "asc" && order.direction !== "desc")) return refuse();
-    return `${field(order.field)} ${order.direction.toUpperCase()}`;
+    if (order.field === undefined) return refuse();
+    return `${field(order.field)} ${direction(order.direction)}`;
   }) : query.orders.map((order) => {
     onlyKeys(order, ["field", "direction"]);
-    if (order.direction !== "asc" && order.direction !== "desc") return refuse();
-    return `${field({ field: order.field, source: logical })} ${order.direction.toUpperCase()}`;
+    return `${field({ field: order.field, source: logical })} ${direction(order.direction)}`;
   });
   if (used.size !== supplied.size) return refuse();
   parameters.push(...supplied.values());

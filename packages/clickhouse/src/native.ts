@@ -5,7 +5,7 @@ import {
 import { ClickHouseNativeError } from "./native-errors.js";
 import { compileOrdinalQuery } from "./native-dalgo.js";
 import { nativeIdentifier, nativeParameters } from "./native-query.js";
-import { nativeHeaders, nativeOrigin, nativeRequest } from "./native-transport.js";
+import { isAborted, isObjectMap, nativeHeaders, nativeOrigin, nativeRequest } from "./native-transport.js";
 import { decodeClickHouseRowBinary } from "./row-binary.js";
 import type { ClickHouseReadGrant, NativeClickHouseDatabaseOptions } from "./native-types.js";
 
@@ -41,7 +41,7 @@ export class NativeClickHouseDatabase implements OrdinalQueryExecutor {
     this.#origin = nativeOrigin(options.serverUrl, options.allowInsecureLoopbackHttp === true);
     if (options.headers !== undefined && typeof options.headers !== "function") throw new TypeError("headers must be a provider function");
     this.#headers = options.headers;
-    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.#allowNative = options.allowNativeSql === true;
     this.#timeoutMs = positive(options.timeoutMs, 30_000, 65_000, "timeoutMs");
     this.#maxRows = positive(options.maxRows, 1000, 100_000, "maxRows");
@@ -50,7 +50,7 @@ export class NativeClickHouseDatabase implements OrdinalQueryExecutor {
     this.#maxResponseBytes = positive(options.maxResponseBytes, 8_388_608, 67_108_864, "maxResponseBytes");
     this.#maxValues = positive(options.maxValues, 100_000, 1_000_000, "maxValues");
     this.#maxDepth = positive(options.maxDepth, 16, 32, "maxDepth");
-    if (options.tables === null || typeof options.tables !== "object" || Array.isArray(options.tables)) throw new TypeError("tables must be an explicit read grant map");
+    if (!isObjectMap(options.tables)) throw new TypeError("tables must be an explicit read grant map");
     for (const [logical, table] of Object.entries(options.tables)) {
       nativeIdentifier(logical); nativeIdentifier(table.database); nativeIdentifier(table.table);
       const columns: Record<string, string> = Object.create(null) as Record<string, string>;
@@ -67,7 +67,7 @@ export class NativeClickHouseDatabase implements OrdinalQueryExecutor {
     // Generated IDs contain no user input and cannot escape KILL's literal.
     const id = `dalgo-${globalThis.crypto.randomUUID()}`;
     try {
-      if (scope.signal.aborted) throw cancelled();
+      if (isAborted(scope.signal)) throw cancelled();
       const compiled = compileOrdinalQuery(query, this.#tables, this.#allowNative, this.#maxRows);
       const parameters = nativeParameters(compiled.parameters, this.#maxRequestBytes);
       const url = new URL(this.#origin);
@@ -83,18 +83,18 @@ export class NativeClickHouseDatabase implements OrdinalQueryExecutor {
       if (new TextEncoder().encode(compiled.sql).byteLength + new TextEncoder().encode(url.toString()).byteLength > this.#maxRequestBytes) throw new ClickHouseNativeError("bounds");
       let provided: Readonly<Record<string, string>> | undefined;
       try { provided = await raceAbort(Promise.resolve().then(() => this.#headers?.()), scope.signal, cancelled); } catch {
-        if (scope.signal.aborted) throw cancelled();
+        if (isAborted(scope.signal)) throw cancelled();
         throw new ClickHouseNativeError("transport");
       }
       headers = nativeHeaders(provided);
       sent = true;
       const bytes = await nativeRequest(this.#fetch, url.toString(), compiled.sql, headers, { signal: scope.signal, cancelled }, this.#maxResponseBytes);
-      if (scope.signal.aborted) throw cancelled();
+      if (isAborted(scope.signal)) throw cancelled();
       const result = decodeClickHouseRowBinary(bytes, { maxRows: this.#maxRows, maxColumns: this.#maxColumns, maxValues: this.#maxValues, maxDepth: this.#maxDepth }, scope.signal);
-      if (scope.signal.aborted) throw cancelled();
+      if (isAborted(scope.signal)) throw cancelled();
       return result;
     } catch (error) {
-      if (scope.signal.aborted) {
+      if (isAborted(scope.signal)) {
         if (sent && headers !== undefined) this.cancelServerQuery(id, headers);
         throw cancelled();
       }
