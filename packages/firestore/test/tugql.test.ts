@@ -1,9 +1,10 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, type DocumentReference, type Query } from "firebase/firestore";
-import { parseRecursiveTugQL, parseTugQL, resolveTugQL, type TugQLResolved } from "@dalgo/core";
+import { FirestoreError, getFirestore, type DocumentReference, type DocumentSnapshot, type Query, type QuerySnapshot } from "firebase/firestore";
+import { parseRecursiveTugQL, parseTugQL, resolveTugQL, type RecursiveTugQLQuery, type TugQLResolved } from "@dalgo/core";
 import pathSource from "../src/path.ts?raw";
 import querySource from "../src/query.ts?raw";
 import tugqlSource from "../src/tugql.ts?raw";
+import tugqlPlanSource from "../src/tugql-plan.ts?raw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const reads = vi.hoisted(() => ({
@@ -41,7 +42,8 @@ vi.mock("firebase/firestore", async (importOriginal) => {
   };
 });
 
-const { firestoreParentKey, firestoreTugQLSource, runFirestoreTugQL } = await import("../src/tugql.js");
+const { FirestoreTugQLRefusedError, firestoreParentKey, firestoreTugQLSource, runFirestoreTugQL } = await import("../src/tugql.js");
+type FirestoreTugQLReader = import("../src/tugql.js").FirestoreTugQLReader;
 
 const app = initializeApp({ projectId: "demo-dalgo-js" }, "dalgo2firestore-tugql-tests");
 const firestore = getFirestore(app);
@@ -193,22 +195,106 @@ describe("runFirestoreTugQL", () => {
       from: { query: { as: "x", from: { name: "users" }, orderBy: [{ field: "name" }], limit: 1 } },
       where: { left: { field: "__key__" }, op: "==", right: { value: "u2" } },
     }, schema);
-    expect((await runFirestoreTugQL(firestore, firstByName)).rows).toEqual([]);
+    await expect(runFirestoreTugQL(firestore, firstByName)).rejects.toMatchObject({ code: "in_memory_evaluation", path: "from" });
+    expect(reads.getDocs).toEqual([]);
+    expect((await runFirestoreTugQL(firestore, firstByName, { allowInMemoryEvaluation: true })).rows).toEqual([]);
     expect(reads.getDoc).toEqual([]);
 
     const renamed = parseRecursiveTugQL({
       from: { query: { as: "x", from: { name: "users" }, columns: [{ field: "name", as: "__key__" }] } },
       where: { left: { field: "__key__" }, op: "==", right: { value: "Alex" } },
     }, schema);
-    expect((await runFirestoreTugQL(firestore, renamed)).rows).toEqual([{ __key__: "Alex" }]);
+    expect((await runFirestoreTugQL(firestore, renamed, { allowInMemoryEvaluation: true })).rows).toEqual([{ __key__: "Alex" }]);
     expect(reads.getDoc).toEqual([]);
+  });
+});
+
+/** A read seam that counts calls and answers with fake snapshots. */
+function fakeReader(documents: number, error?: Error) {
+  const calls = { getDocs: 0, getDoc: 0 };
+  const reader: FirestoreTugQLReader = {
+    getDocs: () => {
+      calls.getDocs += 1;
+      if (error !== undefined) return Promise.reject(error);
+      const docs = Array.from({ length: documents }, (_, index) => ({ id: `d${index.toString()}`, ref: { path: `items/d${index.toString()}` }, data: () => ({ a: 1 }) }));
+      return Promise.resolve({ docs, size: docs.length } as unknown as QuerySnapshot);
+    },
+    getDoc: () => {
+      calls.getDoc += 1;
+      return Promise.resolve({ id: "u1", exists: () => true, data: () => ({ name: "Alex" }) } as unknown as DocumentSnapshot);
+    },
+  };
+  return { reader, calls };
+}
+
+describe("runFirestoreTugQL refusals and read seam", () => {
+  it("refuses unpushable queries before any read (ac:unpushable-refused-before-read)", async () => {
+    const schema = { tables: [{ name: "items", fields: ["a"] }, { name: "other", fields: ["a"] }] };
+    const scalar = parseRecursiveTugQL({
+      from: { name: "items" },
+      columns: [{ query: { as: "n", from: { name: "other" }, columns: [{ aggregate: { function: "count", args: [{ star: true }] }, as: "c" }] } }],
+    }, schema);
+    const cases: [TugQLResolved | RecursiveTugQLQuery, string, string][] = [
+      [resolve("FROM items\nWHERE a = 1 OR b = 2"), "where", "OR"],
+      [resolve("FROM items\nWHERE a = b"), "where", "field compared with field"],
+      [resolve("FROM items\nWHERE a = NULL"), "where", "comparison with NULL"],
+      [resolve("FROM items AS i\nJOIN other AS o\n  ON o.x = i.y\nSELECT i.a"), "from.joins[0]", "JOIN"],
+      [resolve("FROM items\nGROUP BY a\nSELECT a, count(*) AS n"), "groupBy", "GROUP BY"],
+      [scalar, "columns[0]", "subquery"],
+    ];
+    const { reader, calls } = fakeReader(0);
+    for (const [query, path, reason] of cases) {
+      const error = await runFirestoreTugQL(firestore, query, { reader }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(FirestoreTugQLRefusedError);
+      expect(error).toMatchObject({ code: "in_memory_evaluation", path, reason });
+    }
+    expect(calls).toEqual({ getDocs: 0, getDoc: 0 });
+    expect(reads.getDocs).toEqual([]);
+  });
+
+  it("surfaces a missing-index error unchanged, with no second query (ac:index-error-surfaces)", async () => {
+    const FirestoreErrorClass = FirestoreError as unknown as new (code: string, message: string) => FirestoreError;
+    const missingIndex = new FirestoreErrorClass("failed-precondition", "The query requires an index. You can create it here: https://console.firebase.google.com/project/demo/firestore/indexes?create_composite=x");
+    for (const allowInMemoryEvaluation of [false, true]) {
+      const { reader, calls } = fakeReader(0, missingIndex);
+      const pushed = runFirestoreTugQL(firestore, resolve("FROM items\nWHERE status = 'active'\nORDER BY rank DESC"), { reader, allowInMemoryEvaluation });
+      await expect(pushed).rejects.toBe(missingIndex);
+      expect(calls.getDocs).toBe(1);
+    }
+    const { reader, calls } = fakeReader(0, missingIndex);
+    await expect(runFirestoreTugQL(firestore, resolve("FROM items\nWHERE a = 1 OR b = 2"), { reader, allowInMemoryEvaluation: true })).rejects.toBe(missingIndex);
+    expect(calls.getDocs).toBe(1);
+  });
+
+  it("still fails with query_limit over a collection of more than 10,000 documents (ac:opt-in-runs-as-today)", async () => {
+    const { reader, calls } = fakeReader(10_001);
+    await expect(runFirestoreTugQL(firestore, resolve("FROM items\nWHERE a = 1 OR b = 2"), { reader, allowInMemoryEvaluation: true }))
+      .rejects.toThrow("query_limit at root.from: fetched_rows");
+    await expect(runFirestoreTugQL(firestore, resolve("FROM items\nWHERE a = 1"), { reader }))
+      .rejects.toThrow("query_limit at root.from: fetched_rows");
+    expect(calls.getDocs).toBe(2);
+  });
+
+  it("honours maxFetchedRows in the pushed limit", async () => {
+    const { reader } = fakeReader(3);
+    const result = await runFirestoreTugQL(firestore, resolve("FROM items\nWHERE a = 1"), { reader, maxFetchedRows: 3 });
+    expect(result.rows).toHaveLength(3);
+    await expect(runFirestoreTugQL(firestore, resolve("FROM items\nLIMIT 3\nOFFSET 1"), { reader, maxFetchedRows: 3 }))
+      .rejects.toMatchObject({ code: "query_limit", path: "limit" });
+  });
+
+  it("reads a keyed document through the injected getDoc (ac:key-read-kept)", async () => {
+    const { reader, calls } = fakeReader(0);
+    const result = await runFirestoreTugQL(firestore, resolve("FROM users\nWHERE __key__ = @SneatUserID"), { reader });
+    expect(calls).toEqual({ getDocs: 0, getDoc: 1 });
+    expect(result.rows).toEqual([{ __key__: "u1", name: "Alex" }]);
   });
 });
 
 describe("@dalgo/firestore/tugql read-only by construction", () => {
   it("never names a Firestore write API in tugql.ts or anything it imports", () => {
     const writes = /\b(setDoc|updateDoc|deleteDoc|addDoc|writeBatch|runTransaction)\b/u;
-    const sources: Record<string, string> = { "./tugql.js": tugqlSource, "./path.js": pathSource, "./query.js": querySource };
+    const sources: Record<string, string> = { "./tugql.js": tugqlSource, "./path.js": pathSource, "./query.js": querySource, "./tugql-plan.js": tugqlPlanSource };
     const seen = new Set<string>();
     const visit = (specifier: string): void => {
       if (seen.has(specifier)) return;
@@ -220,6 +306,6 @@ describe("@dalgo/firestore/tugql read-only by construction", () => {
       for (const match of (text ?? "").matchAll(/from\s+"(\.[^"]+)"/gu)) visit(match[1] ?? "");
     };
     visit("./tugql.js");
-    expect([...seen]).toEqual(["./tugql.js", "./path.js", "./query.js"]);
+    expect([...seen]).toEqual(["./tugql.js", "./path.js", "./query.js", "./tugql-plan.js"]);
   });
 });

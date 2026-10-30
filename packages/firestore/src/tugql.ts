@@ -16,17 +16,55 @@ import {
   type StructuredQuery,
   type TugQLResolved,
 } from "@dalgo/core";
-import { doc, getDoc, getDocs, type DocumentSnapshot, type Firestore } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  getDocs,
+  type DocumentReference,
+  type DocumentSnapshot,
+  type Firestore,
+  type Query,
+  type QuerySnapshot,
+} from "firebase/firestore";
 import { firestoreCollectionPath, keyFromDocumentPath } from "./path.js";
 import { compileFirestoreQuery } from "./query.js";
+import { FirestoreTugQLRefusedError, planFirestoreTugQL, tableRelations, TUGQL_KEY_FIELD, type FirestoreTugQLPlan } from "./tugql-plan.js";
 
-/** The reserved TugQL field name of a record's own key (the Firestore document id). */
-export const TUGQL_KEY_FIELD = "__key__" as const;
+export {
+  FirestoreTugQLRefusedError,
+  planFirestoreTugQL,
+  TUGQL_KEY_FIELD,
+  type FirestoreTugQLPlan,
+  type FirestoreTugQLPlanOptions,
+  type FirestoreTugQLRefusalCode,
+} from "./tugql-plan.js";
 
 type Data = Record<string, unknown>;
 
+/**
+ * The Firestore read functions runFirestoreTugQL uses (REQ:read-seam). The
+ * default is the Web SDK's own `getDocs` and `getDoc`; a test can inject a
+ * reader that counts reads, inspects the query, or returns fakes.
+ */
+export interface FirestoreTugQLReader {
+  getDocs(query: Query): Promise<QuerySnapshot>;
+  getDoc(reference: DocumentReference): Promise<DocumentSnapshot>;
+}
+
+const webSDKReader: FirestoreTugQLReader = { getDocs, getDoc };
+
 /** Options of {@link runFirestoreTugQL}; the source mapping is the adapter's own. */
-export type FirestoreTugQLOptions = Omit<RecursiveQueryExecutionOptions, "resolveSource">;
+export interface FirestoreTugQLOptions extends Omit<RecursiveQueryExecutionOptions, "resolveSource"> {
+  /**
+   * Allows a query that cannot run as one Firestore query (an OR, a JOIN, a
+   * subquery, GROUP BY, …) to run as bounded collection scans evaluated in
+   * memory by DALgo-JS. Every scanned document is a billed read. Without it
+   * such a query fails with `in_memory_evaluation` before any read.
+   */
+  readonly allowInMemoryEvaluation?: boolean;
+  /** The read functions; the Firestore Web SDK's by default. */
+  readonly reader?: FirestoreTugQLReader;
+}
 
 /** The tabular result of a TugQL query run against Firestore. */
 export interface FirestoreTugQLResult {
@@ -66,10 +104,17 @@ export function firestoreTugQLSource(relation: RecursiveTugQLRelation): Collecti
 }
 
 /**
- * Runs a resolved TugQL query (from `resolveTugQL` with `schemaless: true`)
- * against Firestore, reads only. Every table relation's parent path is
- * checked before the first read. A query whose only condition is
- * `__key__ = <value>` over a single collection reads that one document.
+ * Runs a resolved TugQL query (from `resolveTugQL` with `schemaless: true`,
+ * parameters bound) against Firestore, reads only. Every table relation's
+ * parent path is checked before the first read. Then the query is planned
+ * ({@link planFirestoreTugQL}):
+ * - a query whose only condition is `__key__ = <value>` reads that one document;
+ * - a single-collection query with an AND of field-to-value comparisons runs
+ *   as one Firestore query carrying its WHERE, ORDER BY and LIMIT;
+ * - any other query fails with `in_memory_evaluation` before any read, unless
+ *   `allowInMemoryEvaluation` is set.
+ * DALgo-JS then applies WHERE, ORDER BY, OFFSET, LIMIT and SELECT to the
+ * documents read. An error of a Firestore read reaches the caller unchanged.
  */
 export async function runFirestoreTugQL(
   firestore: Firestore,
@@ -77,14 +122,23 @@ export async function runFirestoreTugQL(
   options: FirestoreTugQLOptions = {},
 ): Promise<FirestoreTugQLResult> {
   const query = "kind" in resolved ? resolved : resolved.query;
-  const relations = tableRelations(query);
-  for (const relation of relations) firestoreTugQLSource(relation);
+  for (const relation of tableRelations(query)) firestoreTugQLSource(relation);
 
-  const keyed = relations.length === 1 ? keyEquality(query) : undefined;
-  const executor = keyed === undefined ? collectionExecutor(firestore) : documentExecutor(firestore, keyed);
-  const page = await executeRecursiveTugQLQuery(executor, query, { ...options, resolveSource: firestoreTugQLSource });
+  const { allowInMemoryEvaluation = false, reader = webSDKReader, ...execution } = options;
+  const plan = planFirestoreTugQL(query, { ...execution, allowInMemoryEvaluation });
+  if (plan.kind === "refused") throw new FirestoreTugQLRefusedError(plan.code, plan.path, plan.reason);
+  const page = await executeRecursiveTugQLQuery(planExecutor(firestore, reader, plan), query, { ...execution, resolveSource: firestoreTugQLSource });
   const rows = page.records.map((record) => record.data);
   return { columns: outputColumns(query.columns, rows), rows };
+}
+
+function planExecutor(firestore: Firestore, reader: FirestoreTugQLReader, plan: Exclude<FirestoreTugQLPlan, { kind: "refused" }>): QueryExecutor {
+  switch (plan.kind) {
+    case "pushed": return pushedExecutor(firestore, reader, plan);
+    case "key": return documentExecutor(firestore, reader, plan.id);
+    case "empty": return emptyExecutor;
+    case "in-memory": return collectionExecutor(firestore, reader);
+  }
 }
 
 function outputColumns(columns: readonly RecursiveTugQLColumn[] | undefined, rows: readonly Data[]): string[] {
@@ -99,78 +153,52 @@ function outputColumns(columns: readonly RecursiveTugQLColumn[] | undefined, row
   return [...names];
 }
 
-/** Collects every table relation of the query tree, nested queries included. */
-function tableRelations(query: RecursiveTugQLQuery): RecursiveTugQLRelation[] {
-  const found: RecursiveTugQLRelation[] = [];
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (typeof value !== "object" || value === null) return;
-    const node = value as Record<string, unknown>;
-    if (node.kind === "table" && Array.isArray(node.joins)) found.push(node as unknown as RecursiveTugQLRelation);
-    for (const child of Object.values(node)) visit(child);
-  };
-  visit(query);
-  return found;
-}
-
-interface KeyedRead {
-  /** The document id, or undefined when the value can never name a document. */
-  readonly id: string | undefined;
-}
-
-/** Recognizes a WHERE whose only condition is `__key__ = <literal>`. */
-function keyEquality(query: RecursiveTugQLQuery): KeyedRead | undefined {
-  // Only a direct collection scan can be answered by one document read; a
-  // derived FROM (or a join) filters rows the inner query produced.
-  if (query.from.kind !== "table" || query.from.joins.length > 0) return undefined;
-  const where = query.where;
-  if (where?.kind !== "comparison" || where.operator !== "==") return undefined;
-  const names = new Set(["", query.from.alias, query.from.name]);
-  const isKey = (side: typeof where.left): boolean => side.kind === "field"
-    && side.field.field === TUGQL_KEY_FIELD && names.has(side.field.source);
-  const value = isKey(where.left) && where.right.kind === "literal" ? where.right.value
-    : isKey(where.right) && where.left.kind === "literal" ? where.left.value
-      : notKeyed;
-  if (value === notKeyed) return undefined;
-  return { id: validDocumentId(value) ? value : undefined };
-}
-
-const notKeyed = Symbol("not-keyed");
-
-function validDocumentId(value: unknown): value is string {
-  return typeof value === "string" && value !== "" && value !== "." && value !== ".."
-    && !value.includes("/") && !/^__.*__$/u.test(value);
-}
-
 function withKey(snapshot: DocumentSnapshot, key: Key): ExistingRecord<Data> {
   // A real document field literally named __key__ cannot be addressed.
   const data = Object.fromEntries(Object.entries(snapshot.data() ?? {}).filter(([name]) => name !== TUGQL_KEY_FIELD));
   return { key, exists: true, data: { [TUGQL_KEY_FIELD]: snapshot.id, ...data } };
 }
 
-function collectionExecutor(firestore: Firestore): QueryExecutor {
+async function readQuery<T>(reader: FirestoreTugQLReader, firestore: Firestore, structured: StructuredQuery<T>): Promise<QueryPage<T>> {
+  const snapshot = await reader.getDocs(compileFirestoreQuery(firestore, structured).query);
+  const records = snapshot.docs.map((document) => withKey(document, keyFromDocumentPath(document.ref.path)));
+  return { records: records as unknown as readonly ExistingRecord<T>[] };
+}
+
+/** Answers every leaf scan with an unfiltered, bounded collection read (opt-in only). */
+function collectionExecutor(firestore: Firestore, reader: FirestoreTugQLReader): QueryExecutor {
+  return { query: (structured) => readQuery(reader, firestore, structured) };
+}
+
+/**
+ * Answers DALgo-JS's single leaf scan with the pushed Firestore query: the
+ * scan's own source, with the plan's filters, orders and limit.
+ */
+function pushedExecutor(firestore: Firestore, reader: FirestoreTugQLReader, plan: Extract<FirestoreTugQLPlan, { kind: "pushed" }>): QueryExecutor {
   return {
-    async query<T>(structured: StructuredQuery<T>): Promise<QueryPage<T>> {
-      const snapshot = await getDocs(compileFirestoreQuery(firestore, structured).query);
-      const records = snapshot.docs.map((document) => withKey(document, keyFromDocumentPath(document.ref.path)));
-      return { records: records as unknown as readonly ExistingRecord<T>[] };
-    },
+    query: <T>(structured: StructuredQuery<T>) => readQuery(reader, firestore, {
+      source: structured.source,
+      filters: plan.filters,
+      orders: plan.orders,
+      limit: plan.limit,
+    }),
   };
 }
 
 /** Answers the single leaf scan of a key-equality query with one document read. */
-function documentExecutor(firestore: Firestore, keyed: KeyedRead): QueryExecutor {
+function documentExecutor(firestore: Firestore, reader: FirestoreTugQLReader, id: string): QueryExecutor {
   return {
     async query<T>(structured: StructuredQuery<T>): Promise<QueryPage<T>> {
       if (structured.source.kind !== "collection") throw new TypeError("a keyed read needs a collection source");
-      if (keyed.id === undefined) return { records: [] };
-      const path = `${firestoreCollectionPath(structured.source)}/${keyed.id}`;
-      const snapshot = await getDoc(doc(firestore, path));
+      const path = `${firestoreCollectionPath(structured.source)}/${id}`;
+      const snapshot = await reader.getDoc(doc(firestore, path));
       const records = snapshot.exists() ? [withKey(snapshot, keyFromDocumentPath(path))] : [];
       return { records: records as unknown as readonly ExistingRecord<T>[] };
     },
   };
 }
+
+/** Answers the leaf scan of a query no document can match, without a read. */
+const emptyExecutor: QueryExecutor = {
+  query: <T>() => Promise.resolve<QueryPage<T>>({ records: [] }),
+};
