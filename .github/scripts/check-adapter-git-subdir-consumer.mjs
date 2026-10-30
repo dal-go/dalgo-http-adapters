@@ -178,8 +178,10 @@ try {
       "",
     ].join("\n"),
   );
+  // Keep the five Git-prepack providers independent of ClickHouse's future
+  // runtime peer; ClickHouse has strict release-preview packed and real CI gates.
   copyFileSync(
-    join(repository, ".github", "scripts", "adapter-packed-consumer.ts"),
+    join(repository, ".github", "scripts", "adapter-git-subdir-consumer.ts"),
     join(consumer, "src", "consumer.ts"),
   );
   copyFileSync(
