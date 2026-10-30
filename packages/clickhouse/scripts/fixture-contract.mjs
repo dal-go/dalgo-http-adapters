@@ -57,7 +57,7 @@ export function assertExact(result) {
 }
 export const refusedSql = ["INSERT INTO explore.events(id) VALUES (1)", "ALTER TABLE explore.events ADD COLUMN forbidden_write UInt8", "SELECT 1 SETTINGS readonly=0", "SET readonly=0", "SELECT * FROM forbidden.secret"];
 export const slowSql = "SELECT sleepEachRow(0.05) FROM numbers(50)";
-export const lateErrorSql = "SELECT toUInt8(throwIf(number = 2)) AS n FROM numbers(5)";
+export const lateErrorSql = "SELECT toUInt8(sleepEachRow(0.01) + throwIf(number = 100)) AS n FROM numbers(200)";
 const PROFILE_ELEMENTS_SQL = "SELECT setting_name, value, min, max, toString(writability) AS writability, inherit_profile FROM system.settings_profile_elements WHERE profile_name = 'fixture_reader_profile' ORDER BY setting_name FORMAT JSONEachRow";
 const PROFILE_TARGET_SQL = "SELECT name, toString(id) AS id, apply_to_all, apply_to_list, apply_to_except FROM system.settings_profiles WHERE name = 'fixture_reader_profile' FORMAT JSONEachRow";
 const PROFILE_SHOW_SQL = "SHOW CREATE SETTINGS PROFILE fixture_reader_profile FORMAT TabSeparatedRaw";
@@ -129,6 +129,15 @@ export async function prepareLateErrorFixture(serverUrl) {
   return { originalEntries: EXPECTED_POLICY.length, preserved: true, readonlyConst: true, maxBlockSizeConst: 1 };
 }
 export function assertLateFramingEvidence(error, observed) {
+  // Emit only allowlisted facts before any assertion can stop the real proof.
+  // Never serialize the response, exception text, nonce, SQL or credentials.
+  console.error(JSON.stringify({ diagnostic: "clickhouse-late-response",
+    status: Number.isInteger(observed?.status) && observed.status >= 100 && observed.status <= 599 ? observed.status : null,
+    format: observed?.format === "RowBinaryWithNamesAndTypes" ? observed.format : "other-or-missing",
+    tagLength: Number.isSafeInteger(observed?.tagLength) && observed.tagLength >= 0 && observed.tagLength <= 8192 ? observed.tagLength : null,
+    tagValid: observed?.tagValid === true, exceptionCodePresent: observed?.exceptionCodePresent === true,
+    errorCode: ["transport", "response", "framing", "unsupported", "bounds", "permission"].includes(error?.code) ? error.code : "other-or-missing",
+  }));
   assert.equal(error?.code, "framing", "a decoder, transport, format or row-budget refusal is not framing proof");
   assert.equal(observed.status, 200, "fixture must exercise a late HTTP200 failure");
   assert.equal(observed.format, "RowBinaryWithNamesAndTypes");

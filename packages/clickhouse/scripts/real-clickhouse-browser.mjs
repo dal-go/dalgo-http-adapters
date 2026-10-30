@@ -85,7 +85,7 @@ try {
       const url = new URL(value); url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0");
       const response = await fetch(url, init);
       const tag = response.headers.get("x-clickhouse-exception-tag");
-      observed = { status: response.status, format: response.headers.get("x-clickhouse-format"), tagLength: tag?.length, tagValid: /^[a-z]{16}$/.test(tag ?? "") };
+      observed = { status: response.status, format: response.headers.get("x-clickhouse-format"), tagLength: tag?.length, tagValid: /^[a-z]{16}$/.test(tag ?? ""), exceptionCodePresent: response.headers.has("x-clickhouse-exception-code") };
       return response;
     } });
     try { await database.queryOrdinal({ kind: "native", sql }); return { success: true, observed }; }
