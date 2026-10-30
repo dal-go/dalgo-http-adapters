@@ -18,9 +18,54 @@ const bundle = await build({ entryPoints: [new URL("../dist/index.js", import.me
 const javascript = bundle.outputFiles[0]?.text;
 assert.ok(javascript);
 const pageHtml = '<!doctype html><title>ClickHouse ordinal browser proof</title><h1>ClickHouse browser adapter</h1><output id="proof">Running real adapter checks</output><script type="module">import { NativeClickHouseDatabase } from "/adapter.js";window.NativeClickHouseDatabase=NativeClickHouseDatabase;</script>';
+const rootRequests = { received: 0, finished: 0 };
+const increment = (value) => Math.min(value + 1, 1000);
+const mimeKind = (value) => value === null || value === undefined ? "missing" : value.split(";")[0].trim().toLowerCase() === "text/html" ? "html" : "other";
+const networkErrors = new Set(["net::ERR_ABORTED", "net::ERR_CONNECTION_REFUSED", "net::ERR_CONNECTION_RESET", "net::ERR_EMPTY_RESPONSE", "net::ERR_FAILED", "net::ERR_INSUFFICIENT_RESOURCES", "net::ERR_NETWORK_CHANGED", "net::ERR_TIMED_OUT", "net::ERR_CONNECTION_CLOSED", "net::ERR_INVALID_HTTP_RESPONSE", "net::ERR_BLOCKED_BY_CLIENT", "net::ERR_BLOCKED_BY_RESPONSE", "net::ERR_UNSAFE_PORT", "net::ERR_ADDRESS_UNREACHABLE", "net::ERR_NAME_NOT_RESOLVED", "net::ERR_HTTP_RESPONSE_CODE_FAILURE"]);
+/** Initial document only: no query URLs, headers, bodies or raw Playwright
+ * errors are retained. A Node GET discriminates owned HTTP readiness from
+ * Chromium's navigation without replacing the genuine browser navigation. */
+async function navigateInitialDocument(page, browser) {
+  const facts = { stage: "node-probe", nodeStatus: null, nodeMime: "missing", nodeBytes: 0, nodeBodyMatches: false, browserRequests: 0, browserResponses: 0, browserStatus: null, browserMime: "missing", requestFailed: false, networkError: "none", pageCrashed: false, download: false, browserDisconnected: false, gotoSucceeded: false };
+  const initialDocument = (request) => request.isNavigationRequest() && request.url() === `${origin}/`;
+  const onRequest = (request) => { if (initialDocument(request)) facts.browserRequests = increment(facts.browserRequests); };
+  const onResponse = (response) => { if (initialDocument(response.request())) { facts.browserResponses = increment(facts.browserResponses); facts.browserStatus = response.status(); facts.browserMime = mimeKind(response.headers()["content-type"]); } };
+  const onRequestFailed = (request) => { if (initialDocument(request)) { facts.requestFailed = true; const error = request.failure()?.errorText; facts.networkError = error === undefined ? "missing" : networkErrors.has(error) ? error : "other"; } };
+  const onCrash = () => { facts.pageCrashed = true; };
+  const onDownload = () => { facts.download = true; };
+  const onDisconnected = () => { facts.browserDisconnected = true; };
+  page.on("request", onRequest); page.on("response", onResponse); page.on("requestfailed", onRequestFailed); page.on("crash", onCrash); page.on("download", onDownload); browser.on("disconnected", onDisconnected);
+  const diagnostic = () => console.log(JSON.stringify({ diagnostic: "clickhouse-initial-document", ...facts, serverRootRequests: rootRequests.received, serverRootFinished: rootRequests.finished }));
+  try {
+    const response = await fetch(origin, { redirect: "error", signal: AbortSignal.timeout(2000) });
+    facts.nodeStatus = response.status; facts.nodeMime = mimeKind(response.headers.get("content-type"));
+    if (facts.nodeStatus !== 200 || facts.nodeMime !== "html") { await response.body?.cancel(); throw new Error("Owned initial document HTTP probe failed."); }
+    const expected = Buffer.from(pageHtml); const reader = response.body?.getReader(); const chunks = [];
+    assert.ok(reader, "Owned initial document body is missing.");
+    try {
+      while (true) {
+        const next = await reader.read(); if (next.done) break;
+        facts.nodeBytes = Math.min(facts.nodeBytes + next.value.byteLength, 65_536);
+        if (facts.nodeBytes > expected.byteLength) { await reader.cancel(); throw new Error("Owned initial document exceeded its exact body bound."); }
+        chunks.push(next.value);
+      }
+    } finally { reader.releaseLock(); }
+    facts.nodeBodyMatches = Buffer.concat(chunks).equals(expected);
+    assert.ok(facts.nodeBodyMatches, "Owned initial document does not match the fixed HTML.");
+    facts.stage = "browser-goto";
+    await page.goto(origin);
+    facts.gotoSucceeded = true; facts.stage = "complete"; diagnostic();
+  } catch {
+    diagnostic();
+    throw new Error("Real initial document navigation failed; inspect the bounded navigation diagnostic.");
+  } finally {
+    page.off("request", onRequest); page.off("response", onResponse); page.off("requestfailed", onRequestFailed); page.off("crash", onCrash); page.off("download", onDownload); browser.off("disconnected", onDisconnected);
+  }
+}
 function startServer(listenPort) {
   return new Promise((resolve, reject) => {
     const server = createServer((request, response) => {
+      if (listenPort === port && request.url === "/") { rootRequests.received = increment(rootRequests.received); response.once("finish", () => { rootRequests.finished = increment(rootRequests.finished); }); }
       if (request.url === "/adapter.js") { response.writeHead(200, { "content-type": "text/javascript" }); response.end(javascript); }
       else { response.writeHead(200, { "content-type": "text/html" }); response.end(pageHtml); }
     });
@@ -36,7 +81,7 @@ try {
   deniedServer = await startServer(0);
   browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
   const page = await browser.newPage();
-  await page.goto(origin);
+  await navigateInitialDocument(page, browser);
   await page.waitForFunction(() => typeof window.NativeClickHouseDatabase === "function");
   const browserOptions = { ...nativeOptions(serverUrl), headers: undefined };
   const readerProbes = await page.evaluate(async ({ options, sql }) => {
