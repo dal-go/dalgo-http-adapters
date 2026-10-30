@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, subprocess, tempfile, json, shutil, hashlib, base64, tarfile, io
 workflow = (Path(__file__).resolve().parents[1] / 'workflows/release.yml').read_text()
-native_packages = ['adapter-runtime', 'couchdb', 'libsql', 'postgrest', 'typesense']
+native_packages = ['adapter-runtime', 'clickhouse', 'couchdb', 'libsql', 'postgrest', 'typesense']
 public_packages = native_packages + ['firestore', 'indexeddb', 'bigquery', 'http', 'ovdb', 'sqlite-sql', 'sqlite-wasm', 'd1']
 package_names = {package: '@dalgo/dalgo2'+package if package in native_packages[1:] else '@dalgo/'+package for package in public_packages}
 native_old_scope_cases = {f'native_old_scope_{package}': package for package in native_packages[1:]}
@@ -383,7 +383,7 @@ with tempfile.TemporaryDirectory(prefix='adapters-tag-recovery-') as directory:
     (root/'npm').write_text('''#!/usr/bin/env bash
 set -euo pipefail
 name="@dalgo/$PACKAGE"
-case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;; esac
+case "$PACKAGE" in clickhouse|couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;; esac
 version=$VERSION
 source_sha=$MOCK_SHA
 [[ "$CASE" != wrong_name ]] || name=@dalgo/other
@@ -399,7 +399,7 @@ elif [[ "$1" == show ]]; then
   version=$VERSION
   [[ "$CASE" != wrong_manifest ]] || version=9.9.9
   name="@dalgo/$PACKAGE"
-  case "$PACKAGE" in couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;; esac
+  case "$PACKAGE" in clickhouse|couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;; esac
   printf '{"name":"%s","version":"%s"}\\n' "$name" "$version"
 else exit 99
 fi

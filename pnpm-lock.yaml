@@ -161,14 +161,22 @@ importers:
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
 
   packages/clickhouse:
-    dependencies:
-      '@dal-go/dalgo':
-        specifier: npm:@dalgo/core@0.8.1
-        version: '@dalgo/core@0.8.1'
     devDependencies:
+      '@dalgo/adapter-runtime':
+        specifier: workspace:^
+        version: link:../adapter-runtime
+      '@dalgo/core':
+        specifier: 0.8.1
+        version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
+      '@playwright/test':
+        specifier: 1.64.1
+        version: 1.64.1
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       eslint:
         specifier: 10.11.0
         version: 10.11.0

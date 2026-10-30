@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - adapter-runtime
+          - clickhouse
           - couchdb
           - libsql
           - postgrest
@@ -70,7 +71,7 @@ jobs:
           set -euo pipefail
           case "$PACKAGE" in
             adapter-runtime) name='@dalgo/adapter-runtime' ;;
-            couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;;
+            clickhouse|couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;;
             firestore|indexeddb|bigquery) name="@dalgo/$PACKAGE" ;;
             http|ovdb) name="@dalgo/$PACKAGE" ;;
             sqlite-sql|sqlite-wasm|d1) name="@dalgo/$PACKAGE" ;;

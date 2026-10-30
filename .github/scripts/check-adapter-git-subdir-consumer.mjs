@@ -106,6 +106,10 @@ function materializeCandidate() {
   }
   const identity = ["-c", "user.name=adapter-git-subdir-gate", "-c", "user.email=gate@invalid"];
   run("git", ["init", "-q", "-b", "main"], { cwd: source });
+  // Local upload-pack must not size its thread pool from the host CPU count.
+  // These settings belong only to this disposable synthetic repository.
+  run("git", ["config", "--local", "pack.threads", "1"], { cwd: source });
+  run("git", ["config", "--local", "index.threads", "1"], { cwd: source });
   run("git", [...identity, "add", "-A"], { cwd: source });
   run("git", [...identity, "commit", "-q", "-m", "gated candidate"], { cwd: source });
   const sha = run("git", ["rev-parse", "HEAD"], { cwd: source }).trim();
@@ -178,8 +182,10 @@ try {
       "",
     ].join("\n"),
   );
+  // Keep the five Git-prepack providers independent of ClickHouse's future
+  // runtime peer; ClickHouse has strict release-preview packed and real CI gates.
   copyFileSync(
-    join(repository, ".github", "scripts", "adapter-packed-consumer.ts"),
+    join(repository, ".github", "scripts", "adapter-git-subdir-consumer.ts"),
     join(consumer, "src", "consumer.ts"),
   );
   copyFileSync(
@@ -207,7 +213,7 @@ try {
   const pnpmVersion = run("pnpm", ["--version"]).trim();
   // No local tarball, no `file:`/`link:` specifier, no `--ignore-scripts`, no
   // blanket build approval: the Git fetch must run the reviewed prepack steps.
-  run("pnpm", ["install", "--no-frozen-lockfile", "--registry=https://registry.npmjs.org"], { cwd: consumer });
+  run("pnpm", ["install", "--no-frozen-lockfile", "--child-concurrency=1", "--network-concurrency=2", "--registry=https://registry.npmjs.org"], { cwd: consumer });
 
   const lockfile = readFileSync(join(consumer, "pnpm-lock.yaml"), "utf8");
   assert.ok(!/^\s*(?:specifier|version):\s*(?:link|file):/mu.test(lockfile), "consumer lockfile uses a local link");
@@ -273,8 +279,10 @@ try {
         `${adapter.name} depends on the legacy @dal-go/dalgo package in ${section}`,
       );
     }
-    assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.7.4 <0.9.0");
-    if (adapter.directory !== "packages/adapter-runtime") {
+    if (adapter.directory === "packages/adapter-runtime") {
+      assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.8.1 <0.9.0");
+    } else {
+      assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.7.4 <0.9.0");
       assert.equal(manifest.peerDependencies?.["@dalgo/adapter-runtime"], ">=0.1.0 <1.0.0");
     }
     for (const file of walk(installedRoot)) {

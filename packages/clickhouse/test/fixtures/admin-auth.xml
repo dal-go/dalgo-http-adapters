@@ -1,0 +1,11 @@
+<!-- TS/browser fixture only. Parent generates a fresh synthetic secret and
+     supplies this environment variable to both ClickHouse and the Node runner.
+     Mount under users.d; never mount over the byte-pinned Go fixture files.
+     The secret value must never enter the browser bundle/page/config. -->
+<clickhouse>
+    <users>
+        <default>
+            <password from_env="CLICKHOUSE_FIXTURE_ADMIN_PASSWORD"/>
+        </default>
+    </users>
+</clickhouse>

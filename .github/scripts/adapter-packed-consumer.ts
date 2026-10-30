@@ -40,8 +40,16 @@ import {
   type TypesenseQuery,
 } from "@dalgo/dalgo2typesense";
 import {
+  ClickHouseDatabase,
+  NativeClickHouseDatabase,
+  type NativeClickHouseDatabaseOptions,
+} from "@dalgo/dalgo2clickhouse";
+import {
   isCancellableQueryExecutor,
   type CancellableQueryExecutor,
+  isOrdinalQueryExecutor,
+  type OrdinalQueryExecutor,
+  type OrdinalQueryResult,
 } from "@dalgo/adapter-runtime";
 import {
   collection,
@@ -54,6 +62,20 @@ import {
 } from "@dalgo/core";
 
 declare const signal: AbortSignal;
+
+const clickhouseOptions: NativeClickHouseDatabaseOptions = {
+  serverUrl: "https://clickhouse.example.test",
+  tables: { items: { database: "explore", table: "items", columns: { id: "id" } } },
+};
+const clickhouse = new NativeClickHouseDatabase(clickhouseOptions);
+const clickhouseAlias: typeof NativeClickHouseDatabase = ClickHouseDatabase;
+const clickhouseExecutor: OrdinalQueryExecutor = clickhouse;
+const clickhouseResult: Promise<OrdinalQueryResult> = clickhouseExecutor.queryOrdinal({
+  kind: "structured",
+  query: { source: { kind: "collection", name: "items" }, filters: [], orders: [], limit: 1 },
+  columns: [{ expression: { kind: "field", field: { source: "items", field: "id" } }, as: "id" }],
+}, signal);
+void [clickhouseAlias, clickhouseResult, isOrdinalQueryExecutor(clickhouse)];
 
 const postgrestOptions: PostgrestDatabaseOptions = {
   baseUrl: "https://api.example.test/rest/v1",

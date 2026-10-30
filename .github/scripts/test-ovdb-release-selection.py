@@ -7,7 +7,7 @@ start = workflow.index('          source_sha=$(git rev-parse HEAD)')
 # Exact package-loop indentation excludes nested report and metadata loops.
 end = workflow.index('\n          done\n', start) + len('\n          done')
 shell = 'set -euo pipefail\n' + '\n'.join(line[10:] for line in workflow[start:end].splitlines()) + '\n'
-loop = 'for package in adapter-runtime couchdb libsql postgrest typesense firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do'
+loop = 'for package in adapter-runtime clickhouse couchdb libsql postgrest typesense firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do'
 assert loop in shell, 'release publish loop changed; update this selection test'
 shell = shell.replace(loop, 'for package in "$SELECTED"; do')
 sha = 'a'*40
