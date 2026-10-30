@@ -1,10 +1,10 @@
-# @dal-go/dalgo2typesense
+# @dalgo/dalgo2typesense
 
 ## 0.2.0
 
 ### Minor Changes
 
-- 41dc376: Add `@dal-go/dalgo2typesense`, a bounded read-only native Typesense adapter for
+- 41dc376: Add `@dalgo/dalgo2typesense`, a bounded read-only native Typesense adapter for
   the modern `@dalgo/core` contracts. It reads existing documents (string ids,
   numerals, arrays, explicit nulls and honest absences preserved), supports an
   exact positive structured query subset with a full-prefix verifier, typed native

@@ -4,7 +4,7 @@ import { postgrestFieldKey } from "./fields.js";
 import { isUnsafeNativeNumber, parseLosslessJson } from "./json.js";
 
 /** Stable, adapter-owned cursor identity. A cursor from another adapter is foreign. */
-export const POSTGREST_CURSOR_ADAPTER = "@dal-go/dalgo2postgrest";
+export const POSTGREST_CURSOR_ADAPTER = "@dalgo/dalgo2postgrest";
 export const POSTGREST_CURSOR_VERSION = 1;
 
 export type PostgrestCursorValue = string | number | boolean | null;

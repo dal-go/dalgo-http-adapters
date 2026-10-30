@@ -300,7 +300,7 @@ describe("NativeLibSQLDatabase", () => {
     ], []);
     const description = await db.describe();
     expect(description).toMatchObject({
-      adapter: "@dal-go/dalgo2libsql",
+      adapter: "@dalgo/dalgo2libsql",
       storage: "native-rows",
       readOnly: true,
       connection: { ok: true, status: "connected", tableCount: 2 },

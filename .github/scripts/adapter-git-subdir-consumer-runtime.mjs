@@ -6,10 +6,10 @@ import assert from "node:assert/strict";
 const [core, runtime, couchdb, postgrest, libs, typesense] = await Promise.all([
   import("@dalgo/core"),
   import("@dalgo/adapter-runtime"),
-  import("@dal-go/dalgo2couchdb"),
-  import("@dal-go/dalgo2postgrest"),
-  import("@dal-go/dalgo2libsql"),
-  import("@dal-go/dalgo2typesense"),
+  import("@dalgo/dalgo2couchdb"),
+  import("@dalgo/dalgo2postgrest"),
+  import("@dalgo/dalgo2libsql"),
+  import("@dalgo/dalgo2typesense"),
 ]);
 
 assert.equal(typeof core.collection, "function");

@@ -40,10 +40,10 @@ const CORE_INTEGRITY = "sha512-stXi8PPeR3G7AxCairfJEMDGd4KuiU5eyipPDgibCEVlRD435
 const TYPESCRIPT_VERSION = "6.0.3";
 const ADAPTERS = [
   { name: "@dalgo/adapter-runtime", directory: "packages/adapter-runtime" },
-  { name: "@dal-go/dalgo2couchdb", directory: "packages/couchdb" },
-  { name: "@dal-go/dalgo2libsql", directory: "packages/libsql" },
-  { name: "@dal-go/dalgo2postgrest", directory: "packages/postgrest" },
-  { name: "@dal-go/dalgo2typesense", directory: "packages/typesense" },
+  { name: "@dalgo/dalgo2couchdb", directory: "packages/couchdb" },
+  { name: "@dalgo/dalgo2libsql", directory: "packages/libsql" },
+  { name: "@dalgo/dalgo2postgrest", directory: "packages/postgrest" },
+  { name: "@dalgo/dalgo2typesense", directory: "packages/typesense" },
 ];
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
 

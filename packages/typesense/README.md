@@ -1,4 +1,4 @@
-# @dal-go/dalgo2typesense
+# @dalgo/dalgo2typesense
 
 A bounded, read-only native [Typesense](https://typesense.org) adapter for the
 modern [`@dalgo/core`](https://github.com/dal-go/dalgo-js) TypeScript contracts.
@@ -16,7 +16,7 @@ fixture uses the GPL-3.0 Typesense server only as a disposable test dependency.
 
 ```ts
 import { collection } from "@dalgo/core";
-import { TypesenseDatabase } from "@dal-go/dalgo2typesense";
+import { TypesenseDatabase } from "@dalgo/dalgo2typesense";
 
 // One per-physical-request callback. A pure `documents:search` credential can
 // search and read exact ids; a separately scoped read-only credential with

@@ -1,7 +1,7 @@
 import { LibSQLCursorError } from "./errors.js";
 
 /** Stable adapter identity: a cursor minted by another adapter or instance is foreign. */
-export const LIBSQL_CURSOR_ADAPTER = "@dal-go/dalgo2libsql";
+export const LIBSQL_CURSOR_ADAPTER = "@dalgo/dalgo2libsql";
 export const LIBSQL_CURSOR_VERSION = 1;
 
 export type LibSQLCursorPosition = string | number | null;

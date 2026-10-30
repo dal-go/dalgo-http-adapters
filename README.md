@@ -8,6 +8,7 @@ The reference implementation is [`@dalgo/firestore`](packages/firestore). Every 
 
 | Adapter | Local package |
 |---|---|
+| Shared adapter runtime | [`@dalgo/adapter-runtime`](packages/adapter-runtime) |
 | Algolia | [`@dal-go/dalgo2algolia`](packages/algolia) |
 | Appwrite | [`@dal-go/dalgo2appwrite`](packages/appwrite) |
 | Azure Table Storage | [`@dal-go/dalgo2azure-table`](packages/azure-table) |
@@ -15,8 +16,9 @@ The reference implementation is [`@dalgo/firestore`](packages/firestore). Every 
 | ClickHouse | [`@dal-go/dalgo2clickhouse`](packages/clickhouse) |
 | Cosmos DB | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) |
 | Couchbase | [`@dal-go/dalgo2couchbase`](packages/couchbase) |
-| CouchDB | [`@dal-go/dalgo2couchdb`](packages/couchdb) |
+| CouchDB | [`@dalgo/dalgo2couchdb`](packages/couchdb) |
 | Databricks | [`@dal-go/dalgo2databricks`](packages/databricks) |
+| Cloudflare D1 | [`@dalgo/d1`](packages/d1) |
 | Google Cloud Datastore | [`@dal-go/dalgo2datastore`](packages/datastore) |
 | DynamoDB | [`@dal-go/dalgo2dynamodb`](packages/dynamodb) |
 | Elasticsearch | [`@dal-go/dalgo2elasticsearch`](packages/elasticsearch) |
@@ -25,7 +27,7 @@ The reference implementation is [`@dalgo/firestore`](packages/firestore). Every 
 | IndexedDB | [`@dalgo/indexeddb`](packages/indexeddb) |
 | InfluxDB | [`@dal-go/dalgo2influxdb`](packages/influxdb) |
 | Azure Data Explorer / Kusto | [`@dal-go/dalgo2kusto`](packages/kusto) |
-| libSQL | [`@dal-go/dalgo2libsql`](packages/libsql) |
+| libSQL | [`@dalgo/dalgo2libsql`](packages/libsql) |
 | Neo4j | [`@dal-go/dalgo2neo4j`](packages/neo4j) |
 | Amazon Neptune | [`@dal-go/dalgo2neptune`](packages/neptune) |
 | OpenSearch | [`@dal-go/dalgo2opensearch`](packages/opensearch) |
@@ -33,14 +35,17 @@ The reference implementation is [`@dalgo/firestore`](packages/firestore). Every 
 | OpenVaultDB | [`@dalgo/ovdb`](packages/ovdb) |
 | Pinecone | [`@dal-go/dalgo2pinecone`](packages/pinecone) |
 | PocketBase | [`@dal-go/dalgo2pocketbase`](packages/pocketbase) |
-| PostgREST | [`@dal-go/dalgo2postgrest`](packages/postgrest) |
+| PostgREST | [`@dalgo/dalgo2postgrest`](packages/postgrest) |
 | Qdrant | [`@dal-go/dalgo2qdrant`](packages/qdrant) |
 | AWS RDS Data API | [`@dal-go/dalgo2rds-data`](packages/rds-data) |
 | Redshift | [`@dal-go/dalgo2redshift`](packages/redshift) |
 | Snowflake | [`@dal-go/dalgo2snowflake`](packages/snowflake) |
 | Solr | [`@dal-go/dalgo2solr`](packages/solr) |
+| SQLite SQL | [`@dalgo/sqlite-sql`](packages/sqlite-sql) |
+| SQLite WASM | [`@dalgo/sqlite-wasm`](packages/sqlite-wasm) |
 | Google Cloud Spanner | [`@dal-go/dalgo2spanner`](packages/spanner) |
 | Amazon Timestream | [`@dal-go/dalgo2timestream`](packages/timestream) |
+| Typesense | [`@dalgo/dalgo2typesense`](packages/typesense) |
 
 Import revisions and the completed standalone-repository cutover are recorded in [LEGACY_REPOSITORIES.md](LEGACY_REPOSITORIES.md).
 
@@ -69,10 +74,11 @@ temporary Git repository, so each fetched workspace prepares
 `DALGO_ADAPTER_GIT_SUBDIR_REF=github:dal-go/dalgo-http-adapters#<sha>` points the
 same assertions at a pushed commit.
 
-Firestore, IndexedDB and BigQuery are configured as public packages under
-the `@dalgo` npm scope. Public manifests and source versions do not establish
-that a version is available on npm. The remaining adapters are private workspace
-packages.
+The shared adapter runtime, CouchDB, libSQL, PostgREST, Typesense, Firestore,
+IndexedDB, BigQuery, HTTP, OpenVaultDB, SQLite SQL, SQLite WASM and D1 are
+configured as public packages under the `@dalgo` npm scope. Public manifests
+and source versions do not establish that a version is available on npm.
+The remaining adapters are private workspace packages.
 
 Package changes are versioned and published independently with Changesets.
 See [the release procedure](docs/RELEASING.md). The existing
@@ -119,8 +125,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | 16 | Google Firestore | Browser-ready | Yes | Yes | Yes | Yes | Structured query | Count/sum/average | Batched writes / transactions | Realtime listeners | Firebase Auth and Security Rules are designed for public clients. | Implemented: [`@dalgo/firestore`](packages/firestore). |
 | 17 | Firebase Realtime Database REST/Web SDK | Browser-ready | Yes | Yes | Yes | Yes | Key/range query | No server aggregation | Atomic updates / client transaction retries | SSE/WebSocket | Firebase Auth and Security Rules; browser-first. | `dalgo2firebase-rtdb-js`; tree/path semantics and limited query composition. |
 | 18 | Apache CouchDB HTTP | Browser-ready | Yes | Yes | Yes | Yes | Mango / views | Views | Per-document MVCC, bulk is not ACID | `_changes` feeds | CORS configurable; use scoped users/proxy as appropriate. | `dalgo2couchdb-js`; expose revision/conflict semantics. |
-| 19 | PostgREST protocol / Supabase | Browser-ready | Yes | Yes | Yes | Yes | URL filters / embedding / RPC | Yes | One request; multi-step logic via PostgreSQL functions | Provider-specific realtime is separate | CORS plus JWT/RLS enables public clients when policies are correct. | [`@dal-go/dalgo2postgrest`](packages/postgrest), not a Supabase-only adapter. |
-| 20 | libSQL protocol / Turso | HTTP-capable | Yes | Yes | Yes | Yes | SQL | Yes | Hrana batches and batons; DALgo callback transactions unsupported | Replication/watch capabilities vary | Hrana v3 uses HTTP, but broad database tokens are not browser-safe; use a trusted runtime or narrowly scoped token broker. Local tests prove only a commit-pinned libSQL server, not hosted Turso CORS or provisioning. | Implemented: [`@dal-go/dalgo2libsql`](packages/libsql), a provider-neutral Hrana v3 adapter with a bounded read-only native-table facade and discovery, rather than a Turso-only wrapper. |
+| 19 | PostgREST protocol / Supabase | Browser-ready | Yes | Yes | Yes | Yes | URL filters / embedding / RPC | Yes | One request; multi-step logic via PostgreSQL functions | Provider-specific realtime is separate | CORS plus JWT/RLS enables public clients when policies are correct. | [`@dalgo/dalgo2postgrest`](packages/postgrest), not a Supabase-only adapter. |
+| 20 | libSQL protocol / Turso | HTTP-capable | Yes | Yes | Yes | Yes | SQL | Yes | Hrana batches and batons; DALgo callback transactions unsupported | Replication/watch capabilities vary | Hrana v3 uses HTTP, but broad database tokens are not browser-safe; use a trusted runtime or narrowly scoped token broker. Local tests prove only a commit-pinned libSQL server, not hosted Turso CORS or provisioning. | Implemented: [`@dalgo/dalgo2libsql`](packages/libsql), a provider-neutral Hrana v3 adapter with a bounded read-only native-table facade and discovery, rather than a Turso-only wrapper. |
 | 21 | Qdrant REST | HTTP-capable | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Vector/filter search | Vector/search aggregation features | No DALgo-equivalent transactions | Updates/streaming are not general CDC | CORS may be deployment-specific and API keys normally require a trusted runtime or proxy. | Implemented: [`@dal-go/dalgo2qdrant`](packages/qdrant), with explicit vector search and no fake conditional-write semantics. |
 | 22 | Pinecone data API | HTTP-capable | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Vector/filter search | Limited | No | No generic CDC | API keys are server credentials; use a trusted runtime or proxy. | Implemented: [`@dal-go/dalgo2pinecone`](packages/pinecone), with explicit collection-to-namespace isolation. |
 | 23 | Algolia Search/Records APIs | Browser-ready for search; trusted-runtime writes | Yes | Upsert only; atomic insert unsupported | Atomic update unsupported | Yes | Search/filter | Facets | No | Async indexing task receipts, not CDC | Restricted search-only keys are browser-safe; writes require an explicit trusted mode and a write-capable key. | Implemented: [`@dal-go/dalgo2algolia`](packages/algolia), with separate DSN read and write hosts. |
@@ -222,8 +228,8 @@ An official SDK using HTTP internally does not by itself make a product browser-
 | [`@dal-go/dalgo2opensearch`](packages/opensearch) | Implemented bounded provider-neutral OpenSearch REST CRUD/query adapter with direct-index and string-ID contracts; AWS SigV4 signing remains an injected trusted-runtime responsibility. |
 | [`@dal-go/dalgo2redshift`](packages/redshift) | Implemented bounded read/query adapter over the asynchronous Redshift Data API with explicit table/key/projection mappings; writes and DALgo callback transactions remain unsupported. |
 | [`@dal-go/dalgo2cosmosdb`](packages/cosmosdb) | Implemented bounded, partition-scoped Cosmos DB for NoSQL REST CRUD/query adapter with opaque continuation cursors and an explicit ephemeral-token/trusted-proxy authentication boundary. |
-| [`@dal-go/dalgo2libsql`](packages/libsql) | Implemented provider-neutral CRUD/query adapter over the libSQL Hrana v3 HTTP pipeline plus a read-only native-table facade, bounded schema discovery, cancellation, opaque query-bound cursors and explicit table/field allowlists; DALgo callback transactions are not claimed and local Hrana fixtures do not prove hosted Turso. |
-| [`@dal-go/dalgo2postgrest`](packages/postgrest) | Implemented bounded top-level CRUD/query adapter for the provider-neutral PostgREST protocol; callback transactions, cursors, embedding, and RPC remain explicitly unsupported. |
+| [`@dalgo/dalgo2libsql`](packages/libsql) | Implemented provider-neutral CRUD/query adapter over the libSQL Hrana v3 HTTP pipeline plus a read-only native-table facade, bounded schema discovery, cancellation, opaque query-bound cursors and explicit table/field allowlists; DALgo callback transactions are not claimed and local Hrana fixtures do not prove hosted Turso. |
+| [`@dalgo/dalgo2postgrest`](packages/postgrest) | Implemented bounded top-level CRUD/query adapter for the provider-neutral PostgREST protocol; callback transactions, cursors, embedding, and RPC remain explicitly unsupported. |
 | [`@dal-go/dalgo2qdrant`](packages/qdrant) | Implemented bounded point get/upsert/delete, filtered reads, and explicit vector search over Qdrant REST; atomic insert/update, transactions, generic ordering, and DALgo cursors remain explicitly unsupported. |
 | [`@dal-go/dalgo2appwrite`](packages/appwrite) | Implemented bounded TablesDB row CRUD/query with current JSON query encoding, explicit browser-session and trusted-server credential modes, and no claim of DALgo callback-transaction support. |
 | [`@dal-go/dalgo2algolia`](packages/algolia) | Implemented bounded object reads/search plus explicit trusted-runtime upsert/delete; atomic conditional writes, DALgo cursors, generic ordering, nesting, and transactions remain unsupported. |

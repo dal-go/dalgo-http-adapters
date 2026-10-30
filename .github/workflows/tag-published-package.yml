@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           case "$PACKAGE" in
             adapter-runtime) name='@dalgo/adapter-runtime' ;;
-            couchdb|libsql|postgrest|typesense) name="@dal-go/dalgo2$PACKAGE" ;;
+            couchdb|libsql|postgrest|typesense) name="@dalgo/dalgo2$PACKAGE" ;;
             firestore|indexeddb|bigquery) name="@dalgo/$PACKAGE" ;;
             http|ovdb) name="@dalgo/$PACKAGE" ;;
             sqlite-sql|sqlite-wasm|d1) name="@dalgo/$PACKAGE" ;;

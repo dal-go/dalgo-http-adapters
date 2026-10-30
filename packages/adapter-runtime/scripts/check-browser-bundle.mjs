@@ -11,8 +11,8 @@ const runtimeDist = join(packageRoot, "dist", "index.js");
 
 const entries = [
   ["@dalgo/adapter-runtime", runtimeEntry],
-  ["@dal-go/dalgo2couchdb", join(packagesRoot, "couchdb", "src", "index.ts")],
-  ["@dal-go/dalgo2postgrest", join(packagesRoot, "postgrest", "src", "index.ts")],
+  ["@dalgo/dalgo2couchdb", join(packagesRoot, "couchdb", "src", "index.ts")],
+  ["@dalgo/dalgo2postgrest", join(packagesRoot, "postgrest", "src", "index.ts")],
 ];
 const allEntries = [...entries];
 for (const [name, entryPoint] of entries) {

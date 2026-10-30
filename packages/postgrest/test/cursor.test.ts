@@ -245,7 +245,7 @@ describe("PostgrestDatabase queryWithSignal cursor", () => {
   it("refuses a crafted cursor containing a high-precision decimal as malformed", async () => {
     const { database: db, fetch } = database();
     const payload = Buffer.from(
-      "{\"adapter\":\"@dal-go/dalgo2postgrest\",\"version\":1,"
+      "{\"adapter\":\"@dalgo/dalgo2postgrest\",\"version\":1,"
       + "\"endpoint\":\"https://api.example.com/rest/v1/\","
       + "\"collection\":\"items\",\"relation\":\"items\",\"idColumn\":\"id\",\"select\":\"*\","
       + "\"filters\":[],\"orders\":[{\"field\":\"score\",\"direction\":\"asc\"}],"
@@ -284,7 +284,7 @@ describe("PostgrestDatabase queryWithSignal cursor", () => {
     const { database: db, fetch } = database();
     // Written as raw JSON text: a JS literal would already be rounded.
     const payload = Buffer.from(
-      "{\"adapter\":\"@dal-go/dalgo2postgrest\",\"version\":1,"
+      "{\"adapter\":\"@dalgo/dalgo2postgrest\",\"version\":1,"
       + "\"endpoint\":\"https://api.example.com/rest/v1/\","
       + "\"collection\":\"items\",\"relation\":\"items\",\"idColumn\":\"id\",\"select\":\"*\","
       + "\"filters\":[],\"orders\":[{\"field\":\"id\",\"direction\":\"asc\"}],"

@@ -1,5 +1,5 @@
 {
-  "name": "@dal-go/dalgo2typesense",
+  "name": "@dalgo/dalgo2typesense",
   "version": "0.2.0",
   "description": "Bounded read-only native Typesense HTTP adapter for DALgo TypeScript",
   "type": "module",
@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "build:deps": "pnpm --filter \"@dal-go/dalgo2typesense...\" run build",
+    "build:deps": "pnpm --filter \"@dalgo/dalgo2typesense...\" run build",
     "check": "eslint . && vitest run && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.build.json && tsc -p tsconfig.examples.json",
     "lint": "eslint .",
     "prepack": "npm --prefix ../adapter-runtime run build && npm run build",

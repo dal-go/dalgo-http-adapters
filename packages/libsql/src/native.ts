@@ -309,7 +309,7 @@ export class NativeLibSQLDatabase implements Database {
     const discovery = await this.discover(signal);
     const connection = this.connectionStatus(discovery);
     return {
-      adapter: "@dal-go/dalgo2libsql",
+      adapter: "@dalgo/dalgo2libsql",
       storage: "native-rows",
       readOnly: true,
       endpoint: this.#transport.origin,

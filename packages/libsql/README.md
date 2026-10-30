@@ -1,6 +1,6 @@
 # DALgo adapter for libSQL HTTP
 
-`@dal-go/dalgo2libsql` reads and writes existing SQLite/libSQL tables through
+`@dalgo/dalgo2libsql` reads and writes existing SQLite/libSQL tables through
 the JSON Hrana **v3** `POST /v3/pipeline` protocol. It uses only `fetch` and
 never creates a DALgo table, `__dalgo_*` envelope or hosted libSQL/Turso
 resource.
@@ -36,7 +36,7 @@ subdirectory install works without a prebuilt workspace `dist`.
 
 ```ts
 import { collection } from "@dalgo/core";
-import { LibSQLDatabase } from "@dal-go/dalgo2libsql";
+import { LibSQLDatabase } from "@dalgo/dalgo2libsql";
 
 const db = new LibSQLDatabase({
   serverUrl: "https://db.example.com",
@@ -71,7 +71,7 @@ object property; every other simple identifier keeps its exact spelling.
 ## Read-only native facade
 
 ```ts
-import { NativeLibSQLDatabase } from "@dal-go/dalgo2libsql";
+import { NativeLibSQLDatabase } from "@dalgo/dalgo2libsql";
 
 const db = new NativeLibSQLDatabase({
   serverUrl: "https://db.example.com",
@@ -259,16 +259,16 @@ separately from the native facade's own no-I/O mutation refusal.
 
 ## Verification
 
-- `pnpm --filter @dal-go/dalgo2libsql check`: lint, unit tests, production build
+- `pnpm --filter @dalgo/dalgo2libsql check`: lint, unit tests, production build
   and strict example/typecheck. No network or Docker.
-- `pnpm --filter @dal-go/dalgo2libsql test:real`: builds the workspace
+- `pnpm --filter @dalgo/dalgo2libsql test:real`: builds the workspace
   dependency outputs first (so it works from a clean checkout), then starts its
   own commit-pinned libSQL container on a random loopback port with ephemeral
   keys, seeds via the writer token, proves the reader write probe is 403, runs
   the adapter against real Hrana, and removes **and verifies** its own container
   plus the exact anonymous data volumes recorded from that container before
   deletion. A remaining owned resource fails the suite.
-- `pnpm --filter @dal-go/dalgo2libsql test:browser`: the same fixture plus a
+- `pnpm --filter @dalgo/dalgo2libsql test:browser`: the same fixture plus a
   real static page in Chromium. The page bundles the adapter, uses the browser's
   own `fetch`, and reads across a genuinely different origin. No libSQL response
   is routed, mocked or replaced, and no manual `Origin` header is used as proof.

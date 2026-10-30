@@ -1,6 +1,6 @@
 import { collection } from "@dalgo/core";
 
-import { TypesenseDatabase, type TypesenseQuery } from "@dal-go/dalgo2typesense";
+import { TypesenseDatabase, type TypesenseQuery } from "@dalgo/dalgo2typesense";
 
 // One per-physical-request header callback. Use a scoped read-only key with
 // `collections:get`/`list` only when schema metadata or numeric ranges are

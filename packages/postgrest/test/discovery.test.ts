@@ -81,7 +81,7 @@ describe("PostgrestDatabase.discover", () => {
     expect(headers).toHaveBeenCalledTimes(1);
 
     expect(discovery).toMatchObject({
-      adapter: "@dal-go/dalgo2postgrest",
+      adapter: "@dalgo/dalgo2postgrest",
       protocol: "postgrest-openapi",
       status: "available",
       schema: "api",

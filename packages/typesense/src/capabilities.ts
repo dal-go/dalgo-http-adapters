@@ -36,7 +36,7 @@ export interface TypesenseCapabilityDescriptor extends Omit<AdapterReadCapabilit
  * (q/query_by/filter_by/sort_by/facet_by), never a raw URL or admin escape.
  */
 export const TYPESENSE_READ_CAPABILITIES = {
-  adapter: "@dal-go/dalgo2typesense",
+  adapter: "@dalgo/dalgo2typesense",
   storage: "native-rows",
   read: {
     get: true,

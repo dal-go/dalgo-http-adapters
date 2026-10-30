@@ -12,10 +12,10 @@ overrides:
   # The shared browser runtime and native adapters use released core 0.8.1,
   # including its reviewed Firestore and capabilities changes.
   "@dalgo/adapter-runtime>@dalgo/core": "0.8.1"
-  "@dal-go/dalgo2couchdb>@dalgo/core": "0.8.1"
-  "@dal-go/dalgo2libsql>@dalgo/core": "0.8.1"
-  "@dal-go/dalgo2postgrest>@dalgo/core": "0.8.1"
-  "@dal-go/dalgo2typesense>@dalgo/core": "0.8.1"
+  "@dalgo/dalgo2couchdb>@dalgo/core": "0.8.1"
+  "@dalgo/dalgo2libsql>@dalgo/core": "0.8.1"
+  "@dalgo/dalgo2postgrest>@dalgo/core": "0.8.1"
+  "@dalgo/dalgo2typesense>@dalgo/core": "0.8.1"
   "@dalgo/ovdb>@dalgo/core": "0.8.1"
   "@dalgo/sqlite-wasm>@dalgo/core": "0.8.1"
 
