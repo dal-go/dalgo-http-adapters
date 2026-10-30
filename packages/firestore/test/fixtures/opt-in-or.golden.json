@@ -1,0 +1,193 @@
+{
+  "capturedAt": "57188a1",
+  "query": "from items\nwhere a = 1 or b = 2\n",
+  "fixture": "test/fixtures/items.ts#items",
+  "result": {
+    "columns": [
+      "__key__",
+      "title",
+      "status",
+      "a",
+      "b",
+      "rank"
+    ],
+    "rows": [
+      {
+        "__key__": "item-01",
+        "title": "Title 01",
+        "status": "done",
+        "a": 1,
+        "b": 1,
+        "rank": 1
+      },
+      {
+        "__key__": "item-02",
+        "title": "Title 02",
+        "status": "done",
+        "a": 2,
+        "b": 2,
+        "rank": 2
+      },
+      {
+        "__key__": "item-05",
+        "title": "Title 05",
+        "status": "done",
+        "a": 1,
+        "b": 5,
+        "rank": 5
+      },
+      {
+        "__key__": "item-08",
+        "title": "Title 08",
+        "status": "done",
+        "a": 0,
+        "b": 2,
+        "rank": 8
+      },
+      {
+        "__key__": "item-09",
+        "title": "Title 09",
+        "status": "done",
+        "a": 1,
+        "b": 3,
+        "rank": 9
+      },
+      {
+        "__key__": "item-13",
+        "title": "Title 13",
+        "status": "done",
+        "a": 1,
+        "b": 1,
+        "rank": 13
+      },
+      {
+        "__key__": "item-14",
+        "title": "Title 14",
+        "status": "done",
+        "a": 2,
+        "b": 2,
+        "rank": 14
+      },
+      {
+        "__key__": "item-17",
+        "title": "Title 17",
+        "status": "done",
+        "a": 1,
+        "b": 5,
+        "rank": 17
+      },
+      {
+        "__key__": "item-20",
+        "title": "Title 20",
+        "status": "done",
+        "a": 0,
+        "b": 2,
+        "rank": 20
+      },
+      {
+        "__key__": "item-21",
+        "title": "Title 21",
+        "status": "done",
+        "a": 1,
+        "b": 3,
+        "rank": 21
+      },
+      {
+        "__key__": "item-25",
+        "title": "Title 25",
+        "status": "done",
+        "a": 1,
+        "b": 1,
+        "rank": 25
+      },
+      {
+        "__key__": "item-26",
+        "title": "Title 26",
+        "status": "done",
+        "a": 2,
+        "b": 2,
+        "rank": 26
+      },
+      {
+        "__key__": "item-29",
+        "title": "Title 29",
+        "status": "done",
+        "a": 1,
+        "b": 5,
+        "rank": 29
+      },
+      {
+        "__key__": "item-32",
+        "title": "Title 32",
+        "status": "done",
+        "a": 0,
+        "b": 2,
+        "rank": 32
+      },
+      {
+        "__key__": "item-33",
+        "title": "Title 33",
+        "status": "done",
+        "a": 1,
+        "b": 3,
+        "rank": 33
+      },
+      {
+        "__key__": "item-37",
+        "title": "Title 37",
+        "status": "done",
+        "a": 1,
+        "b": 1,
+        "rank": 37
+      },
+      {
+        "__key__": "item-38",
+        "title": "Title 38",
+        "status": "done",
+        "a": 2,
+        "b": 2,
+        "rank": 38
+      },
+      {
+        "__key__": "item-41",
+        "title": "Title 41",
+        "status": "active",
+        "a": 1,
+        "b": 5,
+        "rank": 41
+      },
+      {
+        "__key__": "item-44",
+        "title": "Title 44",
+        "status": "paused",
+        "a": 0,
+        "b": 2,
+        "rank": 44
+      },
+      {
+        "__key__": "item-45",
+        "title": "Title 45",
+        "status": "done",
+        "a": 1,
+        "b": 3,
+        "rank": 45
+      },
+      {
+        "__key__": "item-49",
+        "title": "Title 49",
+        "status": "done",
+        "a": 1,
+        "b": 1,
+        "rank": 49
+      },
+      {
+        "__key__": "item-50",
+        "title": "Title 50",
+        "status": "done",
+        "a": 2,
+        "b": 2,
+        "rank": 50
+      }
+    ]
+  }
+}
