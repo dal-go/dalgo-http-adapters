@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { NativeClickHouseDatabase } from "../dist/index.js";
-import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, exactQuery, fixtureUrl, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
+import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, assertReaderProbes, exactQuery, fixtureUrl, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, readerProbeSql, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
 
 const serverUrl = fixtureUrl();
 const version = await assertFixtureVersion(serverUrl);
 const profileProof = await prepareLateErrorFixture(serverUrl);
 const database = new NativeClickHouseDatabase(nativeOptions(serverUrl));
+const baselineProbe = await database.queryOrdinal({ kind: "native", sql: readerProbeSql }).then((result) => ({ result }), (error) => ({ errorCode: error.code }));
+const explicitReader = new NativeClickHouseDatabase({ ...nativeOptions(serverUrl), fetch: (value, init) => {
+  const url = new URL(value); url.searchParams.set("max_block_size", "1"); return fetch(url, init);
+} });
+const explicitProbe = await explicitReader.queryOrdinal({ kind: "native", sql: readerProbeSql }).then((result) => ({ result }), (error) => ({ errorCode: error.code }));
+const readerProof = assertReaderProbes(baselineProbe, explicitProbe);
 assertExact(await database.queryOrdinal(exactQuery));
 const alias = await database.queryOrdinal(aliasQuery);
 assert.deepEqual(alias, {
@@ -23,7 +29,7 @@ const lateReader = new NativeClickHouseDatabase({ ...nativeOptions(serverUrl), f
   // Exercise the actual early-response protocol without changing SQL or any
   // read/resource constraints. Do not normalize a broken stream into success.
   const url = new URL(value);
-  url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0");
+  url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0"); url.searchParams.set("max_block_size", "1");
   const response = await fetch(url, init);
   const tag = response.headers.get("x-clickhouse-exception-tag");
   const exceptionCode = response.headers.get("x-clickhouse-exception-code");
@@ -55,4 +61,4 @@ await waitForProcess(serverUrl, id, 1);
 controller.abort();
 assert.equal((await outcome).error?.reason, "caller");
 await waitForProcess(serverUrl, id, 0, 1000);
-recordProof(process.versions.node.startsWith("20.") ? "node20" : "node24", { image: PINNED_IMAGE, version, profileProof, lateProof, exactOrdinal: "pass", duplicateRowsAndLabels: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", mapEntries: "pass", serverWriteSettingsAndScopeRefusal: "pass", nativeOptInRefused: "pass", serverCancellationObserved: { before: 1, after: 0 } });
+recordProof(process.versions.node.startsWith("20.") ? "node20" : "node24", { image: PINNED_IMAGE, version, profileProof, readerProof, lateProof, exactOrdinal: "pass", duplicateRowsAndLabels: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", mapEntries: "pass", serverWriteSettingsAndScopeRefusal: "pass", nativeOptInRefused: "pass", serverCancellationObserved: { before: 1, after: 0 } });

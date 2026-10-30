@@ -60,7 +60,41 @@ export const slowSql = "SELECT sleepEachRow(0.05) FROM numbers(50)";
 //512rows/~4MiB/2.56s scheduled sleep versus unchanged1000row/8MiB/30s limits.
 // The intended ~3MiB prefix exceeds the current upstream1MiB response buffer;
 // only real CI establishes the pinned server's actual HTTP200 late framing.
-export const lateErrorSql = "SELECT toUInt8(sleepEachRow(0.005) + throwIf(number = 384)) AS n, repeat('x', 8192) AS padding FROM numbers(512)";
+export const lateErrorSql = "SELECT sleepEachRow(0.005) AS delay, throwIf(number = 384) AS n, repeat('x', 8192) AS padding FROM numbers(512)";
+export const readerProbeSql = "SELECT currentUser() AS reader, toUInt64(getSetting('max_block_size')) AS max_block_size, toUInt64(getSetting('readonly')) AS reader_readonly, toUInt64(blockSize()) AS block_rows FROM numbers(512)";
+export function assertReaderProbes(baseline, explicit) {
+  const summarize = (probe, phase) => {
+    const rows = Array.isArray(probe?.result?.rows) && probe.result.rows.length <= 1000 ? probe.result.rows : [];
+    const range = (index) => {
+      const values = rows.map((row) => {
+        const cell = Array.isArray(row) && row.length === 4 ? row[index] : null;
+        if (cell?.kind !== "integer" || typeof cell.value !== "string" || !/^(?:0|[1-9][0-9]{0,9})$/.test(cell.value)) return null;
+        const value = Number(cell.value); return Number.isSafeInteger(value) && value <= 1_000_000_000 ? value : null;
+      });
+      return values.length > 0 && values.every((value) => value !== null) ? [Math.min(...values), Math.max(...values)] : [null, null];
+    };
+    const [effectiveMaxBlockMin, effectiveMaxBlockMax] = range(1);
+    const [readonlyMin, readonlyMax] = range(2);
+    const [actualBlockMin, actualBlockMax] = range(3);
+    return { diagnostic: "clickhouse-reader-blocks", phase, rowCount: rows.length,
+      readerMatches: rows.length > 0 && rows.every((row) => Array.isArray(row) && row.length === 4 && row[0] === "fixture_reader"),
+      effectiveMaxBlockMin, effectiveMaxBlockMax, readonlyMin, readonlyMax, actualBlockMin, actualBlockMax,
+      errorCode: ["transport", "response", "framing", "unsupported", "bounds", "permission"].includes(probe?.errorCode) ? probe.errorCode : null };
+  };
+  const summaries = [summarize(baseline, "baseline"), summarize(explicit, "explicit")];
+  // Both real requests have completed. Print only finite allowlisted facts,
+  // never raw rows, usernames, SQL, exception messages or headers.
+  for (const summary of summaries) console.error(JSON.stringify(summary));
+  for (const [index, summary] of summaries.entries()) {
+    assert.equal(summary.errorCode, null); assert.equal(summary.rowCount, 512); assert.equal(summary.readerMatches, true);
+    for (const key of ["effectiveMaxBlockMin", "effectiveMaxBlockMax", "readonlyMin", "readonlyMax", "actualBlockMin", "actualBlockMax"]) assert.equal(summary[key], 1, `${summary.phase} reader setting/block mismatch`);
+    assert.deepEqual([baseline, explicit][index]?.result?.columns, [
+      { name: "reader", nativeType: "String" }, { name: "max_block_size", nativeType: "UInt64" },
+      { name: "reader_readonly", nativeType: "UInt64" }, { name: "block_rows", nativeType: "UInt64" },
+    ]);
+  }
+  return { baseline: summaries[0], explicit: summaries[1] };
+}
 const PROFILE_ELEMENTS_SQL = "SELECT setting_name, value, min, max, toString(writability) AS writability, inherit_profile FROM system.settings_profile_elements WHERE profile_name = 'fixture_reader_profile' ORDER BY setting_name FORMAT JSONEachRow";
 const PROFILE_TARGET_SQL = "SELECT name, toString(id) AS id, apply_to_all, apply_to_list, apply_to_except FROM system.settings_profiles WHERE name = 'fixture_reader_profile' FORMAT JSONEachRow";
 const PROFILE_SHOW_SQL = "SHOW CREATE SETTINGS PROFILE fixture_reader_profile FORMAT TabSeparatedRaw";

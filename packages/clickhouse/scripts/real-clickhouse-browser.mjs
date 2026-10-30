@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { build } from "esbuild";
 import { chromium } from "@playwright/test";
-import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, exactQuery, fixtureUrl, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
+import { aliasQuery, aliasRoundTripQuery, assertExact, assertFixtureVersion, assertLateFramingEvidence, assertReaderProbes, exactQuery, fixtureUrl, lateErrorSql, nativeOptions, PINNED_IMAGE, prepareLateErrorFixture, readerProbeSql, recordProof, refusedSql, slowSql, unsafeAliasQueries, waitForProcess } from "./fixture-contract.mjs";
 
 const serverUrl = fixtureUrl();
 const version = await assertFixtureVersion(serverUrl);
@@ -39,6 +39,18 @@ try {
   await page.goto(origin);
   await page.waitForFunction(() => typeof window.NativeClickHouseDatabase === "function");
   const browserOptions = { ...nativeOptions(serverUrl), headers: undefined };
+  const readerProbes = await page.evaluate(async ({ options, sql }) => {
+    const probes = [];
+    for (const explicit of [false, true]) {
+      const database = new window.NativeClickHouseDatabase({ ...options, headers: () => ({ "X-ClickHouse-User": "fixture_reader", "X-ClickHouse-Key": "synthetic-reader" }), fetch: (value, init) => {
+        const url = new URL(value); if (explicit) url.searchParams.set("max_block_size", "1"); return fetch(url, init);
+      } });
+      try { probes.push({ result: await database.queryOrdinal({ kind: "native", sql }) }); }
+      catch (error) { probes.push({ errorCode: error.code }); }
+    }
+    return probes;
+  }, { options: browserOptions, sql: readerProbeSql });
+  const readerProof = assertReaderProbes(readerProbes[0], readerProbes[1]);
   const result = await page.evaluate(async ({ options, query }) => {
     const database = new window.NativeClickHouseDatabase({ ...options, headers: () => ({ "X-ClickHouse-User": "fixture_reader", "X-ClickHouse-Key": "synthetic-reader" }) });
     return await database.queryOrdinal(query);
@@ -82,7 +94,7 @@ try {
   const late = await page.evaluate(async ({ options, sql }) => {
     let observed;
     const database = new window.NativeClickHouseDatabase({ ...options, headers: () => ({ "X-ClickHouse-User": "fixture_reader", "X-ClickHouse-Key": "synthetic-reader" }), fetch: async (value, init) => {
-      const url = new URL(value); url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0");
+      const url = new URL(value); url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0"); url.searchParams.set("max_block_size", "1");
       const response = await fetch(url, init);
       const tag = response.headers.get("x-clickhouse-exception-tag");
       const exceptionCode = response.headers.get("x-clickhouse-exception-code");
@@ -126,7 +138,7 @@ try {
   }, { options: browserOptions, query: exactQuery });
   assert.equal(deniedResult, "transport");
   await page.evaluate((result) => { document.querySelector("#proof").textContent = JSON.stringify(result, null, 2); }, result);
-  recordProof("chromium", { image: PINNED_IMAGE, version, browser: "Chromium", exactOrigin: origin, profileProof, lateProof, wrongOriginRefused: "pass", noAuthAdminRefused: "pass", precisionAndDuplicates: "pass", duplicateMapKeys: "pass", nativeOptInRefused: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", writeSettingsAndScopeRefusal: "pass", serverCancellationObserved: { before: 1, after: 0 } });
+  recordProof("chromium", { image: PINNED_IMAGE, version, browser: "Chromium", exactOrigin: origin, profileProof, readerProof, lateProof, wrongOriginRefused: "pass", noAuthAdminRefused: "pass", precisionAndDuplicates: "pass", duplicateMapKeys: "pass", nativeOptInRefused: "pass", aliasCapture: "pass", aliasRoundTripAndInjectionRefusal: "pass", writeSettingsAndScopeRefusal: "pass", serverCancellationObserved: { before: 1, after: 0 } });
 } finally {
   await browser?.close();
   if (allowedServer !== undefined) await new Promise((resolve, reject) => allowedServer.close((error) => error ? reject(error) : resolve()));
