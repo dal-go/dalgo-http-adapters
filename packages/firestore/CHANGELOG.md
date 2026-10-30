@@ -1,5 +1,11 @@
 # @dalgo/firestore
 
+## 0.4.1
+
+### Patch Changes
+
+- df4e5f2: Prepare a fresh coordinated release after correcting the four unpublished native adapter package names to the `@dalgo` npm scope. Include the shared adapter runtime, Firestore and OVDB in normal version-change publication so the complete prepared compatibility batch can be released through the reviewed version pull request.
+
 ## 0.4.0
 
 ### Minor Changes

@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/dalgo2typesense",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Bounded read-only native Typesense HTTP adapter for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
