@@ -101,13 +101,13 @@ export function assertHealthyControl(probe) {
   // This control proves only its own pipeline, never the late query's pipeline.
   return summary;
 }
-export const readerProbeSql = "SELECT currentUser() AS reader, toUInt64(getSetting('max_block_size')) AS max_block_size, toUInt64(getSetting('readonly')) AS reader_readonly, toUInt64(blockSize()) AS block_rows FROM numbers(512)";
+export const readerProbeSql = "SELECT currentUser() AS reader, toUInt64(getSetting('max_block_size')) AS max_block_size, toUInt64(getSetting('readonly')) AS reader_readonly, toUInt64(blockSize()) AS block_rows, toUInt64(getSetting('enable_http_compression')) AS http_compression FROM numbers(512)";
 export function assertReaderProbes(baseline, explicit) {
   const summarize = (probe, phase) => {
     const rows = Array.isArray(probe?.result?.rows) && probe.result.rows.length <= 1000 ? probe.result.rows : [];
     const range = (index) => {
       const values = rows.map((row) => {
-        const cell = Array.isArray(row) && row.length === 4 ? row[index] : null;
+        const cell = Array.isArray(row) && row.length === 5 ? row[index] : null;
         if (cell?.kind !== "integer" || typeof cell.value !== "string" || !/^(?:0|[1-9][0-9]{0,9})$/.test(cell.value)) return null;
         const value = Number(cell.value); return Number.isSafeInteger(value) && value <= 1_000_000_000 ? value : null;
       });
@@ -116,9 +116,10 @@ export function assertReaderProbes(baseline, explicit) {
     const [effectiveMaxBlockMin, effectiveMaxBlockMax] = range(1);
     const [readonlyMin, readonlyMax] = range(2);
     const [actualBlockMin, actualBlockMax] = range(3);
+    const [compressionMin, compressionMax] = range(4);
     return { diagnostic: "clickhouse-reader-blocks", phase, rowCount: rows.length,
-      readerMatches: rows.length > 0 && rows.every((row) => Array.isArray(row) && row.length === 4 && row[0] === "fixture_reader"),
-      effectiveMaxBlockMin, effectiveMaxBlockMax, readonlyMin, readonlyMax, actualBlockMin, actualBlockMax,
+      readerMatches: rows.length > 0 && rows.every((row) => Array.isArray(row) && row.length === 5 && row[0] === "fixture_reader"),
+      effectiveMaxBlockMin, effectiveMaxBlockMax, readonlyMin, readonlyMax, actualBlockMin, actualBlockMax, compressionMin, compressionMax,
       errorCode: ["transport", "response", "framing", "unsupported", "bounds", "permission"].includes(probe?.errorCode) ? probe.errorCode : null };
   };
   const summaries = [summarize(baseline, "baseline"), summarize(explicit, "explicit")];
@@ -128,9 +129,11 @@ export function assertReaderProbes(baseline, explicit) {
   for (const [index, summary] of summaries.entries()) {
     assert.equal(summary.errorCode, null); assert.equal(summary.rowCount, 512); assert.equal(summary.readerMatches, true);
     for (const key of ["effectiveMaxBlockMin", "effectiveMaxBlockMax", "readonlyMin", "readonlyMax", "actualBlockMin", "actualBlockMax"]) assert.equal(summary[key], 1, `${summary.phase} reader setting/block mismatch`);
+    assert.equal(summary.compressionMin, 0); assert.equal(summary.compressionMax, 0);
     assert.deepEqual([baseline, explicit][index]?.result?.columns, [
       { name: "reader", nativeType: "String" }, { name: "max_block_size", nativeType: "UInt64" },
       { name: "reader_readonly", nativeType: "UInt64" }, { name: "block_rows", nativeType: "UInt64" },
+      { name: "http_compression", nativeType: "UInt64" },
     ]);
   }
   return { baseline: summaries[0], explicit: summaries[1] };
@@ -151,6 +154,11 @@ const EXPECTED_POLICY = [
   ["max_memory_usage", "536870912", null, null, "CONST"],
   ["max_threads", "2", null, null, "CONST"],
 ].map(([setting_name, value, min, max, writability]) => ({ setting_name, value, min, max, writability, inherit_profile: null }));
+const TS_POLICY = [
+  { setting_name: "max_block_size", value: "1", min: null, max: null, writability: "CONST", inherit_profile: null },
+  { setting_name: "enable_http_compression", value: "0", min: null, max: null, writability: "CONST", inherit_profile: null },
+];
+const originalEntry = (entry) => !TS_POLICY.some((setting) => setting.setting_name === entry.setting_name);
 async function adminText(serverUrl, sql) {
   const url = new URL(serverUrl); url.searchParams.set("wait_end_of_query", "1");
   const response = await fetch(url, { method: "POST", headers: { "X-ClickHouse-User": "default", "X-ClickHouse-Key": process.env.CLICKHOUSE_FIXTURE_ADMIN_PASSWORD }, body: sql, signal: AbortSignal.timeout(2000) });
@@ -178,9 +186,11 @@ async function profileSnapshot(serverUrl) {
 function assertOriginalPolicy(snapshot) {
   assert.equal(snapshot.elements.length, new Set(snapshot.elements.map((entry) => entry.setting_name)).size, "duplicate policy entries are refused");
   for (const expected of EXPECTED_POLICY) assert.deepEqual(snapshot.elements.find((entry) => entry.setting_name === expected.setting_name), expected, "original reader value/constraints must match the pinned fixture");
-  assert.equal(snapshot.elements.filter((entry) => entry.setting_name !== "max_block_size").length, EXPECTED_POLICY.length, "unexpected settings/inherited profiles are refused");
-  const existingBlock = snapshot.elements.find((entry) => entry.setting_name === "max_block_size");
-  if (existingBlock !== undefined) assert.deepEqual(existingBlock, { setting_name: "max_block_size", value: "1", min: null, max: null, writability: "CONST", inherit_profile: null }, "only a prior identical TS fixture preparation is accepted");
+  assert.equal(snapshot.elements.filter(originalEntry).length, EXPECTED_POLICY.length, "unexpected settings/inherited profiles are refused");
+  for (const setting of TS_POLICY) {
+    const existing = snapshot.elements.find((entry) => entry.setting_name === setting.setting_name);
+    if (existing !== undefined) assert.deepEqual(existing, setting, "only a prior identical TS fixture preparation is accepted");
+  }
   assert.equal(snapshot.targets.length, 1);
   assert.equal(snapshot.targets[0].name, "fixture_reader_profile");
   assert.equal(snapshot.targets[0].apply_to_all, 0);
@@ -192,18 +202,20 @@ function assertOriginalPolicy(snapshot) {
 export async function prepareLateErrorFixture(serverUrl) {
   const before = await profileSnapshot(serverUrl);
   assertOriginalPolicy(before);
-  // ADD changes this one complete entry. Bare SETTINGS would replace the whole
+  // ADD changes these complete entries. Bare SETTINGS would replace the whole
   // profile and remove the reader policy; it must never be used here.
-  if (!before.elements.some((entry) => entry.setting_name === "max_block_size")) {
-    await adminText(serverUrl, "ALTER SETTINGS PROFILE fixture_reader_profile ADD SETTINGS max_block_size=1 CONST");
+  for (const setting of TS_POLICY) {
+    if (!before.elements.some((entry) => entry.setting_name === setting.setting_name))
+      await adminText(serverUrl, `ALTER SETTINGS PROFILE fixture_reader_profile ADD SETTINGS ${setting.setting_name}=${setting.value} CONST`);
   }
   const after = await profileSnapshot(serverUrl);
   assertOriginalPolicy(after);
   assert.deepEqual(after.targets, before.targets, "reader profile identity and assignment must remain unchanged");
-  assert.deepEqual(after.elements.filter((entry) => entry.setting_name !== "max_block_size"), before.elements.filter((entry) => entry.setting_name !== "max_block_size"), "every original policy entry and constraint must remain unchanged");
-  assert.deepEqual(after.elements.find((entry) => entry.setting_name === "max_block_size"), { setting_name: "max_block_size", value: "1", min: null, max: null, writability: "CONST", inherit_profile: null });
+  assert.deepEqual(after.elements.filter(originalEntry), before.elements.filter(originalEntry), "every original policy entry and constraint must remain unchanged");
+  for (const setting of TS_POLICY) assert.deepEqual(after.elements.find((entry) => entry.setting_name === setting.setting_name), setting);
   assert.match(after.showCreate, /\bmax_block_size\s*=\s*1\s+(?:CONST|READONLY)\b/);
-  return { originalEntries: EXPECTED_POLICY.length, preserved: true, readonlyConst: true, maxBlockSizeConst: 1 };
+  assert.match(after.showCreate, /\benable_http_compression\s*=\s*0\s+(?:CONST|READONLY)\b/);
+  return { originalEntries: EXPECTED_POLICY.length, preserved: true, readonlyConst: true, maxBlockSizeConst: 1, httpCompressionConst: 0 };
 }
 export function assertLateFramingEvidence(error, observed) {
   // Emit only allowlisted facts before any assertion can stop the real proof.
