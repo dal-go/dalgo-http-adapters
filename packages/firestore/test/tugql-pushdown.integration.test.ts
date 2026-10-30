@@ -67,7 +67,10 @@ const run = (resolved: RecursiveTugQLQuery, allowInMemoryEvaluation?: boolean) =
   ...(allowInMemoryEvaluation === undefined ? {} : { allowInMemoryEvaluation }),
 });
 
-/** `from items where status in @states`, with `@states` bound (DALgo-JS substitutes `{ value }`). */
+/**
+ * `from items where status in @states`, with `@states` already bound. TugQL text has no list
+ * parameter type yet, so the bound list is built as the `{ value }` literal DALgo-JS substitutes.
+ */
 function statusIn(states: readonly string[]): RecursiveTugQLQuery {
   const schema = { tables: [{ name: "items", fields: ["status", "title", "a", "b", "rank"] }] };
   return parseRecursiveTugQL({ from: { name: "items" }, where: { left: { field: "status" }, op: "In", right: { value: states } } }, schema);

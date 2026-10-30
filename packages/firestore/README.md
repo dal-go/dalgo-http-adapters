@@ -108,12 +108,17 @@ reads only matching documents through its indexes. That holds when the query:
 - stays within Firestore's limits: at most 30 `in` disjunctions (the product
   of all `in` list sizes), at most 10 `not-in` values, at most one `!=` or
   `not-in`, and no `not-in` together with `in` or `!=`;
-- orders by fields (or `__key__`), ascending or descending.
+- orders by fields (or `__key__`), ascending or descending;
+- names fields plainly: a dotted name (`a.b`) or a `__name__`-style name is
+  refused, because Firestore would read a nested or reserved path while
+  DALgo-JS reads the literal key.
 
 The adapter sends every comparison as a `where`, every `ORDER BY` entry as an
 `orderBy`, and a `limit` of `LIMIT + OFFSET` (or `maxFetchedRows + 1` without
 `LIMIT`). DALgo-JS then re-applies `WHERE`, `ORDER BY`, `OFFSET`, `LIMIT` and
-`SELECT` to the documents returned. An empty `in` list returns no rows without
+`SELECT` to the documents returned. Inequality fields are also sent as
+explicit `orderBy`s, in the order Firestore itself would use, so a query such as
+`rank > 3` needs no composite index. An empty `in` list returns no rows without
 a read; `LIMIT + OFFSET` over `maxFetchedRows` (10,000 by default) fails with
 `query_limit` at `limit` before any read.
 
@@ -125,7 +130,9 @@ Firestore selects:
 
 - `ORDER BY` a field excludes documents that lack that field;
 - range and `!=` filters match only values of the operand's type;
-- `!=` and `not-in` exclude documents that lack the field;
+- `!=` and `not-in` exclude documents that lack the field, but match stored
+  `null`s, which DALgo-JS then drops; with a `LIMIT` such a query can return
+  fewer rows than the limit;
 - DALgo-JS re-sorts the rows with JavaScript comparison (UTF-16 code units,
   no cross-type order), so their order can differ from Firestore's for
   non-ASCII strings or mixed-type fields.
