@@ -26,7 +26,9 @@ const lateReader = new NativeClickHouseDatabase({ ...nativeOptions(serverUrl), f
   url.searchParams.set("buffer_size", "1"); url.searchParams.set("wait_end_of_query", "0");
   const response = await fetch(url, init);
   const tag = response.headers.get("x-clickhouse-exception-tag");
-  lateObserved = { status: response.status, format: response.headers.get("x-clickhouse-format"), tagLength: tag?.length, tagValid: /^[a-z]{16}$/.test(tag ?? ""), exceptionCodePresent: response.headers.has("x-clickhouse-exception-code") };
+  const exceptionCode = response.headers.get("x-clickhouse-exception-code");
+  lateObserved = { status: response.status, format: response.headers.get("x-clickhouse-format"), tagLength: tag?.length, tagValid: /^[a-z]{16}$/.test(tag ?? ""), exceptionCodePresent: response.headers.has("x-clickhouse-exception-code"),
+    exceptionCode: exceptionCode !== null && /^(?:0|[1-9][0-9]{0,9})$/.test(exceptionCode) && Number(exceptionCode) <= 1_000_000_000 ? Number(exceptionCode) : null };
   return response;
 } });
 const lateError = await lateReader.queryOrdinal({ kind: "native", sql: lateErrorSql }).then(() => null, (error) => error);

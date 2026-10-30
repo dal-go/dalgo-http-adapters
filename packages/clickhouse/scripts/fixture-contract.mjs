@@ -57,7 +57,10 @@ export function assertExact(result) {
 }
 export const refusedSql = ["INSERT INTO explore.events(id) VALUES (1)", "ALTER TABLE explore.events ADD COLUMN forbidden_write UInt8", "SELECT 1 SETTINGS readonly=0", "SET readonly=0", "SELECT * FROM forbidden.secret"];
 export const slowSql = "SELECT sleepEachRow(0.05) FROM numbers(50)";
-export const lateErrorSql = "SELECT toUInt8(sleepEachRow(0.01) + throwIf(number = 100)) AS n FROM numbers(200)";
+//512rows/~4MiB/2.56s scheduled sleep versus unchanged1000row/8MiB/30s limits.
+// The intended ~3MiB prefix exceeds the current upstream1MiB response buffer;
+// only real CI establishes the pinned server's actual HTTP200 late framing.
+export const lateErrorSql = "SELECT toUInt8(sleepEachRow(0.005) + throwIf(number = 384)) AS n, repeat('x', 8192) AS padding FROM numbers(512)";
 const PROFILE_ELEMENTS_SQL = "SELECT setting_name, value, min, max, toString(writability) AS writability, inherit_profile FROM system.settings_profile_elements WHERE profile_name = 'fixture_reader_profile' ORDER BY setting_name FORMAT JSONEachRow";
 const PROFILE_TARGET_SQL = "SELECT name, toString(id) AS id, apply_to_all, apply_to_list, apply_to_except FROM system.settings_profiles WHERE name = 'fixture_reader_profile' FORMAT JSONEachRow";
 const PROFILE_SHOW_SQL = "SHOW CREATE SETTINGS PROFILE fixture_reader_profile FORMAT TabSeparatedRaw";
@@ -136,6 +139,7 @@ export function assertLateFramingEvidence(error, observed) {
     format: observed?.format === "RowBinaryWithNamesAndTypes" ? observed.format : "other-or-missing",
     tagLength: Number.isSafeInteger(observed?.tagLength) && observed.tagLength >= 0 && observed.tagLength <= 8192 ? observed.tagLength : null,
     tagValid: observed?.tagValid === true, exceptionCodePresent: observed?.exceptionCodePresent === true,
+    exceptionCode: Number.isSafeInteger(observed?.exceptionCode) && observed.exceptionCode >= 0 && observed.exceptionCode <= 1_000_000_000 ? observed.exceptionCode : null,
     errorCode: ["transport", "response", "framing", "unsupported", "bounds", "permission"].includes(error?.code) ? error.code : "other-or-missing",
   }));
   assert.equal(error?.code, "framing", "a decoder, transport, format or row-budget refusal is not framing proof");
