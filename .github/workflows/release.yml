@@ -109,7 +109,8 @@ jobs:
        github.event.pull_request.head.ref == 'changeset-release/main' &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && inputs.release_sha != '')
-    runs-on: ubuntu-latest
+    # Match ovdb-artifact CI: pinned Playwright does not support Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write
