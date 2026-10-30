@@ -273,8 +273,10 @@ try {
         `${adapter.name} depends on the legacy @dal-go/dalgo package in ${section}`,
       );
     }
-    assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.7.4 <0.9.0");
-    if (adapter.directory !== "packages/adapter-runtime") {
+    if (adapter.directory === "packages/adapter-runtime") {
+      assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.8.1 <0.9.0");
+    } else {
+      assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.7.4 <0.9.0");
       assert.equal(manifest.peerDependencies?.["@dalgo/adapter-runtime"], ">=0.1.0 <1.0.0");
     }
     for (const file of walk(installedRoot)) {
