@@ -106,6 +106,10 @@ function materializeCandidate() {
   }
   const identity = ["-c", "user.name=adapter-git-subdir-gate", "-c", "user.email=gate@invalid"];
   run("git", ["init", "-q", "-b", "main"], { cwd: source });
+  // Local upload-pack must not size its thread pool from the host CPU count.
+  // These settings belong only to this disposable synthetic repository.
+  run("git", ["config", "--local", "pack.threads", "1"], { cwd: source });
+  run("git", ["config", "--local", "index.threads", "1"], { cwd: source });
   run("git", [...identity, "add", "-A"], { cwd: source });
   run("git", [...identity, "commit", "-q", "-m", "gated candidate"], { cwd: source });
   const sha = run("git", ["rev-parse", "HEAD"], { cwd: source }).trim();
@@ -209,7 +213,7 @@ try {
   const pnpmVersion = run("pnpm", ["--version"]).trim();
   // No local tarball, no `file:`/`link:` specifier, no `--ignore-scripts`, no
   // blanket build approval: the Git fetch must run the reviewed prepack steps.
-  run("pnpm", ["install", "--no-frozen-lockfile", "--registry=https://registry.npmjs.org"], { cwd: consumer });
+  run("pnpm", ["install", "--no-frozen-lockfile", "--child-concurrency=1", "--network-concurrency=2", "--registry=https://registry.npmjs.org"], { cwd: consumer });
 
   const lockfile = readFileSync(join(consumer, "pnpm-lock.yaml"), "utf8");
   assert.ok(!/^\s*(?:specifier|version):\s*(?:link|file):/mu.test(lockfile), "consumer lockfile uses a local link");
