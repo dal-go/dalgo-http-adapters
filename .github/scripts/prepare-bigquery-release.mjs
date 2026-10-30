@@ -74,8 +74,7 @@ if (mode === "pack") {
     failUnless(proof.core?.version === coreVersion && proof.core.resolved === `https://registry.npmjs.org/@dalgo/core/-/core-${coreVersion}.tgz` && proof.core.integrity === integrity, "wrong core matrix identity");
     failUnless(proof.runtimes?.length === 2 && proof.runtimes[0].version === "v20.0.0" && /^v24\./.test(proof.runtimes[1].version) && proof.runtimes.every(runtime => runtime.typedImports === true), "typed Node20/24 matrix receipts required");
   });
-  // OVDB's npm artifact is gated to core 0.6 and HTTP requires core 0.8, so each
-  // pairs with BigQuery on its own strict shared core.
+  // Preserve the OVDB/core 0.6 and HTTP/core 0.8 strict shared-core pairings.
   const browsers = consumer.combinedBrowsers;
   failUnless(Array.isArray(browsers) && browsers.length === 2, "both strict shared-core browser receipts required");
   browsers.forEach((browser, index) => {

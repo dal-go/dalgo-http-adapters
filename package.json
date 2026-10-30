@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
-    "@dal-go/dalgo": "github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d",
+    "@dal-go/dalgo": "npm:@dalgo/core@0.8.1",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",

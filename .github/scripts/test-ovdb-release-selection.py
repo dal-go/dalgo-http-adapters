@@ -7,7 +7,7 @@ start = workflow.index('          source_sha=$(git rev-parse HEAD)')
 # Exact package-loop indentation excludes nested report and metadata loops.
 end = workflow.index('\n          done\n', start) + len('\n          done')
 shell = 'set -euo pipefail\n' + '\n'.join(line[10:] for line in workflow[start:end].splitlines()) + '\n'
-loop = 'for package in firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do'
+loop = 'for package in adapter-runtime couchdb libsql postgrest typesense firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do'
 assert loop in shell, 'release publish loop changed; update this selection test'
 shell = shell.replace(loop, 'for package in "$SELECTED"; do')
 sha = 'a'*40
@@ -27,7 +27,7 @@ else exit 99; fi
 ''',
       'node': '''#!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == .github/scripts/prepare-ovdb-release.mjs || "$1" == .github/scripts/check-ovdb-tarball.mjs ]] || exit 99
+[[ "$1" == .github/scripts/prepare-ovdb-release.mjs || "$1" == .github/scripts/check-ovdb-core-matrix.mjs ]] || exit 99
 if [[ "$1" == *check-* ]]; then
   echo check >> "$MOCK_LOG"
   [[ "$EXPECTED_SOURCE_SHA" == "$MOCK_SHA" && "$EXPECTED_PACKAGE_VERSION" == 0.2.0 && "$EXPECTED_ARTIFACT_SHA256" == mock && "$EXPECTED_ARTIFACT_INTEGRITY" == sha512-mock ]] || exit 98

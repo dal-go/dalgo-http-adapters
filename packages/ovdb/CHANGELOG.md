@@ -1,5 +1,11 @@
 # @dalgo/ovdb
 
+## 0.3.1
+
+### Patch Changes
+
+- Publish the query-only TugQL adapter with the source's `@dalgo/core` peer range `>=0.6.0 <0.9.0`, retaining strict immutable-artifact checks against registry core 0.6.0 and adding core 0.8.0 and 0.8.1 under Node 20, Node 24 and Chromium. Include the existing `yaml` 2.8.3 security update.
+
 ## 0.3.0
 
 ### Minor Changes

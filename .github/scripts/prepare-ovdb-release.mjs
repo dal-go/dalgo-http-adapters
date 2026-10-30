@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { ovdbReleaseCores } from "./ovdb-release-cores.mjs";
 
 const [mode, directoryArg, sourceSHA, version, consumerReceiptArg] = process.argv.slice(2);
 if (!["pack", "verify"].includes(mode) || !directoryArg || !/^[0-9a-f]{40}$/.test(sourceSHA ?? "") || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version ?? "")) throw new Error("mode, artifact directory, exact source SHA and version required");
@@ -21,7 +22,7 @@ const inspect = tarball => {
   failUnless(Object.entries(identity).every(([key, value]) => manifest[key] === value), "wrong packed package/version/gitHead");
   failUnless(manifest.publishConfig?.access === "public" && manifest.publishConfig?.registry === "https://registry.npmjs.org", "public registry access required");
   failUnless(manifest.dependencies?.["@dalgo/core"] === undefined && manifest.optionalDependencies?.["@dalgo/core"] === undefined && manifest.peerDependenciesMeta?.["@dalgo/core"] === undefined, "@dalgo/core must be a required peer only");
-  failUnless(!manifest.private && manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.7.0" && !manifest.peerDependencies?.["@dal-go/dalgo"], "wrong packed core peer");
+  failUnless(!manifest.private && manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.9.0" && !manifest.peerDependencies?.["@dal-go/dalgo"], "wrong packed core peer");
   for (const section of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     failUnless(Object.entries(manifest[section] ?? {}).every(([name, value]) => name !== "@dal-go/dalgo" && !/^(file:|link:|workspace:|git[+:]|github:|https?:)/.test(value)), "repository-only or legacy dependency");
   }
@@ -48,9 +49,8 @@ if (mode === "pack") {
   failUnless(manifest.name === identity.name && manifest.version === version, "source package identity mismatch");
   // npm tarball publication reads gitHead from the packed manifest. Explicitly
   // bind it to the authorized checkout without editing its tracked manifest.
-  // The npm artifact stays query-only and tested against the released core 0.6
-  // family: the source manifest's GitHub-path-only "./client" export, "dist"
-  // file entry and wider core peer are not published until a release gate covers them.
+  // The npm artifact stays query-only. Its wider core peer is admitted only by
+  // the required registry-core matrix; the GitHub-path-only client stays private.
   const { "./client": _client, ...publishedExports } = manifest.exports;
   const published = {
     ...manifest,
@@ -58,9 +58,6 @@ if (mode === "pack") {
     // Staging copies no "dist", so npm packs none; dropping it from "files" keeps the
     // published manifest honest (kept deliberately, not for filtering).
     files: manifest.files.filter(file => file !== "dist"),
-    peerDependencies: manifest.peerDependencies?.["@dalgo/core"] === ">=0.6.0 <0.9.0"
-      ? { ...manifest.peerDependencies, "@dalgo/core": ">=0.6.0 <0.7.0" }
-      : manifest.peerDependencies,
     gitHead: sourceSHA,
   };
   writeFileSync(resolve(staging, "package.json"), JSON.stringify(published, null, 2) + "\n");
@@ -81,14 +78,22 @@ if (mode === "pack") {
   const hashes = digest(readFileSync(receipt.tarball));
   failUnless(hashes.sha256 === receipt.sha256 && hashes.integrity === receipt.integrity && consumer.tarball === receipt.tarball && consumer.sha256 === hashes.sha256 && consumer.integrity === hashes.integrity, "tested artifact bytes mismatch");
   failUnless(consumer.sourceSHA === sourceSHA && Object.entries(identity).every(([key, value]) => consumer.package?.[key] === value), "wrong tested package/version/gitHead");
-  failUnless(consumer.core?.version === "0.6.0" && consumer.core.resolved === "https://registry.npmjs.org/@dalgo/core/-/core-0.6.0.tgz" && consumer.core.integrity === "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==", "wrong tested registry core");
-  failUnless(consumer.browser?.synthetic === true && consumer.browser.providerRequests === 0 && consumer.browser.blockedExternalRequests?.length === 0 && consumer.browser.core === "registry:0.6.0" && consumer.browser.defaultNativeFetch === true && consumer.browser.nativeDefaultPosts === 2 && consumer.browser.nativeDefaultRows === 2 && consumer.browser.explicitNativeFetch === true && consumer.browser.nativeExplicitPosts === 2 && consumer.browser.nativeExplicitRows === 2, "native synthetic registry consumer receipt required");
-  failUnless(Array.isArray(consumer.runtimes) && consumer.runtimes.length === 2, "Node 20 and Node 24 runtime receipts required");
-  for (const [index, major] of [20, 24].entries()) {
-    const proof = consumer.runtimes[index];
-    failUnless(typeof proof?.nodeVersion === "string" && (major === 20 ? proof.nodeVersion === "v20.0.0" : /^v24\./.test(proof.nodeVersion)), `wrong Node ${major} runtime`);
-    failUnless(proof.synthetic === true && proof.typedImports === true && proof.nativeRows === 1 && proof.preIORefusal === true && proof.providerRequests === 0 && proof.core === "registry:0.6.0", "strict typed/public synthetic runtime proof required");
-    failUnless(proof.sourceSHA === sourceSHA && proof.sha256 === hashes.sha256 && proof.integrity === hashes.integrity && Object.entries(identity).every(([key, value]) => proof.package?.[key] === value), "runtime artifact identity mismatch");
+  const verifyConsumer = (tested, core) => {
+    failUnless(/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(core.integrity) && tested.core?.version === core.version && tested.core.resolved === core.resolved && tested.core.integrity === core.integrity, "wrong tested registry core");
+    failUnless(tested.tarball === receipt.tarball && tested.sourceSHA === sourceSHA && tested.sha256 === hashes.sha256 && tested.integrity === hashes.integrity && Object.entries(identity).every(([key, value]) => tested.package?.[key] === value), "core matrix artifact identity mismatch");
+    failUnless(tested.browser?.synthetic === true && tested.browser.providerRequests === 0 && tested.browser.blockedExternalRequests?.length === 0 && tested.browser.core === `registry:${core.version}` && tested.browser.defaultNativeFetch === true && tested.browser.nativeDefaultPosts === 2 && tested.browser.nativeDefaultRows === 2 && tested.browser.explicitNativeFetch === true && tested.browser.nativeExplicitPosts === 2 && tested.browser.nativeExplicitRows === 2, "native synthetic registry consumer receipt required");
+    failUnless(Array.isArray(tested.runtimes) && tested.runtimes.length === 2, "Node 20 and Node 24 runtime receipts required");
+    for (const [index, major] of [20, 24].entries()) {
+      const proof = tested.runtimes[index];
+      failUnless(typeof proof?.nodeVersion === "string" && (major === 20 ? proof.nodeVersion === "v20.0.0" : /^v24\./.test(proof.nodeVersion)), `wrong Node ${major} runtime`);
+      failUnless(proof.synthetic === true && proof.typedImports === true && proof.nativeRows === 1 && proof.preIORefusal === true && proof.providerRequests === 0 && proof.core === `registry:${core.version}`, "strict typed/public synthetic runtime proof required");
+      failUnless(proof.sourceSHA === sourceSHA && proof.sha256 === hashes.sha256 && proof.integrity === hashes.integrity && Object.entries(identity).every(([key, value]) => proof.package?.[key] === value), "runtime artifact identity mismatch");
+    }
+  };
+  verifyConsumer(consumer, ovdbReleaseCores[0]);
+  failUnless(Array.isArray(consumer.coreMatrix) && consumer.coreMatrix.length === ovdbReleaseCores.length, "complete registry core matrix required");
+  for (const [index, core] of ovdbReleaseCores.entries()) {
+    verifyConsumer(consumer.coreMatrix[index], core);
   }
   inspect(receipt.tarball);
 }

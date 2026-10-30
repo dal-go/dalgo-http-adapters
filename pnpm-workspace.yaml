@@ -4,33 +4,22 @@ packages:
 overrides:
   "@dalgo/http>@dalgo/core": "0.8.0"
   "@dalgo/d1>@dalgo/core": "0.8.0"
-  "@dalgo/firestore>@dalgo/core": "github:dal-go/dalgo-js#c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7"
-  "@dal-go/dalgo": "github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d"
+  "@dalgo/firestore>@dalgo/core": "0.8.1"
+  "@dal-go/dalgo": "npm:@dalgo/core@0.8.1"
   "@dalgo/bigquery>@dalgo/core": "0.1.0"
-  "@dalgo/core": "github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d"
+  "@dalgo/core": "0.8.1"
   "@dalgo/indexeddb>@dalgo/core": "0.8.0"
-  # The DataTug web UI pins @dalgo/core 0.7.4 at this commit. The shared
-  # browser runtime and the two reference adapters use exactly that commit so
-  # the browser never contains two Key/Query identities. Swap all three for a
-  # published core release when the consumer upgrade is deliberate.
-  "@dalgo/adapter-runtime>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
-  "@dal-go/dalgo2couchdb>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
-  "@dal-go/dalgo2libsql>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
-  "@dal-go/dalgo2postgrest>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
-  "@dal-go/dalgo2typesense>@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559"
-  # OVDB uses this reviewed core snapshot until its consumer deliberately
-  # moves to a published core release.
-  "@dalgo/ovdb>@dalgo/core": "github:dal-go/dalgo-js#81f4bd385ea263206cb3a1e7216e7d6336f8b30d"
-  # sqlite-wasm retains its capabilities-capable core 0.7.4 snapshot until
-  # a deliberate consumer upgrade (and then drops the allowBuilds entry).
-  "@dalgo/sqlite-wasm>@dalgo/core": "github:dal-go/dalgo-js#24eb5b7ef8f044c274cb33beda353b2413e17c42"
+  # The shared browser runtime and native adapters use released core 0.8.1,
+  # including its reviewed Firestore and capabilities changes.
+  "@dalgo/adapter-runtime>@dalgo/core": "0.8.1"
+  "@dal-go/dalgo2couchdb>@dalgo/core": "0.8.1"
+  "@dal-go/dalgo2libsql>@dalgo/core": "0.8.1"
+  "@dal-go/dalgo2postgrest>@dalgo/core": "0.8.1"
+  "@dal-go/dalgo2typesense>@dalgo/core": "0.8.1"
+  "@dalgo/ovdb>@dalgo/core": "0.8.1"
+  "@dalgo/sqlite-wasm>@dalgo/core": "0.8.1"
 
 allowBuilds:
-  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/c2754fb0eff3a40c24a10320fbf3b5520ecbd7c7": true
-  "@dal-go/dalgo@https://codeload.github.com/dal-go/dalgo-js/tar.gz/04ce7f644fc334da7e471f0be503a7b937c7025d": true
-  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/81f4bd385ea263206cb3a1e7216e7d6336f8b30d": true
-  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/24eb5b7ef8f044c274cb33beda353b2413e17c42": true
-  "@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559": true
   "@firebase/util@1.15.3": false
   "esbuild@0.28.2": false
   "protobufjs@7.6.6": false
@@ -40,3 +29,4 @@ minimumReleaseAgeExclude:
   - '@dalgo/core@0.2.0'
   - '@dalgo/core@0.6.0'
   - '@dalgo/core@0.8.0'
+  - '@dalgo/core@0.8.1'

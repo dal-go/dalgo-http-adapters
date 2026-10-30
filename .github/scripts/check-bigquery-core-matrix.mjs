@@ -1,7 +1,7 @@
 // Preserve core0.1, core0.6 and core0.8, and prove each packed companion adapter
-// shares one strict registry core with BigQuery in a browser. HTTP requires core
-// 0.8; the OVDB npm artifact is deliberately gated to core 0.6, so no single core
-// satisfies both and each pairs with BigQuery on its own core line.
+// shares one strict registry core with BigQuery in a browser. Preserve the
+// existing OVDB/core 0.6 pairing and HTTP/core 0.8 pairing; OVDB's own release
+// matrix additionally requires core 0.8.0 and 0.8.1.
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';

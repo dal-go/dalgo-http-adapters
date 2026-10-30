@@ -1,5 +1,5 @@
 // Node 24. Packs the browser adapters, installs only those tarballs plus the
-// exact modern @dalgo/core commit in a fresh directory outside this repository,
+// exact released @dalgo/core version in a fresh directory outside this repository,
 // and type-checks/runs a consumer that never has @dal-go/dalgo available.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -18,8 +18,10 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CORE_COMMIT = "99165e9e1a39c32abee2b39d6395677843bc3559";
-const CORE_SPEC = `git+https://github.com/dal-go/dalgo-js.git#${CORE_COMMIT}`;
+const CORE_VERSION = "0.8.1";
+const CORE_SPEC = `@dalgo/core@${CORE_VERSION}`;
+const CORE_TARBALL = `https://registry.npmjs.org/@dalgo/core/-/core-${CORE_VERSION}.tgz`;
+const CORE_INTEGRITY = "sha512-stXi8PPeR3G7AxCairfJEMDGd4KuiU5eyipPDgibCEVlRD435t2FvfQQj3mp+FgZEVzcdel4Z4Iwq3xm9URRSA==";
 const TYPESCRIPT_SPEC = "typescript@6.0.3";
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
 
@@ -128,6 +130,7 @@ try {
     "--no-audit",
     "--no-fund",
     "--save-exact",
+    "--registry=https://registry.npmjs.org",
     tarball("dalgo-adapter-runtime-"),
     tarball("dal-go-dalgo2couchdb-"),
     tarball("dal-go-dalgo2libsql-"),
@@ -154,11 +157,12 @@ try {
   );
 
   const core = lock.packages["node_modules/@dalgo/core"];
-  assert.equal(core?.version, "0.7.4");
-  assert.match(String(core?.resolved), new RegExp(`${CORE_COMMIT}$`, "u"));
+  assert.equal(core?.version, CORE_VERSION);
+  assert.equal(core.resolved, CORE_TARBALL);
+  assert.equal(core.integrity, CORE_INTEGRITY);
   const coreManifest = JSON.parse(readFileSync(join(consumer, "node_modules", "@dalgo", "core", "package.json"), "utf8"));
   assert.equal(coreManifest.name, "@dalgo/core");
-  assert.equal(coreManifest.version, "0.7.4");
+  assert.equal(coreManifest.version, CORE_VERSION);
 
   for (const name of ["postgrest", "couchdb", "libsql", "typesense", "adapter-runtime"]) {
     for (const file of walk(join(repository, "packages", name, "src"))) {
@@ -292,7 +296,7 @@ try {
 
   const receipt = {
     scratch,
-    core: { name: coreManifest.name, version: coreManifest.version, resolved: core.resolved },
+    core: { name: coreManifest.name, version: coreManifest.version, resolved: core.resolved, integrity: core.integrity },
     packages: Object.fromEntries(Object.entries(packageRoots).map(([label, root]) => {
       const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
       return [label, { name: manifest.name, version: manifest.version }];

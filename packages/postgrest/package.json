@@ -1,6 +1,6 @@
 {
   "name": "@dal-go/dalgo2postgrest",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "PostgREST HTTP adapter for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.20.0",
