@@ -140,7 +140,7 @@ importers:
     devDependencies:
       '@dalgo/core':
         specifier: 0.1.0
-        version: 0.1.0
+        version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -262,7 +262,7 @@ importers:
     devDependencies:
       '@dalgo/core':
         specifier: 0.8.0
-        version: 0.8.0
+        version: 0.8.1
       '@dalgo/sqlite-sql':
         specifier: workspace:^
         version: link:../sqlite-sql
@@ -432,7 +432,7 @@ importers:
     devDependencies:
       '@dalgo/core':
         specifier: 0.8.0
-        version: 0.8.0
+        version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -459,7 +459,7 @@ importers:
     devDependencies:
       '@dalgo/core':
         specifier: 0.8.0
-        version: 0.8.0
+        version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.11.0)
@@ -1205,14 +1205,6 @@ packages:
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
 
-  '@dalgo/core@0.1.0':
-    resolution: {integrity: sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==}
-    engines: {node: '>=20'}
-
-  '@dalgo/core@0.8.0':
-    resolution: {integrity: sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A==}
-    engines: {node: '>=20'}
-
   '@dalgo/core@0.8.1':
     resolution: {integrity: sha512-stXi8PPeR3G7AxCairfJEMDGd4KuiU5eyipPDgibCEVlRD435t2FvfQQj3mp+FgZEVzcdel4Z4Iwq3xm9URRSA==}
     engines: {node: '>=20'}
@@ -1841,6 +1833,7 @@ packages:
   '@smithy/core@3.34.1':
     resolution: {integrity: sha512-dLcOUxz8YCv1RZUMKq6GbyUf95pLbrqh34bPvpCZ1+CByFF31BEAFewZjsGCnVsZTKdThNENfGyAgk2TJqVwSw==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==}
@@ -3189,12 +3182,6 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
 
   '@csstools/css-tokenizer@3.0.4': {}
-
-  '@dalgo/core@0.1.0': {}
-
-  '@dalgo/core@0.8.0':
-    dependencies:
-      yaml: 2.9.1
 
   '@dalgo/core@0.8.1':
     dependencies:
