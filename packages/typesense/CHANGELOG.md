@@ -1,5 +1,11 @@
 # @dalgo/dalgo2typesense
 
+## 0.2.2
+
+### Patch Changes
+
+- 7d4cac1: Include the repository MIT license as the regular LICENSE file declared in the Typesense package manifest.
+
 ## 0.2.1
 
 ### Patch Changes
