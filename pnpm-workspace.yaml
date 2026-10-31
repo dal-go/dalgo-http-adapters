@@ -6,7 +6,7 @@ overrides:
   "@dalgo/d1>@dalgo/core": "0.8.0"
   "@dalgo/firestore>@dalgo/core": "0.8.1"
   "@dal-go/dalgo": "npm:@dalgo/core@0.8.1"
-  "@dalgo/bigquery>@dalgo/core": "0.1.0"
+  "@dalgo/bigquery>@dalgo/core": "0.8.1"
   "@dalgo/core": "0.8.1"
   "@dalgo/indexeddb>@dalgo/core": "0.8.0"
   # The shared browser runtime and native adapters use released core 0.8.1,
