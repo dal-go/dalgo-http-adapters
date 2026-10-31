@@ -1,5 +1,12 @@
 # @dalgo/firestore
 
+## 0.4.2
+
+### Patch Changes
+
+- Support Firebase 13.1 alongside Firebase 12.19, qualified with both SDK lines
+  through the adapter checks and real Firestore emulator journeys.
+
 ## 0.4.1
 
 ### Patch Changes
