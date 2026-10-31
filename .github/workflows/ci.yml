@@ -15,7 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check release workflow policy handoff and package selection
-        run: python3 .github/scripts/test-release-workflow.py
+        run: |
+          python3 .github/scripts/test-release-workflow.py
+          python3 .github/scripts/test-firestore-release.py
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.20.0
@@ -38,6 +40,48 @@ jobs:
       - run: pnpm check
       - name: Verify HTTP check without pre-existing generated output
         run: pnpm --filter @dalgo/http run check:clean-output
+      - run: pnpm --filter @dalgo/firestore run test:emulator
+
+  firestore-sdk-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: node:24.22.2-bookworm@sha256:e7add2a490bb17d97b485b8641bd88455fff7839ade0f5eba493c3508124d413
+      options: --memory=8g --memory-swap=8g --cpus=2 --pids-limit=128
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        firebase: ['12.19.0', '13.1.0']
+    env:
+      FIREBASE_SDK_VERSION: ${{ matrix.firebase }}
+      NODE_OPTIONS: --max-old-space-size=2048
+      JAVA_TOOL_OPTIONS: -Xmx1g -XX:ActiveProcessorCount=2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.22.2'
+          cache: pnpm
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: pnpm install --frozen-lockfile
+      # Only the disposable runner workspace changes; retain the reviewed lockfile.
+      - name: Select the real Firebase SDK under qualification
+        run: pnpm --filter @dalgo/firestore add --save-dev --save-exact "firebase@$FIREBASE_SDK_VERSION" --ignore-scripts
+      - name: Verify the installed SDK version
+        working-directory: packages/firestore
+        run: >-
+          node --input-type=module -e "import { readFileSync } from 'node:fs';
+          const sdk = JSON.parse(readFileSync('node_modules/firebase/package.json', 'utf8'));
+          if (sdk.version !== process.env.FIREBASE_SDK_VERSION) throw new Error('Wrong Firebase SDK installed');
+          console.log('Qualified Firebase SDK:', sdk.version);"
+      - run: pnpm --filter @dalgo/firestore run check
       - run: pnpm --filter @dalgo/firestore run test:emulator
 
   adapter-git-subdir-consumer:

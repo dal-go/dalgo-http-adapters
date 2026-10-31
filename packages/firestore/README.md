@@ -15,6 +15,9 @@ The adapter uses the separately published `@dalgo/core` contracts. Its required
 peer range is `@dalgo/core >=0.8.0 <0.9.0`, the first core line with the TugQL
 names.
 
+The Firebase peer supports `^12.19.0 || ^13.1.0`. CI selects each SDK line
+explicitly and runs the adapter checks and real Firestore emulator journeys.
+
 ## Browser setup
 
 ```ts
