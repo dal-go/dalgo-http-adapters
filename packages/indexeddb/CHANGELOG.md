@@ -1,5 +1,11 @@
 # @dalgo/indexeddb
 
+## 0.4.1
+
+### Patch Changes
+
+- Scan configured collection stores through their unique primary-key cursors, avoiding duplicate collection-index traversal while preserving scope isolation, exact ordering, bounded page retention, and cancellation. Shared stores retain their scoped index scans.
+
 ## 0.4.0
 
 ### Minor Changes

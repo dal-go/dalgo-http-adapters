@@ -14,11 +14,11 @@ on:
         type: string
 
       release_package:
-        description: Select all ordinary version-PR releases, or only a merged Firestore patch
+        description: Select all ordinary version-PR releases, or only a merged Firestore or IndexedDB patch
         required: false
         default: all
         type: choice
-        options: [all, firestore]
+        options: [all, firestore, indexeddb]
 
 permissions: {}
 
@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   version:
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_sha == '' && inputs.release_package != 'firestore')
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_sha == '' && inputs.release_package == 'all')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -161,14 +161,14 @@ jobs:
             .merged_at != null and
             .merge_commit_sha == $sha and
             .base.ref == "main" and
-            ($scope == "firestore" or .head.ref == "changeset-release/main") and
+            (($scope == "firestore" or $scope == "indexeddb") or .head.ref == "changeset-release/main") and
             .head.repo.full_name == $repo
           )] | length == 1' --arg sha "$SOURCE_SHA" --arg repo "$REPOSITORY" --arg scope "${RELEASE_PACKAGE:-all}" <<< "$prs" >/dev/null
-          if [[ "${RELEASE_PACKAGE:-all}" == firestore ]]; then
-            python3 .github/scripts/verify-firestore-release.py "$SOURCE_SHA"
-          else
-            [[ "${RELEASE_PACKAGE:-all}" == all ]] || exit 1
-          fi
+          case "${RELEASE_PACKAGE:-all}" in
+            firestore|indexeddb) python3 .github/scripts/verify-firestore-release.py "$SOURCE_SHA" "$RELEASE_PACKAGE" ;;
+            all) ;;
+            *) exit 1 ;;
+          esac
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.20.0
@@ -194,10 +194,14 @@ jobs:
           RELEASE_PACKAGE: ${{ inputs.release_package || 'all' }}
         run: |
           set -euo pipefail
-          if [[ "${RELEASE_PACKAGE:-all}" == firestore ]]; then
-            pnpm --filter @dalgo/firestore check
-            exit 0
-          fi
+          case "${RELEASE_PACKAGE:-all}" in
+            firestore|indexeddb)
+              pnpm --filter "@dalgo/$RELEASE_PACKAGE" check
+              exit 0
+              ;;
+            all) ;;
+            *) exit 1 ;;
+          esac
           pnpm --filter @dalgo/adapter-runtime check
           pnpm --filter @dalgo/dalgo2clickhouse check
           pnpm --filter @dalgo/dalgo2couchdb check
@@ -239,7 +243,7 @@ jobs:
           # Runtime precedes its adapters; sqlite-sql precedes sqlite-wasm and d1.
           for package in adapter-runtime clickhouse couchdb libsql postgrest typesense firestore indexeddb bigquery http ovdb sqlite-sql sqlite-wasm d1; do
             # Scope before reading or validating any unselected package manifest.
-            if [[ "${RELEASE_PACKAGE:-all}" == firestore && "$package" != firestore ]]; then
+            if [[ "${RELEASE_PACKAGE:-all}" != all && "$package" != "$RELEASE_PACKAGE" ]]; then
               continue
             fi
             manifest="packages/$package/package.json"

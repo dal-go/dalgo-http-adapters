@@ -227,12 +227,12 @@ fi
     (root/'sleep').write_text('#!/usr/bin/env bash\necho sleep >> "$MOCK_SLEEP_LOG"\n')
     for executable in ['git', 'npm', 'curl', 'node', 'sleep', 'timeout']:
         (root/executable).chmod(0o755)
-    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http', 'sqlite_changed', 'd1_changed', 'native_changed', 'native_wrong_name', 'native_runtime_failure', 'firestore_scoped'] + list(native_old_scope_cases):
+    for case in ['unchanged', 'bigquery_changed', 'publish_error', 'wrong_source', 'registry_error', 'registry_existing', 'mixed_preceding_failure', 'wrong_artifact', 'wrong_core', 'wrong_packed_githead', 'wrong_registry_integrity', 'pack_error', 'checker_error', 'checker_error_modern', 'missing_matrix_report', 'firestore_changed', 'indexeddb_changed', 'mixed_firestore_failure', 'mixed_preceding_wrong_source', 'nested_registry_metadata', 'conflicting_registry_metadata', 'metadata_pending', 'metadata_delayed', 'metadata_network', 'metadata_auth', 'http_changed', 'http_checker_error', 'http_wrong_source', 'http_wrong_registry_integrity', 'http_registry_error', 'http_wrong_metadata_name', 'http_wrong_metadata_version', 'http_registry_existing', 'mixed_bigquery_http', 'sqlite_changed', 'd1_changed', 'native_changed', 'native_wrong_name', 'native_runtime_failure', 'firestore_scoped', 'indexeddb_scoped'] + list(native_old_scope_cases):
         log, seen = (root/f'{case}.{suffix}' for suffix in ['log','seen'])
         for package in public_packages:
             manifest = root/'packages'/package/'package.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
-            version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed','sqlite_changed','d1_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure','firestore_scoped']) else '0.1.0'
+            version = '0.2.0' if (package == 'bigquery' and case not in ['unchanged','firestore_changed','indexeddb_changed','sqlite_changed','d1_changed']) or (package == 'indexeddb' and case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source','indexeddb_scoped']) or (package == 'firestore' and case in ['firestore_changed','mixed_firestore_failure','firestore_scoped']) else '0.1.0'
             if case.startswith('http_'):
                 version = '0.2.0' if package == 'http' else '0.1.0'
             elif case == 'mixed_bigquery_http':
@@ -248,17 +248,19 @@ fi
             if package == native_old_scope_cases.get(case):
                 name = '@dal-go/dalgo2' + package
             manifest.write_text(json.dumps({'name': name, 'version': version}))
-        if case == 'firestore_scoped':
+        if case in ['firestore_scoped', 'indexeddb_scoped']:
+            selected_scope = case.removesuffix('_scoped')
             # Missing unselected manifests prove scope selection precedes every read.
             for package in public_packages:
-                if package != 'firestore': (root/'packages'/package/'package.json').unlink()
-        env=dict(os.environ,RELEASE_PACKAGE='firestore' if case == 'firestore_scoped' else 'all',PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
+                if package != selected_scope: (root/'packages'/package/'package.json').unlink()
+        env=dict(os.environ,RELEASE_PACKAGE=case.removesuffix('_scoped') if case.endswith('_scoped') else 'all',PATH=f'{root}:'+os.environ['PATH'],CASE=case,MOCK_LOG=str(log),MOCK_SEEN=str(seen),MOCK_SHA=sha,BIGQUERY_ARTIFACT_DIR=str(root/f'{case}.artifact'),BIGQUERY_CONSUMER_DIR=str(root/f'{case}.consumer'),BIGQUERY_NODE20=str(root/'node20'),HTTP_NODE20=str(root/'node20'),HTTP_ARTIFACT_DIR=str(root/f'{case}.http-artifact'),HTTP_CONSUMER_DIR=str(root/f'{case}.http-consumer'),MOCK_VIEW_LOG=str(root/f'{case}.views'),MOCK_SLEEP_LOG=str(root/f'{case}.sleeps'))
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
         calls=log.read_text() if log.exists() else ''
-        if case == 'firestore_scoped':
+        if case in ['firestore_scoped', 'indexeddb_scoped']:
             assert result.returncode == 0, (case,result.stderr,calls)
-            assert calls.splitlines() == ['publish firestore','git tag -a firestore@v0.2.0 '+sha+' -m @dalgo/firestore 0.2.0','git push origin refs/tags/firestore@v0.2.0'], calls
-            print('PASS scoped Firestore: no unselected manifest read, pack, publish or tag')
+            selected_scope = case.removesuffix('_scoped')
+            assert calls.splitlines() == [f'publish {selected_scope}', f'git tag -a {selected_scope}@v0.2.0 {sha} -m @dalgo/{selected_scope} 0.2.0', f'git push origin refs/tags/{selected_scope}@v0.2.0'], calls
+            print(f'PASS scoped {selected_scope}: no unselected manifest read, pack, publish or tag')
             continue
         if case.startswith('native_'):
             assert (result.returncode == 0) == (case == 'native_changed'), (case,result.stderr,calls)
@@ -302,7 +304,7 @@ fi
         assert (result.returncode == 0) == (case in ['unchanged','bigquery_changed','registry_existing','firestore_changed','indexeddb_changed','metadata_delayed']), (case,result.stderr,calls)
         assert ('publish bigquery' in calls) == (case in ['bigquery_changed','publish_error','wrong_source','wrong_registry_integrity','metadata_pending','metadata_delayed','metadata_network','metadata_auth']), (case,calls)
         assert ('publish firestore' in calls) == (case in ['firestore_changed','mixed_firestore_failure']), (case,calls)
-        assert ('publish indexeddb' in calls) == (case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source']), (case,calls)
+        assert ('publish indexeddb' in calls) == (case in ['mixed_preceding_failure','indexeddb_changed','mixed_preceding_wrong_source','indexeddb_scoped']), (case,calls)
         assert ('git push origin refs/tags/bigquery@v0.2.0' in calls) == (case in ['bigquery_changed','registry_existing','metadata_delayed']), (case,calls)
         assert calls.count('artifact pack') == (0 if case in ['unchanged','mixed_preceding_failure','mixed_firestore_failure','mixed_preceding_wrong_source','firestore_changed','indexeddb_changed'] else 1), (case,calls)
         assert calls.count('artifact check') == (0 if case in ['unchanged','mixed_preceding_failure','mixed_firestore_failure','mixed_preceding_wrong_source','pack_error','firestore_changed','indexeddb_changed'] else 1), (case,calls)
@@ -344,6 +346,26 @@ assert literal == 'sha512-mock' and nested == 'null', (literal,nested)
 assert "jq -r '.[\"dist.integrity\"]'" in workflow
 print('PASS npm selected-field integrity uses literal dotted key; nested parser yields null')
 
+# Execute the actual check selection with a mocked pnpm command. The scoped
+# branch must select one adapter before the ordinary all-package checks.
+start = workflow.index('          case "${RELEASE_PACKAGE:-all}" in', workflow.index('      - name: Check published adapters'))
+end = workflow.index('      - name: Set tag-push credential', start)
+shell = 'set -euo pipefail\n' + '\n'.join(line[10:] for line in workflow[start:end].splitlines()) + '\n'
+with tempfile.TemporaryDirectory(prefix='adapters-scoped-checks-') as directory:
+    root = Path(directory)
+    (root/'run.sh').write_text(shell)
+    (root/'pnpm').write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$MOCK_LOG"\n')
+    (root/'pnpm').chmod(0o755)
+    for scope in ['firestore', 'indexeddb', 'all', 'http']:
+        log = root/f'{scope}.log'
+        env = dict(os.environ, PATH=f'{root}:'+os.environ['PATH'], RELEASE_PACKAGE=scope, MOCK_LOG=str(log))
+        result = subprocess.run(['bash', str(root/'run.sh')], env=env, capture_output=True, text=True)
+        assert (result.returncode == 0) == (scope != 'http'), (scope, result.stderr)
+        calls = log.read_text().splitlines() if log.exists() else []
+        expected = [f'--filter {package_names[package]} check' for package in public_packages] if scope == 'all' else [] if scope == 'http' else [f'--filter @dalgo/{scope} check']
+        assert calls == expected, (scope, calls)
+        print('PASS scoped check selection', scope)
+
 # The publish job must authorize an exact merged, same-repository version PR.
 import json
 start=workflow.index('          [[ "$SOURCE_SHA" =~')
@@ -362,10 +384,14 @@ else exit 99
 fi
 ''')
     (root/'gh').write_text('#!/usr/bin/env bash\ncat "$MOCK_PRS"\n')
+    guard = root/'.github/scripts/verify-firestore-release.py'
+    guard.parent.mkdir(parents=True)
+    guard.write_text('import os, sys\nassert sys.argv[1] == os.environ["SOURCE_SHA"]\nassert sys.argv[2] == os.environ["RELEASE_PACKAGE"]\nassert sys.argv[2] in {"firestore", "indexeddb"}\n')
     (root/'git').chmod(0o755)
     (root/'gh').chmod(0o755)
-    for case in ['merged', 'unmerged', 'wrong_sha', 'wrong_base', 'wrong_head', 'fork', 'duplicate', 'invalid_sha', 'wrong_checkout', 'off_main']:
+    for case in ['merged', 'unmerged', 'wrong_sha', 'wrong_base', 'wrong_head', 'fork', 'duplicate', 'invalid_sha', 'wrong_checkout', 'off_main', 'firestore_scoped', 'indexeddb_scoped', 'invalid_scope']:
         pr={'merged_at':'2026-10-06T10:00:00Z','merge_commit_sha':sha,'base':{'ref':'main'},'head':{'ref':'changeset-release/main','repo':{'full_name':'dal-go/dalgo-http-adapters'}}}
+        if case.endswith('_scoped'): pr['head']['ref']='release/scoped-fix'
         if case == 'unmerged': pr['merged_at']=None
         if case == 'wrong_sha': pr['merge_commit_sha']='0'*40
         if case == 'wrong_base': pr['base']['ref']='other'
@@ -373,9 +399,9 @@ fi
         if case == 'fork': pr['head']['repo']['full_name']='other/dalgo-http-adapters'
         prs=root/'prs.json'
         prs.write_text(json.dumps([pr,pr] if case == 'duplicate' else [pr]))
-        env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,SOURCE_SHA='not-a-sha' if case == 'invalid_sha' else sha,REPOSITORY='dal-go/dalgo-http-adapters',MOCK_PRS=str(prs))
+        env=dict(os.environ,PATH=f'{root}:'+os.environ['PATH'],CASE=case,SOURCE_SHA='not-a-sha' if case == 'invalid_sha' else sha,REPOSITORY='dal-go/dalgo-http-adapters',MOCK_PRS=str(prs),RELEASE_PACKAGE=case.removesuffix('_scoped') if case.endswith('_scoped') else 'http' if case == 'invalid_scope' else 'all')
         result=subprocess.run(['bash',str(root/'run.sh')],cwd=root,env=env,capture_output=True,text=True)
-        assert (result.returncode == 0) == (case == 'merged'), (case,result.stderr)
+        assert (result.returncode == 0) == (case in ['merged', 'firestore_scoped', 'indexeddb_scoped']), (case,result.stderr)
         print(f'PASS authorization {case}: exit={result.returncode}')
 
 # Manual recovery admits all public adapters, including BigQuery, only after
