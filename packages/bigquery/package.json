@@ -51,7 +51,7 @@
     "fake-indexeddb": "6.2.5",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "5.0.1"
+    "vitest": "5.0.5"
   },
   "publishConfig": {
     "access": "public"

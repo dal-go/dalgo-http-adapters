@@ -42,7 +42,7 @@
     "eslint": "10.11.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "5.0.1"
+    "vitest": "5.0.5"
   },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/snowflake#readme",
   "bugs": {
