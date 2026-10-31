@@ -32,16 +32,16 @@ importers:
         version: '@dalgo/core@0.8.1'
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -53,19 +53,19 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -78,16 +78,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -100,16 +100,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -122,16 +122,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -143,10 +143,10 @@ importers:
         version: 0.1.0
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
@@ -155,7 +155,7 @@ importers:
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -170,7 +170,7 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@playwright/test':
         specifier: 1.64.1
         version: 1.64.1
@@ -178,14 +178,14 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -198,16 +198,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -220,16 +220,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -244,16 +244,16 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -268,19 +268,19 @@ importers:
         version: link:../sqlite-sql
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@types/node':
         specifier: 26.6.5
         version: 26.6.5
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -293,16 +293,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -315,16 +315,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -343,16 +343,16 @@ importers:
         version: 3.1136.0(@aws-sdk/client-dynamodb@3.1136.0)
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -365,16 +365,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -387,10 +387,10 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       firebase:
         specifier: 12.19.0
         version: 12.19.0
@@ -399,7 +399,7 @@ importers:
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -411,10 +411,10 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       firebase:
         specifier: 12.19.0
         version: 12.19.0
@@ -423,7 +423,7 @@ importers:
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -435,13 +435,13 @@ importers:
         version: 0.8.0
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@types/jsdom':
         specifier: 21.1.7
         version: 21.1.7
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       jsdom:
         specifier: 26.1.0
         version: 26.1.0
@@ -450,7 +450,7 @@ importers:
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -462,10 +462,10 @@ importers:
         version: 0.8.0
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
@@ -474,7 +474,7 @@ importers:
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -487,16 +487,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -509,16 +509,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -533,7 +533,7 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@playwright/test':
         specifier: 1.64.1
         version: 1.64.1
@@ -544,14 +544,14 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -564,16 +564,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -586,16 +586,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -608,16 +608,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -633,16 +633,16 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.8.3))
@@ -655,16 +655,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -677,16 +677,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -701,7 +701,7 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@playwright/test':
         specifier: 1.64.1
         version: 1.64.1
@@ -712,14 +712,14 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -732,16 +732,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -757,16 +757,16 @@ importers:
         version: 3.1136.0
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -782,16 +782,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -804,16 +804,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -826,16 +826,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -848,16 +848,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -869,19 +869,19 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@vitest/coverage-v8':
         specifier: 5.0.1
         version: 5.0.1(vitest@5.0.1)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -896,7 +896,7 @@ importers:
         version: link:../sqlite-sql
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@playwright/test':
         specifier: 1.64.1
         version: 1.64.1
@@ -913,14 +913,14 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -933,16 +933,16 @@ importers:
     devDependencies:
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -957,7 +957,7 @@ importers:
         version: 0.8.1
       '@eslint/js':
         specifier: 10.0.1
-        version: 10.0.1(eslint@10.11.0)
+        version: 10.0.1(eslint@10.14.0)
       '@playwright/test':
         specifier: 1.64.1
         version: 1.64.1
@@ -968,14 +968,14 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
       eslint:
-        specifier: 10.11.0
-        version: 10.11.0
+        specifier: 10.14.0
+        version: 10.14.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
       typescript-eslint:
         specifier: 8.70.0
-        version: 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+        version: 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.5)(@vitest/coverage-v8@5.0.1)(jsdom@26.1.0)(vite@8.3.0(@types/node@26.6.5)(esbuild@0.28.2)(yaml@2.9.1))
@@ -1841,6 +1841,7 @@ packages:
   '@smithy/core@3.34.1':
     resolution: {integrity: sha512-dLcOUxz8YCv1RZUMKq6GbyUf95pLbrqh34bPvpCZ1+CByFF31BEAFewZjsGCnVsZTKdThNENfGyAgk2TJqVwSw==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==}
@@ -2111,8 +2112,8 @@ packages:
     resolution: {integrity: sha512-tD40eHxA35h0PEIZNeIjkHoDR4YjjJp34biM0mDvplBe//mB+IHCqHDGV7pxF+7MklTvighcCPPZC7ynWyjdTA==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  eslint@10.11.0:
-    resolution: {integrity: sha512-P7a6UEEqb9G95MYAtqkmsTbVXIYyzIfl6NGOIJk162PaahFxFyeGcrlXYFSiagECg4sEm8IseJdZBKR3rx6MsQ==}
+  eslint@10.14.0:
+    resolution: {integrity: sha512-T0pNsxkb9IKmtQjhpK3d7nWOpFv+YHuMbTJnSVMoQblF0onvXfErrtp4V1jHtsQPan7dKaGVD0q1WCXnzMF31A==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
     hasBin: true
     peerDependencies:
@@ -3278,9 +3279,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@eslint-community/eslint-utils@4.10.1(eslint@10.11.0)':
+  '@eslint-community/eslint-utils@4.10.1(eslint@10.14.0)':
     dependencies:
-      eslint: 10.11.0
+      eslint: 10.14.0
       eslint-visitor-keys: 3.4.3
 
   '@eslint-community/regexpp@4.12.2': {}
@@ -3301,9 +3302,9 @@ snapshots:
     dependencies:
       '@types/json-schema': 7.0.15
 
-  '@eslint/js@10.0.1(eslint@10.11.0)':
+  '@eslint/js@10.0.1(eslint@10.14.0)':
     optionalDependencies:
-      eslint: 10.11.0
+      eslint: 10.14.0
 
   '@eslint/object-schema@3.0.5': {}
 
@@ -3825,15 +3826,15 @@ snapshots:
 
   '@types/tough-cookie@4.0.5': {}
 
-  '@typescript-eslint/eslint-plugin@8.70.0(@typescript-eslint/parser@8.70.0(eslint@10.11.0)(typescript@6.0.3))(eslint@10.11.0)(typescript@6.0.3)':
+  '@typescript-eslint/eslint-plugin@8.70.0(@typescript-eslint/parser@8.70.0(eslint@10.14.0)(typescript@6.0.3))(eslint@10.14.0)(typescript@6.0.3)':
     dependencies:
       '@eslint-community/regexpp': 4.12.2
-      '@typescript-eslint/parser': 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      '@typescript-eslint/parser': 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       '@typescript-eslint/scope-manager': 8.70.0
-      '@typescript-eslint/type-utils': 8.70.0(eslint@10.11.0)(typescript@6.0.3)
-      '@typescript-eslint/utils': 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      '@typescript-eslint/type-utils': 8.70.0(eslint@10.14.0)(typescript@6.0.3)
+      '@typescript-eslint/utils': 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       '@typescript-eslint/visitor-keys': 8.70.0
-      eslint: 10.11.0
+      eslint: 10.14.0
       ignore: 7.0.9
       natural-compare: 1.4.0
       ts-api-utils: 2.5.0(typescript@6.0.3)
@@ -3841,14 +3842,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@typescript-eslint/parser@8.70.0(eslint@10.11.0)(typescript@6.0.3)':
+  '@typescript-eslint/parser@8.70.0(eslint@10.14.0)(typescript@6.0.3)':
     dependencies:
       '@typescript-eslint/scope-manager': 8.70.0
       '@typescript-eslint/types': 8.70.0
       '@typescript-eslint/typescript-estree': 8.70.0(typescript@6.0.3)
       '@typescript-eslint/visitor-keys': 8.70.0
       debug: 4.4.3
-      eslint: 10.11.0
+      eslint: 10.14.0
       typescript: 6.0.3
     transitivePeerDependencies:
       - supports-color
@@ -3871,13 +3872,13 @@ snapshots:
     dependencies:
       typescript: 6.0.3
 
-  '@typescript-eslint/type-utils@8.70.0(eslint@10.11.0)(typescript@6.0.3)':
+  '@typescript-eslint/type-utils@8.70.0(eslint@10.14.0)(typescript@6.0.3)':
     dependencies:
       '@typescript-eslint/types': 8.70.0
       '@typescript-eslint/typescript-estree': 8.70.0(typescript@6.0.3)
-      '@typescript-eslint/utils': 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      '@typescript-eslint/utils': 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       debug: 4.4.3
-      eslint: 10.11.0
+      eslint: 10.14.0
       ts-api-utils: 2.5.0(typescript@6.0.3)
       typescript: 6.0.3
     transitivePeerDependencies:
@@ -3900,13 +3901,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@typescript-eslint/utils@8.70.0(eslint@10.11.0)(typescript@6.0.3)':
+  '@typescript-eslint/utils@8.70.0(eslint@10.14.0)(typescript@6.0.3)':
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.11.0)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.14.0)
       '@typescript-eslint/scope-manager': 8.70.0
       '@typescript-eslint/types': 8.70.0
       '@typescript-eslint/typescript-estree': 8.70.0(typescript@6.0.3)
-      eslint: 10.11.0
+      eslint: 10.14.0
       typescript: 6.0.3
     transitivePeerDependencies:
       - supports-color
@@ -4091,9 +4092,9 @@ snapshots:
 
   eslint-visitor-keys@5.0.1: {}
 
-  eslint@10.11.0:
+  eslint@10.14.0:
     dependencies:
-      '@eslint-community/eslint-utils': 4.10.1(eslint@10.11.0)
+      '@eslint-community/eslint-utils': 4.10.1(eslint@10.14.0)
       '@eslint-community/regexpp': 4.12.2
       '@eslint/config-array': 0.23.5
       '@eslint/config-helpers': 0.7.0
@@ -4600,13 +4601,13 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
 
-  typescript-eslint@8.70.0(eslint@10.11.0)(typescript@6.0.3):
+  typescript-eslint@8.70.0(eslint@10.14.0)(typescript@6.0.3):
     dependencies:
-      '@typescript-eslint/eslint-plugin': 8.70.0(@typescript-eslint/parser@8.70.0(eslint@10.11.0)(typescript@6.0.3))(eslint@10.11.0)(typescript@6.0.3)
-      '@typescript-eslint/parser': 8.70.0(eslint@10.11.0)(typescript@6.0.3)
+      '@typescript-eslint/eslint-plugin': 8.70.0(@typescript-eslint/parser@8.70.0(eslint@10.14.0)(typescript@6.0.3))(eslint@10.14.0)(typescript@6.0.3)
+      '@typescript-eslint/parser': 8.70.0(eslint@10.14.0)(typescript@6.0.3)
       '@typescript-eslint/typescript-estree': 8.70.0(typescript@6.0.3)
-      '@typescript-eslint/utils': 8.70.0(eslint@10.11.0)(typescript@6.0.3)
-      eslint: 10.11.0
+      '@typescript-eslint/utils': 8.70.0(eslint@10.14.0)(typescript@6.0.3)
+      eslint: 10.14.0
       typescript: 6.0.3
     transitivePeerDependencies:
       - supports-color
