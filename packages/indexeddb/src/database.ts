@@ -214,7 +214,11 @@ export class IndexedDbDatabase implements Database {
     const storeName = this.storeName(query.source.name);
     const transaction = database.transaction(storeName, "readonly");
     const done = transactionDone(transaction);
-    const result = await executeQuery(transaction.objectStore(storeName), query);
+    const store = transaction.objectStore(storeName);
+    const result = await executeQuery(this.#storesByCollection === undefined ? store : {
+      index: (name) => store.index(name),
+      openCollectionCursor: () => store.openCursor(),
+    }, query);
     await done;
     return result;
   }

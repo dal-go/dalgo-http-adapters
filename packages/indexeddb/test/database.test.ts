@@ -1,5 +1,5 @@
 import { DOCUMENT_ID, AlreadyExistsError, NotFoundError, UnsupportedError, collection, collectionGroup, executeRecursiveTugQLQuery, key, parseRecursiveTugQL, type TugQLSchema, type StructuredQuery } from "@dalgo/core";
-import { IDBFactory, IDBIndex } from "fake-indexeddb";
+import { IDBCursor, IDBFactory, IDBIndex, IDBObjectStore } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { IndexedDbDatabase, withIndexedDbQueryHints } from "../src/index.js";
 
@@ -11,8 +11,11 @@ interface Item {
   readonly details?: { readonly owner: string };
 }
 
-function database(): IndexedDbDatabase {
-  return new IndexedDbDatabase({ name: "test", factory: new IDBFactory() });
+function database(dedicated = false): IndexedDbDatabase {
+  return new IndexedDbDatabase({
+    name: "test", factory: new IDBFactory(),
+    ...(dedicated ? { collections: ["items", "money", "numbers"] } : {}),
+  });
 }
 
 const items = collection<Item>("items");
@@ -129,8 +132,8 @@ describe("IndexedDbDatabase", () => {
     ))).rejects.toBeInstanceOf(AlreadyExistsError);
   });
 
-  it("filters, orders, offsets, and pages collection records", async () => {
-    const db = database();
+  it.each([false, true])("filters, orders, offsets, and pages collection records (dedicated: %s)", async (dedicated) => {
+    const db = database(dedicated);
     await db.runReadwriteTransaction(async (transaction) => {
       await transaction.set(items.key("milk"), { title: "Milk", done: false, rank: 1, tags: ["food"], details: { owner: "a" } });
       await transaction.set(items.key("bread"), { title: "Bread", done: false, rank: 2, tags: ["food"], details: { owner: "b" } });
@@ -163,10 +166,10 @@ describe("IndexedDbDatabase", () => {
     expect(byKey.records.map(({ data }) => data.title)).toEqual(["Bread"]);
   });
 
-  it("compares hinted decimal and wide integer tokens exactly while preserving text ordering", async () => {
+  it.each([false, true])("compares hinted decimal and wide integer tokens exactly while preserving text ordering (dedicated: %s)", async (dedicated) => {
     interface Money { readonly amount: string; readonly zip: string }
     const money = collection<Money>("money");
-    const db = database();
+    const db = database(dedicated);
     await db.runReadwriteTransaction(async (transaction) => {
       await transaction.set(money.key("a"), { amount: "2", zip: "010" });
       await transaction.set(money.key("b"), { amount: "10.00", zip: "001" });
@@ -188,6 +191,148 @@ describe("IndexedDbDatabase", () => {
     await db.close();
   });
 
+  it("scans a large dedicated collection by primary key without bulk reads or collection-index cursors", async () => {
+    const db = database(true);
+    const rowCount = 8715;
+    const seedStarted = performance.now();
+    console.info("IndexedDB cursor qualification", { phase: "seed:start", rows: rowCount });
+    await db.runReadwriteTransaction(async (transaction) => {
+      for (let start = 0; start < rowCount; start += 128) {
+        await Promise.all(Array.from({ length: Math.min(128, rowCount - start) }, (_, offset) => {
+          const id = start + offset;
+          return transaction.set(items.key(id), { title: String(id), done: false, rank: rowCount - id, tags: [] });
+        }));
+      }
+    });
+    console.info("IndexedDB cursor qualification", { phase: "seed:complete", elapsedMs: performance.now() - seedStarted });
+    const indexCursor = vi.spyOn(IDBIndex.prototype, "openCursor").mockImplementation(() => {
+      throw new Error("dedicated collection queries must avoid nonunique index cursors");
+    });
+    const indexGetAll = vi.spyOn(IDBIndex.prototype, "getAll");
+    const storeGetAll = vi.spyOn(IDBObjectStore.prototype, "getAll");
+    const storeCursor = vi.spyOn(IDBObjectStore.prototype, "openCursor");
+    const advance = vi.spyOn(IDBCursor.prototype, "continue");
+    try {
+      const byIdStarted = performance.now();
+      console.info("IndexedDB cursor qualification", { phase: "document-id-query:start" });
+      const byId = await db.query(items.query().limit(5).build());
+      console.info("IndexedDB cursor qualification", { phase: "document-id-query:complete", elapsedMs: performance.now() - byIdStarted });
+      expect(byId.records.map((record) => record.key.id)).toEqual([0, 1, 2, 3, 4]);
+      const byRankStarted = performance.now();
+      console.info("IndexedDB cursor qualification", { phase: "ordered-offset-query:start" });
+      const byRank = await db.query(items.query().orderBy("rank").offset(2).limit(3).build());
+      console.info("IndexedDB cursor qualification", { phase: "ordered-offset-query:complete", elapsedMs: performance.now() - byRankStarted });
+      expect(byRank.records.map((record) => record.data.rank)).toEqual([3, 4, 5]);
+      expect(storeCursor).toHaveBeenCalledTimes(2);
+      expect(advance).toHaveBeenCalledTimes(rowCount * 2);
+      expect(indexCursor).not.toHaveBeenCalled();
+      expect(indexGetAll).not.toHaveBeenCalled();
+      expect(storeGetAll).not.toHaveBeenCalled();
+    } finally {
+      indexCursor.mockRestore();
+      indexGetAll.mockRestore();
+      storeGetAll.mockRestore();
+      storeCursor.mockRestore();
+      advance.mockRestore();
+      await db.close();
+    }
+  });
+
+  it("keeps shared-store queries on their scoped collection indexes", async () => {
+    const db = database();
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(items.key("one"), { title: "one", done: false, rank: 1, tags: [] });
+      await transaction.set(key("other", "one"), { title: "unrelated" });
+      await transaction.set(key("items", "nested", key("spaces", "home")), { title: "nested" });
+    });
+    const storeCursor = vi.spyOn(IDBObjectStore.prototype, "openCursor").mockImplementation(() => {
+      throw new Error("shared stores must use the scoped collection index");
+    });
+    const indexCursor = vi.spyOn(IDBIndex.prototype, "openCursor");
+    try {
+      expect((await db.query(items.query().build())).records.map((record) => record.key.id)).toEqual(["one"]);
+      expect((await db.query(collectionGroup<Item>("items").build())).records).toHaveLength(2);
+      expect(indexCursor.mock.calls).toEqual([["items"], ["items"]]);
+      expect(indexCursor.mock.contexts).toMatchObject([{ name: "collectionPath" }, { name: "collectionName" }]);
+      expect(storeCursor).not.toHaveBeenCalled();
+    } finally {
+      storeCursor.mockRestore();
+      indexCursor.mockRestore();
+      await db.close();
+    }
+  });
+
+  it("isolates parents and collection groups while scanning a dedicated store", async () => {
+    const factory = new IDBFactory();
+    const db = new IndexedDbDatabase({ name: "scopes", factory, collections: ["items", "other"] });
+    const home = items.in(key("spaces", "home"));
+    const work = items.in(key("spaces", "work"));
+    await db.runReadwriteTransaction(async (transaction) => {
+      for (const source of [items, home, work]) {
+        await transaction.set(source.key("same"), { title: source.source.parent?.id ?? "root", done: false, rank: 1, tags: [] });
+      }
+      await transaction.set(key("other", "same"), { title: "other" });
+    });
+    // A native writer may leave records of another collection in the store.
+    // Store identity must never substitute for checking each record's scope.
+    const native = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open("scopes");
+      request.onsuccess = () => { resolve(request.result); };
+      request.onerror = () => { reject(request.error ?? new Error("failed to open database")); };
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = native.transaction("items", "readwrite");
+        transaction.oncomplete = () => { resolve(); };
+        transaction.onabort = () => { reject(transaction.error ?? new Error("failed to seed foreign record")); };
+        const foreign = key("other", "intruder");
+        transaction.objectStore("items").put({
+          path: foreign.path, collectionPath: "other", collectionName: "other", id: foreign.id,
+          keyParts: [{ collection: "other", id: foreign.id }], data: { title: "foreign" },
+        });
+      });
+      expect((await db.query(items.query().build())).records.map((record) => record.key.path)).toEqual([items.key("same").path]);
+      expect((await db.query(home.query().build())).records.map((record) => record.key.path)).toEqual([home.key("same").path]);
+      expect((await db.query(work.query().build())).records.map((record) => record.key.path)).toEqual([work.key("same").path]);
+      const group = await db.query(collectionGroup<Item>("items").orderBy(DOCUMENT_ID).build());
+      expect(group.records.map((record) => record.key.path)).toEqual(
+        [items.key("same").path, home.key("same").path, work.key("same").path].sort(),
+      );
+      expect((await db.query(collectionGroup<Item>("items").where(DOCUMENT_ID, "==", work.key("same")).build()))
+        .records.map((record) => record.key.path)).toEqual([work.key("same").path]);
+      expect((await db.query(collectionGroup("other").build())).records.map((record) => record.key.id)).toEqual(["same"]);
+    } finally {
+      native.close();
+      await db.close();
+    }
+  });
+
+  it.each([false, true])("stops an in-flight scan and removes its abort listener (dedicated: %s)", async (dedicated) => {
+    const db = database(dedicated);
+    await db.runReadwriteTransaction(async (transaction) => {
+      await transaction.set(items.key("one"), { title: "one", done: false, rank: 1, tags: [] });
+      await transaction.set(items.key("two"), { title: "two", done: false, rank: 2, tags: [] });
+    });
+    const abort = new AbortController();
+    const removeListener = vi.spyOn(abort.signal, "removeEventListener");
+    const advance = vi.spyOn(IDBCursor.prototype, "continue").mockImplementation(() => {
+      abort.abort(new Error("stop during scan"));
+    });
+    try {
+      await expect(db.query(withIndexedDbQueryHints(items.query().limit(1).build(), { signal: abort.signal })))
+        .rejects.toThrow("stop during scan");
+      // A write waits for the aborted scan's readonly transaction to settle.
+      await db.runReadwriteTransaction(async (transaction) => transaction.set(items.key("three"),
+        { title: "three", done: false, rank: 3, tags: [] }));
+      expect(advance).toHaveBeenCalledTimes(1);
+      expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+    } finally {
+      advance.mockRestore();
+      removeListener.mockRestore();
+      await db.close();
+    }
+  });
+
   it("scans with a cursor and retains only the bounded page", async () => {
     const db = database();
     await db.runReadwriteTransaction(async (transaction) => {
@@ -203,8 +348,8 @@ describe("IndexedDbDatabase", () => {
     await db.close();
   });
 
-  it("aborts an IndexedDB cursor query without returning a partial page", async () => {
-    const db = database();
+  it.each([false, true])("aborts an IndexedDB cursor query without returning a partial page (dedicated: %s)", async (dedicated) => {
+    const db = database(dedicated);
     await db.runReadwriteTransaction(async (transaction) => {
       await transaction.set(items.key("one"), { title: "one", done: false, rank: 1, tags: [] });
     });
@@ -222,9 +367,9 @@ describe("IndexedDbDatabase", () => {
     await db.close();
   });
 
-  it("supports decimal edge spellings and excludes null from hinted ordered filters", async () => {
+  it.each([false, true])("supports decimal edge spellings and excludes null from hinted ordered filters (dedicated: %s)", async (dedicated) => {
     const numbers = collection<{ amount: string | null }>("numbers");
-    const db = database();
+    const db = database(dedicated);
     await db.runReadwriteTransaction(async (transaction) => {
       await transaction.set(numbers.key("null"), { amount: null });
       await transaction.set(numbers.key("half"), { amount: ".5" });
@@ -241,8 +386,8 @@ describe("IndexedDbDatabase", () => {
     await db.close();
   });
 
-  it("queries collection groups and uses full paths for document ids", async () => {
-    const db = database();
+  it.each([false, true])("queries collection groups and uses full paths for document ids (dedicated: %s)", async (dedicated) => {
+    const db = database(dedicated);
     const homeItem = key("items", "same", key("spaces", "home"));
     const workItem = key("items", "same", key("spaces", "work"));
     await db.runReadwriteTransaction(async (transaction) => {

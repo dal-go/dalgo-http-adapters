@@ -24,6 +24,8 @@ export interface StoredRecord {
 
 export interface QueryStore {
   index(name: "collectionPath" | "collectionName"): IDBIndex;
+  /** Supplied internally only for a validated, dedicated collection store. */
+  openCollectionCursor?(): IDBRequest<IDBCursorWithValue | null>;
 }
 
 /** Adapter-specific hints for exact numeric wire tokens and cancellable scans. */
@@ -213,11 +215,11 @@ function compareTuples<T>(left: readonly unknown[], right: readonly unknown[], o
   return 0;
 }
 
-function scanIndex(index: IDBIndex, sourceValue: string, signal: AbortSignal | undefined, visit: (record: StoredRecord) => void): Promise<void> {
+function scanCursor(openCursor: () => IDBRequest<IDBCursorWithValue | null>, signal: AbortSignal | undefined, visit: (record: StoredRecord) => void): Promise<void> {
   const abortError = () => signal?.reason instanceof Error ? signal.reason : new DOMException("Query aborted", "AbortError");
   if (signal?.aborted) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
-    const request = index.openCursor(sourceValue);
+    const request = openCursor();
     let settled = false;
     const finish = (error?: unknown) => {
       if (settled) return;
@@ -264,7 +266,14 @@ export async function executeQuery<T>(store: QueryStore, query: StructuredQuery<
     throw new RangeError("IndexedDB query offset and limit must be nonnegative safe integers");
   }
   const records: StoredRecord[] = [];
-  if (capacity !== 0) await scanIndex(store.index(indexName), sourceValue, hints?.signal, (record) => {
+  // Dedicated stores avoid a nonunique index's duplicate-key traversal. Keep
+  // scanning all rows: primary-key order does not prove the requested order.
+  const openCursor = () => store.openCollectionCursor !== undefined
+    ? store.openCollectionCursor()
+    : store.index(indexName).openCursor(sourceValue);
+  if (capacity !== 0) await scanCursor(openCursor, hints?.signal, (record) => {
+    // A dedicated store can contain this collection under multiple parents.
+    if (record[indexName] !== sourceValue) return;
     if (!query.filters.every((filter) => matchesFilter(record, filter, query.source, numeric))) return;
     const values = tuple(record, orders, query.source);
     if (!bounds.every((bound) => bound.accept(compareTuples(values, bound.values, orders, numeric)))) return;

@@ -38,6 +38,10 @@ jobs:
       - name: Check OVDB Changesets generation and release selection
         run: python3 .github/scripts/test-ovdb-release-selection.py
       - run: pnpm check
+      - name: Qualify IndexedDB with the consumer fake-indexeddb version
+        run: |
+          pnpm --filter @dalgo/indexeddb add --save-dev --save-exact fake-indexeddb@6.2.6 --ignore-scripts
+          pnpm --filter @dalgo/indexeddb check
       - name: Verify HTTP check without pre-existing generated output
         run: pnpm --filter @dalgo/http run check:clean-output
       - run: pnpm --filter @dalgo/firestore run test:emulator
