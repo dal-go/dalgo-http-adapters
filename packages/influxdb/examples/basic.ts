@@ -1,4 +1,4 @@
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { InfluxDB3Database } from "../src/index.js";
 
 interface SensorReading { readonly room: string; readonly temperature: number; readonly time: string; }
