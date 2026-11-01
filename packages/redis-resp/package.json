@@ -7,7 +7,8 @@
   "sideEffects": false,
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./node": { "types": "./dist/node.d.ts", "node": "./dist/node.js" }
+    "./node": { "types": "./dist/node.d.ts", "node": "./dist/node.js" },
+    "./protocol": { "types": "./dist/protocol.d.ts", "import": "./dist/protocol.js" }
   },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {

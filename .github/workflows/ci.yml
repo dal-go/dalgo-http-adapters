@@ -139,6 +139,10 @@ jobs:
         env:
           DALGO_PACKED_CONSUMER_RECEIPT: ${{ runner.temp }}/adapter-packed-consumer/native-receipt.json
         run: pnpm check:native-packed-consumer
+      - name: Qualify Upstash REST tarballs against public runtime 0.1.2
+        env:
+          DALGO_PACKED_CONSUMER_RECEIPT: ${{ runner.temp }}/adapter-packed-consumer/upstash-receipt.json
+        run: pnpm check:upstash-packed-consumer
       - name: Retain packed consumer and release-preview receipt
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

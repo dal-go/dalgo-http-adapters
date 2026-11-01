@@ -33,9 +33,10 @@ const NODE_TYPES_SPEC = "@types/node@26.6.5";
 const ESBUILD_VERSION = "0.28.2";
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
 const arguments_ = process.argv.slice(2);
-assert.ok(arguments_.length === 0 || (arguments_.length === 1 && arguments_[0] === "--native"), "usage: check-adapter-packed-consumer.mjs [--native]");
+assert.ok(arguments_.length === 0 || (arguments_.length === 1 && ["--native", "--upstash"].includes(arguments_[0])), "usage: check-adapter-packed-consumer.mjs [--native|--upstash]");
 const nativeMode = arguments_[0] === "--native";
-const packageDirectories = nativeMode
+const upstashMode = arguments_[0] === "--upstash";
+const packageDirectories = upstashMode ? ["redis-resp", "upstash-redis"] : nativeMode
   ? ["adapter-runtime", "redis-resp", "mongodb", "duckdb"]
   : ["adapter-runtime", "clickhouse", "couchdb", "libsql", "postgrest", "typesense"];
 const packageSpecifier = (name) => name === "adapter-runtime" ? "@dalgo/adapter-runtime" : `@dalgo/dalgo2${name}`;
@@ -100,7 +101,7 @@ function sourceHashes() {
 }
 
 function packingWorkspace() {
-  const pending = join(repository, ".changeset", "clickhouse-ordinal-contract.md");
+  const pending = join(repository, ".changeset", upstashMode ? "upstash-read-rest-protocol.md" : "clickhouse-ordinal-contract.md");
   if (!existsSync(pending)) return { directory: repository, preview: false };
   // The source runtime keeps its released version until the normal version PR.
   // Preview REAL Changesets generation in scratch so strict peers can exercise
@@ -111,6 +112,9 @@ function packingWorkspace() {
   assert.equal(cliManifest.version, "3.0.3", "use the installed declared Changesets CLI");
   const packed = new Set(packageDirectories);
   const filters = [...packed].flatMap((name) => ["--filter", name === "adapter-runtime" ? "@dalgo/adapter-runtime" : `@dalgo/dalgo2${name}`]);
+  // Build declarations for the producer workspace, but never pack or install
+  // its runtime preview in the Upstash consumer. That mode pins public0.1.2.
+  if (upstashMode) run("pnpm", ["--filter", "@dalgo/adapter-runtime", "run", "build"], { timeout: 180_000 });
   run("pnpm", [...filters, "run", "build"], { timeout: 180_000 });
   const directory = join(scratch, "release-preview");
   mkdirSync(directory, { recursive: true });
@@ -174,7 +178,7 @@ function packingWorkspace() {
   const plan = JSON.parse(readFileSync(planPath, "utf8"));
   run(process.execPath, [cli, "version"], { cwd: directory, env: fixtureEnv, timeout: 60_000 });
   const runtime = JSON.parse(readFileSync(join(directory, "packages", "adapter-runtime", "package.json"), "utf8"));
-  assert.match(runtime.version, /^0\.2\./u, "ordinary Changesets must produce the declared ordinal runtime minor");
+  if (!upstashMode) assert.match(runtime.version, /^0\.2\./u, "ordinary Changesets must produce the declared ordinal runtime minor");
   const versions = Object.fromEntries([...packed].map((name) => {
     const metadata = JSON.parse(readFileSync(join(directory, "packages", name, "package.json"), "utf8"));
     return [metadata.name, { version: metadata.version, peers: metadata.peerDependencies }];
@@ -231,6 +235,15 @@ async function packedBrowserBundle(consumer) {
   };
 }
 
+if (upstashMode) {
+  const { checkUpstashPackedConsumer } = await import("./upstash-packed-consumer.mjs");
+  await checkUpstashPackedConsumer({
+    repository, scratch, run, walk, sourceHashes, packingWorkspace,
+    assertNoLegacyDependency, assertNoLegacyTree,
+    core: { version: CORE_VERSION, spec: CORE_SPEC, tarball: CORE_TARBALL, integrity: CORE_INTEGRITY },
+    typescript: TYPESCRIPT_SPEC, nodeTypes: NODE_TYPES_SPEC, esbuild: ESBUILD_VERSION,
+  });
+} else {
 const inputHashes = sourceHashes();
 const realSource = {
   gitSHA: run("git", ["rev-parse", "HEAD"]).trim(),
@@ -586,4 +599,5 @@ try {
   } finally {
     rmSync(join(scratch, "release-preview"), { recursive: true, force: true });
   }
+}
 }
