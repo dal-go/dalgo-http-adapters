@@ -1,7 +1,7 @@
 # DALgo adapter for Amazon DynamoDB
 
 `@dal-go/dalgo2dynamodb` implements a deliberately bounded subset of the
-[`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) database contracts on
+`@dalgo/core` database contracts on
 the official modular AWS SDK for JavaScript v3 document client.
 
 It is designed for browser applications that receive **temporary,
@@ -39,13 +39,12 @@ Cognito/web-identity credentials and scopes table access correctly.
 
 ## Install
 
-```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2dynamodb-js \
-  @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb
-```
-
-The repositories currently build as `@dal-go/dalgo` and
-`@dal-go/dalgo2dynamodb`; no npm publication has been made.
+The monorepo package remains private, named `@dal-go/dalgo2dynamodb` at
+`0.1.0`. This source slice uses the public `@dalgo/core` `0.8.1` identity and
+cancellation helpers available in public `@dalgo/adapter-runtime` `0.1.2`.
+It does not publish a package, rename it, generate a private Changesets version
+or establish registry/hosted/browser availability. The injected AWS SDK peers
+remain unchanged; clean-consumer and runtime receipts are separate gates.
 
 ## Required table layout
 
@@ -75,7 +74,7 @@ specific `dynamodb:GetItem`, `BatchGetItem`, `PutItem`, `UpdateItem`,
 ```ts
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { DynamoDbDatabase } from "@dal-go/dalgo2dynamodb";
 
 const lowLevelClient = new DynamoDBClient({
@@ -94,6 +93,71 @@ session tokens, secrets, or authorization headers in source control, URLs,
 analytics, or browser storage.
 
 The complete, type-checked example is [examples/basic.ts](examples/basic.ts).
+
+## Bounded cancellable reads
+
+Existing `get`, `getMany`, `query` and CRUD signatures remain. Additive
+`getWithSignal(key, signal, codec?)`, `getManyWithSignal(keys, signal, codec?)`
+and `queryWithSignal(query, signal)` provide caller cancellation without changing
+the core interface. The query entry implements `CancellableQueryExecutor`.
+
+Each read starts one deadline before `SDK.send`, including its credential,
+signing and response waiting. `timeoutMs` defaults to 30000 and must be 1–120000.
+The same owned `abortSignal` reaches each SDK send/page; an independent race
+also bounds local waiting if an injected client ignores it. Monotonic checks
+after SDK results, codec/cursor work and final cleanup prevent late success when
+the event loop has not serviced the timer. Cancellation uses the runtime's
+`QueryCancelledError` (`reason: caller | deadline`), without caller reason/cause.
+SDK failures use fixed `DynamoDbReadError` messages and codes `transport`,
+`limit` or `invalid-response`, without provider text, metadata or credentials.
+
+The public constructor accepts `DynamoDbDocumentClientLike`, a self-contained
+method interface assignable from the official overloaded `DynamoDBDocumentClient`.
+It retains that exact client object and the existing SDK commands internally;
+it does not wrap, configure or destroy it. This keeps the adapter's own public
+declarations free of the SDK's Node ambient types. Direct imports of vendor
+declarations may still carry their own Node type requirements; those are a
+separate diagnostic, rather than permission to add Node globals to a DOM-only
+adapter consumer.
+
+`maxReadRecords` defaults to 1000. It bounds received records across Query pages
+and total requested BatchGet output, **including duplicates**. The existing
+100-distinct-key native batch admission remains separate: 101duplicates of one
+key still work under defaults, preserving input order and missing snapshots.
+The admitted key list is copied before I/O. A Query request above the local
+record cap or a server response beyond its remaining requested limit fails
+whole; it never returns a truncated success or dispatches another page after
+failure/cancellation. Empty filtered pages still consume `maxQueryPages`.
+
+`maxReadBytes` defaults to 4000000 accounted bytes across **already-decoded SDK
+results**, including metadata/cursors and logical BatchGet duplicate expansion.
+Accounting charges UTF-8 text/key lengths, binary byte lengths, scalar/container
+overhead and each pre-codec managed payload, without JSON coercion. Native
+`Uint8Array`/ArrayBuffer/views, sets, bigint and the public SDK `NumberValue`
+retain their objects and precision. Cycles, accessors and unsupported custom
+classes are refused, with a 100000-node/64-level structural work cap. Arbitrary
+custom number-wrapper classes need an explicitly supported representation;
+changing the borrowed client's unmarshalling policy is not implicit.
+Native sets/number wrappers and unshared binary buffers/views must have their
+canonical platform/SDK prototypes and closed own properties: overridden
+iterators, byte-length/value accessors, extra fields and subclasses are refused.
+Set traversal and binary sizing use intrinsic methods/getters rather than
+payload overrides. Ordinary Node Buffer identity is preserved by optional
+platform detection; this adds no Node import or browser Buffer polyfill.
+
+This is **not a wire-body or pre-decoding memory cap**: the AWS SDK has already
+materialized its result before the adapter can account it. Caller codec output
+allocations, SDK credential providers/handlers that ignore abort, configured SDK
+internal retries, provider scan work/capacity and billing are not controlled by
+this result budget. The adapter adds no retries and never destroys or
+reconfigures the borrowed client. It observes late promise failures and stops
+its own later pages, so the same client can reopen or serve another caller.
+
+This qualification is for reads. Existing writes retain their prior behavior,
+including conditional DALgo errors with provider causes; they are not newly
+deadline/caller-signal/redaction qualified. This slice adds no mutation retry,
+rollback, transaction API, native existing-table mapper, index/schema discovery
+or consumed-capacity budget. A local abort does not undo provider work.
 
 ### Workspace package
 
@@ -132,8 +196,11 @@ and [Scan/query filter behavior](https://docs.aws.amazon.com/amazondynamodb/late
 ## Verification
 
 `npm run check` runs ESLint, deterministic Vitest command-contract tests, and
-the declaration build. The tests mock the injected AWS document client; they
-do **not** contact a DynamoDB table or claim live-service coverage.
+strict source/test/example checking plus the declaration build. Existing tests
+mock the injected client. Read lifecycle tests use real AbortControllers,
+deferred sends, native pages, mutable monotonic clocks, and an actual
+SDK credential provider without contacting DynamoDB. They do **not** establish
+hosted IAM/STS/capacity, DynamoDB Local, browser CORS or installed-release proof.
 
 ## License
 

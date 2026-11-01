@@ -16,6 +16,7 @@
     "check:native-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --native",
     "check:upstash-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --upstash",
     "check:influx-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --influx",
+    "check:dynamodb-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --dynamodb",
     "lint": "pnpm -r --if-present run lint",
     "test": "pnpm -r --if-present run test",
     "release:version": "changeset version"
