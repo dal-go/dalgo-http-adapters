@@ -1,9 +1,12 @@
 // Node 24. Packs the browser adapters, installs only those tarballs plus the
 // exact released @dalgo/core version in a fresh directory outside this repository,
 // and type-checks/runs a consumer that never has @dal-go/dalgo available.
+// --native selects the RESP/MongoDB/DuckDB contracts; the default battery stays
+// unchanged. Native browser checks cover imports/laziness, not an engine or UI.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createRequire, isBuiltin } from "node:module";
 import {
   copyFileSync,
   existsSync,
@@ -26,7 +29,17 @@ const CORE_SPEC = `@dalgo/core@${CORE_VERSION}`;
 const CORE_TARBALL = `https://registry.npmjs.org/@dalgo/core/-/core-${CORE_VERSION}.tgz`;
 const CORE_INTEGRITY = "sha512-stXi8PPeR3G7AxCairfJEMDGd4KuiU5eyipPDgibCEVlRD435t2FvfQQj3mp+FgZEVzcdel4Z4Iwq3xm9URRSA==";
 const TYPESCRIPT_SPEC = "typescript@6.0.3";
+const NODE_TYPES_SPEC = "@types/node@26.6.5";
+const ESBUILD_VERSION = "0.28.2";
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
+const arguments_ = process.argv.slice(2);
+assert.ok(arguments_.length === 0 || (arguments_.length === 1 && arguments_[0] === "--native"), "usage: check-adapter-packed-consumer.mjs [--native]");
+const nativeMode = arguments_[0] === "--native";
+const packageDirectories = nativeMode
+  ? ["adapter-runtime", "redis-resp", "mongodb", "duckdb"]
+  : ["adapter-runtime", "clickhouse", "couchdb", "libsql", "postgrest", "typesense"];
+const packageSpecifier = (name) => name === "adapter-runtime" ? "@dalgo/adapter-runtime" : `@dalgo/dalgo2${name}`;
+const packageFilters = packageDirectories.flatMap((name) => ["--filter", packageSpecifier(name)]);
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const scratch = mkdtempSync(join(tmpdir(), "dalgo-adapter-packed-consumer-"));
@@ -96,7 +109,7 @@ function packingWorkspace() {
   // lifecycle scripts and scratch contains no credentials or node_modules.
   const cliManifest = JSON.parse(readFileSync(join(repository, "node_modules", "@changesets", "cli", "package.json"), "utf8"));
   assert.equal(cliManifest.version, "3.0.3", "use the installed declared Changesets CLI");
-  const packed = new Set(["adapter-runtime", "clickhouse", "couchdb", "libsql", "postgrest", "typesense"]);
+  const packed = new Set(packageDirectories);
   const filters = [...packed].flatMap((name) => ["--filter", name === "adapter-runtime" ? "@dalgo/adapter-runtime" : `@dalgo/dalgo2${name}`]);
   run("pnpm", [...filters, "run", "build"], { timeout: 180_000 });
   const directory = join(scratch, "release-preview");
@@ -169,6 +182,55 @@ function packingWorkspace() {
   return { directory, preview: { kind: "ordinary Changesets release preview, not publication/version-PR receipt", syntheticGitBaseline: { sha: baseline, branch: "main", remotes: [], kind: "scratch test fixture, not source history" }, cliVersion: cliManifest.version, plan, versions, stagedFiles: budget.files, stagedBytes: budget.bytes } };
 }
 
+async function packedBrowserBundle(consumer) {
+  const require = createRequire(join(consumer, "package.json"));
+  assert.equal(require("esbuild/package.json").version, ESBUILD_VERSION);
+  const { build } = require("esbuild");
+  copyFileSync(join(repository, ".github", "fixtures", "native-packed-consumer", "browser-entry.mjs"), join(consumer, "browser-entry.mjs"));
+  const result = await build({
+    absWorkingDir: consumer, entryPoints: ["browser-entry.mjs"], outfile: "browser-bundle.mjs",
+    platform: "browser", conditions: ["browser"], bundle: true, format: "esm", target: "es2022", metafile: true,
+    plugins: [{
+      name: "defer-exact-optional-wasm-peer",
+      setup(build) {
+        build.onResolve({ filter: /^@duckdb\/duckdb-wasm$/ }, args => {
+          assert.equal(args.kind, "dynamic-import", "optional WASM engine must never be imported statically");
+          return { path: args.path, external: true };
+        });
+      },
+    }],
+  });
+  const externalImports = [];
+  const inspectImports = imports => {
+    for (const imported of imports) {
+      assert.ok(!isBuiltin(imported.path) && !imported.path.startsWith("node:"), `Node builtin entered browser graph: ${imported.path}`);
+      if (imported.external) {
+        assert.equal(imported.path, "@duckdb/duckdb-wasm", "only the exact optional WASM peer may be external");
+        assert.equal(imported.kind, "dynamic-import", "external engine must remain deferred");
+        externalImports.push({ path: imported.path, kind: imported.kind });
+      }
+    }
+  };
+  const inputs = Object.keys(result.metafile.inputs).sort();
+  for (const [name, input] of Object.entries(result.metafile.inputs)) {
+    const relativeInput = relative(consumer, resolve(consumer, name));
+    assert.ok(relativeInput !== ".." && !relativeInput.startsWith(`..${sep}`) && !isAbsolute(relativeInput), "browser inputs must come only from the clean installed consumer");
+    assert.ok(!/(?:^|\/)node_modules\/(?:mongodb|bson|socks|kerberos|mongodb-client-encryption|@duckdb\/[^/]+)(?:\/|$)|\.node$/u.test(name), `native driver entered browser graph: ${name}`);
+    assert.ok(!/dalgo2mongodb\/dist\/node(?:-executor)?\.js$|dalgo2redis-resp\/dist\/(?:node|server|resp)\.js$|dalgo2duckdb\/dist\/node\.js$/u.test(name), `server adapter entry entered browser graph: ${name}`);
+    inspectImports(input.imports);
+  }
+  for (const output of Object.values(result.metafile.outputs)) inspectImports(output.imports);
+  assert.ok(externalImports.length > 0, "selected Duck browser fixture must exercise a real deferred WASM import boundary");
+  const yamlInputs = inputs.filter(name => /(?:^|\/)node_modules\/yaml\//u.test(name));
+  assert.ok(yamlInputs.every(name => /(?:^|\/)node_modules\/yaml\/browser\//u.test(name)), "browser bundling must honor YAML's browser export/mapping");
+  writeFileSync(join(consumer, "browser-metafile.json"), `${JSON.stringify(result.metafile, null, 2)}\n`);
+  return {
+    esbuildVersion: ESBUILD_VERSION, platform: "browser", conditions: ["browser"], inputs, yamlInputs,
+    externalImports, bundleSHA256: createHash("sha256").update(readFileSync(join(consumer, "browser-bundle.mjs"))).digest("hex"),
+    metafile: result.metafile,
+  };
+}
+
 const inputHashes = sourceHashes();
 const realSource = {
   gitSHA: run("git", ["rev-parse", "HEAD"]).trim(),
@@ -187,7 +249,7 @@ try {
     // source is already staged; this local archive step must never rebuild it.
     // https://docs.npmjs.com/cli/v11/commands/npm-pack/#ignore-scripts
     const archives = [];
-    for (const name of ["adapter-runtime", "clickhouse", "couchdb", "libsql", "postgrest", "typesense"]) {
+    for (const name of packageDirectories) {
       const args = ["pack", "--ignore-scripts", "--json", "--pack-destination", tarballs];
       const metadata = JSON.parse(run("npm", args, { cwd: join(packing.directory, "packages", name), timeout: 120_000 }));
       assert.equal(metadata.length, 1, "one local preview archive per package");
@@ -197,20 +259,11 @@ try {
     }
     packing.preview.packing = { kind: "local npm archives, not publication", lifecycleScripts: false, archives };
   } else {
-    run("pnpm", [
-      "--filter", "@dalgo/adapter-runtime",
-      "--filter", "@dalgo/dalgo2clickhouse",
-      "--filter", "@dalgo/dalgo2couchdb",
-      "--filter", "@dalgo/dalgo2libsql",
-      "--filter", "@dalgo/dalgo2postgrest",
-      "--filter", "@dalgo/dalgo2typesense",
-      "pack",
-      "--pack-destination", tarballs,
-    ], { cwd: packing.directory });
+    run("pnpm", [...packageFilters, "pack", "--pack-destination", tarballs], { cwd: packing.directory, ...(nativeMode ? { timeout: 180_000 } : {}) });
   }
 
   const packFiles = readdirSync(tarballs).filter((name) => name.endsWith(".tgz")).sort();
-  assert.equal(packFiles.length, 6, "expected exactly six packed adapter tarballs");
+  assert.equal(packFiles.length, packageDirectories.length, nativeMode ? "expected exactly four native contract tarballs" : "expected exactly six packed adapter tarballs");
   const packedHashes = () => Object.fromEntries(packFiles.map((name) => [name, createHash("sha256").update(readFileSync(join(tarballs, name))).digest("hex")]));
   const originalTarballHashes = packedHashes();
   const tarball = (prefix) => {
@@ -221,10 +274,10 @@ try {
 
   writeFileSync(
     join(consumer, "package.json"),
-    `${JSON.stringify({ name: "dalgo-adapter-packed-consumer", private: true, type: "module" }, null, 2)}\n`,
+    `${JSON.stringify({ name: "dalgo-adapter-packed-consumer", private: true, type: "module", ...(nativeMode ? { devDependencies: { esbuild: ESBUILD_VERSION } } : {}) }, null, 2)}\n`,
   );
   copyFileSync(
-    join(repository, ".github", "scripts", "adapter-packed-consumer.ts"),
+    nativeMode ? join(repository, ".github", "fixtures", "native-packed-consumer", "consumer.ts") : join(repository, ".github", "scripts", "adapter-packed-consumer.ts"),
     join(consumer, "src", "consumer.ts"),
   );
   writeFileSync(
@@ -234,7 +287,8 @@ try {
         target: "ES2022",
         module: "NodeNext",
         moduleResolution: "NodeNext",
-        lib: ["ES2022", "DOM"],
+        lib: nativeMode ? ["ES2022", "DOM", "ESNext.Disposable"] : ["ES2022", "DOM"],
+        ...(nativeMode ? { types: ["node"] } : {}),
         strict: true,
         skipLibCheck: false,
         noUncheckedIndexedAccess: true,
@@ -244,6 +298,18 @@ try {
       include: ["src/**/*.ts"],
     }, null, 2)}\n`,
   );
+  if (nativeMode) {
+    mkdirSync(join(consumer, "browser-src"));
+    copyFileSync(join(repository, ".github", "fixtures", "native-packed-consumer", "browser.ts"), join(consumer, "browser-src", "consumer.ts"));
+    writeFileSync(join(consumer, "tsconfig.browser.json"), `${JSON.stringify({
+      extends: "./tsconfig.json",
+      compilerOptions: {
+        module: "ESNext", moduleResolution: "Bundler",
+        lib: ["ES2022", "DOM"], types: [],
+      },
+      include: ["browser-src/**/*.ts"],
+    }, null, 2)}\n`);
+  }
 
   run("npm", [
     "install",
@@ -252,15 +318,12 @@ try {
     "--no-fund",
     "--save-exact",
     "--registry=https://registry.npmjs.org",
-    tarball("dalgo-adapter-runtime-"),
-    tarball("dalgo-dalgo2clickhouse-"),
-    tarball("dalgo-dalgo2couchdb-"),
-    tarball("dalgo-dalgo2libsql-"),
-    tarball("dalgo-dalgo2postgrest-"),
-    tarball("dalgo-dalgo2typesense-"),
+    ...(nativeMode ? ["--include=dev"] : []),
+    ...packageDirectories.map((name) => tarball(name === "adapter-runtime" ? "dalgo-adapter-runtime-" : `dalgo-dalgo2${name}-`)),
     CORE_SPEC,
     TYPESCRIPT_SPEC,
-  ], { cwd: consumer });
+    ...(nativeMode ? [NODE_TYPES_SPEC] : []),
+  ], { cwd: consumer, ...(nativeMode ? { timeout: 180_000 } : {}) });
 
   const lock = JSON.parse(readFileSync(join(consumer, "package-lock.json"), "utf8"));
   const lockKeys = Object.keys(lock.packages);
@@ -273,6 +336,7 @@ try {
     1,
     "exactly one @dalgo/core identity must be installed",
   );
+  if (nativeMode) assert.equal(lockKeys.filter((key) => key.endsWith("node_modules/@dalgo/adapter-runtime")).length, 1, "native consumers must share one runtime error/ordinal identity");
   assert.ok(
     !existsSync(join(consumer, "node_modules", "@dal-go", "dalgo")),
     "node_modules contains @dal-go/dalgo",
@@ -286,13 +350,18 @@ try {
   assert.equal(coreManifest.name, "@dalgo/core");
   assert.equal(coreManifest.version, CORE_VERSION);
 
-  for (const name of ["postgrest", "couchdb", "libsql", "typesense", "adapter-runtime"]) {
+  for (const name of (nativeMode ? packageDirectories : ["postgrest", "couchdb", "libsql", "typesense", "adapter-runtime"])) {
     for (const file of walk(join(repository, "packages", name, "src"))) {
       assert.ok(!legacySpecifier.test(readFileSync(file, "utf8")), `${file} references @dal-go/dalgo`);
     }
   }
 
-  const packageRoots = {
+  const packageRoots = nativeMode ? {
+    redisResp: join(consumer, "node_modules", "@dalgo", "dalgo2redis-resp"),
+    mongodb: join(consumer, "node_modules", "@dalgo", "dalgo2mongodb"),
+    duckdb: join(consumer, "node_modules", "@dalgo", "dalgo2duckdb"),
+    runtime: join(consumer, "node_modules", "@dalgo", "adapter-runtime"),
+  } : {
     clickhouse: join(consumer, "node_modules", "@dalgo", "dalgo2clickhouse"),
     postgrest: join(consumer, "node_modules", "@dalgo", "dalgo2postgrest"),
     couch: join(consumer, "node_modules", "@dalgo", "dalgo2couchdb"),
@@ -316,63 +385,91 @@ try {
     }
   }
 
-  const postDeclaration = readFileSync(join(packageRoots.postgrest, "dist", "database.d.ts"), "utf8");
-  const clickhouseIndex = readFileSync(join(packageRoots.clickhouse, "dist", "index.d.ts"), "utf8");
-  const clickhouseNative = readFileSync(join(packageRoots.clickhouse, "dist", "native.d.ts"), "utf8");
-  assert.match(clickhouseIndex, /NativeClickHouseDatabase as ClickHouseDatabase/u);
-  assert.match(clickhouseNative, /implements OrdinalQueryExecutor/u);
-  assert.match(clickhouseNative, /readonly readOnly: true/u);
-  assert.ok(!existsSync(join(packageRoots.clickhouse, "dist", "database.js")), "private keyed/append prototype must not be packed");
-  assert.ok(!existsSync(join(packageRoots.clickhouse, "dist", "query.js")), "private keyed SQL compiler must not be packed");
-  assert.match(
-    postDeclaration,
-    /runReadwriteTransaction<Result>\(callback: \(transaction: ReadwriteTransaction\) => Promise<Result>\)/u,
-  );
-  assert.match(postDeclaration, /from "@dalgo\/core"/u);
-  assert.ok(!postDeclaration.includes("@dal-go/dalgo"), "packed PostgREST declarations reference the legacy package");
+  if (!nativeMode) {
+    const postDeclaration = readFileSync(join(packageRoots.postgrest, "dist", "database.d.ts"), "utf8");
+    const clickhouseIndex = readFileSync(join(packageRoots.clickhouse, "dist", "index.d.ts"), "utf8");
+    const clickhouseNative = readFileSync(join(packageRoots.clickhouse, "dist", "native.d.ts"), "utf8");
+    assert.match(clickhouseIndex, /NativeClickHouseDatabase as ClickHouseDatabase/u);
+    assert.match(clickhouseNative, /implements OrdinalQueryExecutor/u);
+    assert.match(clickhouseNative, /readonly readOnly: true/u);
+    assert.ok(!existsSync(join(packageRoots.clickhouse, "dist", "database.js")), "private keyed/append prototype must not be packed");
+    assert.ok(!existsSync(join(packageRoots.clickhouse, "dist", "query.js")), "private keyed SQL compiler must not be packed");
+    assert.match(
+      postDeclaration,
+      /runReadwriteTransaction<Result>\(callback: \(transaction: ReadwriteTransaction\) => Promise<Result>\)/u,
+    );
+    assert.match(postDeclaration, /from "@dalgo\/core"/u);
+    assert.ok(!postDeclaration.includes("@dal-go/dalgo"), "packed PostgREST declarations reference the legacy package");
 
-  const couchIndexDeclaration = readFileSync(join(packageRoots.couch, "dist", "index.d.ts"), "utf8");
-  const nativeDeclaration = readFileSync(join(packageRoots.couch, "dist", "native.d.ts"), "utf8");
-  assert.match(couchIndexDeclaration, /NativeCouchDbDatabase/u);
-  assert.match(couchIndexDeclaration, /NATIVE_COUCHDB_READ_CAPABILITIES/u);
-  assert.match(nativeDeclaration, /export declare class NativeCouchDbDatabase implements Database/u);
-  assert.match(nativeDeclaration, /readonly readOnly: true/u);
-  assert.match(nativeDeclaration, /NativeCouchDbQuery<T> extends StructuredQuery<T>/u);
-  assert.match(nativeDeclaration, /from "@dalgo\/core"/u);
-  assert.ok(!legacySpecifier.test(nativeDeclaration), "packed native CouchDB declarations reference the legacy package");
+    const couchIndexDeclaration = readFileSync(join(packageRoots.couch, "dist", "index.d.ts"), "utf8");
+    const nativeDeclaration = readFileSync(join(packageRoots.couch, "dist", "native.d.ts"), "utf8");
+    assert.match(couchIndexDeclaration, /NativeCouchDbDatabase/u);
+    assert.match(couchIndexDeclaration, /NATIVE_COUCHDB_READ_CAPABILITIES/u);
+    assert.match(nativeDeclaration, /export declare class NativeCouchDbDatabase implements Database/u);
+    assert.match(nativeDeclaration, /readonly readOnly: true/u);
+    assert.match(nativeDeclaration, /NativeCouchDbQuery<T> extends StructuredQuery<T>/u);
+    assert.match(nativeDeclaration, /from "@dalgo\/core"/u);
+    assert.ok(!legacySpecifier.test(nativeDeclaration), "packed native CouchDB declarations reference the legacy package");
 
-  const libsqlIndexDeclaration = readFileSync(join(packageRoots.libsql, "dist", "index.d.ts"), "utf8");
-  const libsqlNativeDeclaration = readFileSync(join(packageRoots.libsql, "dist", "native.d.ts"), "utf8");
-  const libsqlCapabilitiesDeclaration = readFileSync(join(packageRoots.libsql, "dist", "capabilities.d.ts"), "utf8");
-  assert.match(libsqlIndexDeclaration, /NativeLibSQLDatabase/u);
-  assert.match(libsqlIndexDeclaration, /NATIVE_LIBSQL_READ_CAPABILITIES/u);
-  assert.match(libsqlIndexDeclaration, /LIBSQL_READ_CAPABILITIES/u);
-  assert.match(libsqlNativeDeclaration, /export declare class NativeLibSQLDatabase implements Database/u);
-  assert.match(libsqlNativeDeclaration, /readonly readOnly: true/u);
-  assert.match(libsqlNativeDeclaration, /from "@dalgo\/core"/u);
-  assert.match(libsqlCapabilitiesDeclaration, /storage: "native-rows"/u);
-  assert.ok(!legacySpecifier.test(libsqlNativeDeclaration), "packed native libSQL declarations reference the legacy package");
+    const libsqlIndexDeclaration = readFileSync(join(packageRoots.libsql, "dist", "index.d.ts"), "utf8");
+    const libsqlNativeDeclaration = readFileSync(join(packageRoots.libsql, "dist", "native.d.ts"), "utf8");
+    const libsqlCapabilitiesDeclaration = readFileSync(join(packageRoots.libsql, "dist", "capabilities.d.ts"), "utf8");
+    assert.match(libsqlIndexDeclaration, /NativeLibSQLDatabase/u);
+    assert.match(libsqlIndexDeclaration, /NATIVE_LIBSQL_READ_CAPABILITIES/u);
+    assert.match(libsqlIndexDeclaration, /LIBSQL_READ_CAPABILITIES/u);
+    assert.match(libsqlNativeDeclaration, /export declare class NativeLibSQLDatabase implements Database/u);
+    assert.match(libsqlNativeDeclaration, /readonly readOnly: true/u);
+    assert.match(libsqlNativeDeclaration, /from "@dalgo\/core"/u);
+    assert.match(libsqlCapabilitiesDeclaration, /storage: "native-rows"/u);
+    assert.ok(!legacySpecifier.test(libsqlNativeDeclaration), "packed native libSQL declarations reference the legacy package");
 
-  const typesenseIndexDeclaration = readFileSync(join(packageRoots.typesense, "dist", "index.d.ts"), "utf8");
-  const typesenseDatabaseDeclaration = readFileSync(join(packageRoots.typesense, "dist", "database.d.ts"), "utf8");
-  const typesenseSearchDeclaration = readFileSync(join(packageRoots.typesense, "dist", "search.d.ts"), "utf8");
-  assert.match(typesenseIndexDeclaration, /TypesenseDatabase/u);
-  assert.match(typesenseIndexDeclaration, /TypesenseContinuationBoundError/u);
-  assert.match(typesenseIndexDeclaration, /TYPESENSE_READ_CAPABILITIES/u);
-  assert.match(typesenseDatabaseDeclaration, /export declare class TypesenseDatabase implements Database, CancellableQueryExecutor/u);
-  assert.match(typesenseDatabaseDeclaration, /readonly readOnly: true/u);
-  assert.match(typesenseDatabaseDeclaration, /from "@dalgo\/core"/u);
-  assert.match(typesenseSearchDeclaration, /readonly textMatch\?: string/u);
-  assert.ok(!legacySpecifier.test(typesenseDatabaseDeclaration), "packed Typesense declarations reference the legacy package");
+    const typesenseIndexDeclaration = readFileSync(join(packageRoots.typesense, "dist", "index.d.ts"), "utf8");
+    const typesenseDatabaseDeclaration = readFileSync(join(packageRoots.typesense, "dist", "database.d.ts"), "utf8");
+    const typesenseSearchDeclaration = readFileSync(join(packageRoots.typesense, "dist", "search.d.ts"), "utf8");
+    assert.match(typesenseIndexDeclaration, /TypesenseDatabase/u);
+    assert.match(typesenseIndexDeclaration, /TypesenseContinuationBoundError/u);
+    assert.match(typesenseIndexDeclaration, /TYPESENSE_READ_CAPABILITIES/u);
+    assert.match(typesenseDatabaseDeclaration, /export declare class TypesenseDatabase implements Database, CancellableQueryExecutor/u);
+    assert.match(typesenseDatabaseDeclaration, /readonly readOnly: true/u);
+    assert.match(typesenseDatabaseDeclaration, /from "@dalgo\/core"/u);
+    assert.match(typesenseSearchDeclaration, /readonly textMatch\?: string/u);
+    assert.ok(!legacySpecifier.test(typesenseDatabaseDeclaration), "packed Typesense declarations reference the legacy package");
 
-  run(join(consumer, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json"], { cwd: consumer });
+  } else {
+    const expectedSubpaths = {
+      redisResp: { "./node": { types: "./dist/node.d.ts", node: "./dist/node.js" } },
+      mongodb: { "./browser": { types: "./dist/index.d.ts", import: "./dist/index.js" }, "./node": { types: "./dist/node.d.ts", import: "./dist/node.js" } },
+      duckdb: { "./browser": { types: "./dist/browser.d.ts", import: "./dist/browser.js" }, "./node": { types: "./dist/node.d.ts", import: "./dist/node.js" } },
+    };
+    for (const [label, subpaths] of Object.entries(expectedSubpaths)) {
+      const root = packageRoots[label];
+      const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+      for (const [subpath, expected] of Object.entries(subpaths)) {
+        assert.deepEqual(manifest.exports[subpath], expected, `${label} public ${subpath} export`);
+        for (const target of Object.values(expected)) assert.ok(existsSync(join(root, target)), `${label} packed subpath target missing`);
+      }
+    }
+    assert.ok(existsSync(join(packageRoots.runtime, "dist", "ordinal.d.ts")), "packed runtime must include its new ordinal declarations");
+  }
+
+  const declarationConfigs = nativeMode ? ["tsconfig.browser.json", "tsconfig.json"] : ["tsconfig.json"];
+  const declarationFailures = [];
+  for (const config of declarationConfigs) {
+    try {
+      run(join(consumer, "node_modules", ".bin", "tsc"), ["-p", config], { cwd: consumer, ...(nativeMode ? { timeout: 120_000 } : {}) });
+    } catch (error) {
+      if (nativeMode) process.stderr.write(`Packed declaration profile failed: ${config}\n`);
+      declarationFailures.push(error);
+    }
+  }
+  if (declarationFailures.length > 0) throw declarationFailures[0];
 
   copyFileSync(
-    join(repository, ".github", "scripts", "adapter-packed-consumer-runtime.mjs"),
+    nativeMode ? join(repository, ".github", "fixtures", "native-packed-consumer", "runtime.mjs") : join(repository, ".github", "scripts", "adapter-packed-consumer-runtime.mjs"),
     join(consumer, "runtime.mjs"),
   );
-  const runtime = JSON.parse(run(process.execPath, ["runtime.mjs"], { cwd: consumer }).trim());
-  assert.deepEqual(runtime, {
+  const runtime = JSON.parse(run(process.execPath, ["runtime.mjs"], { cwd: consumer, ...(nativeMode ? { timeout: 30_000 } : {}) }).trim());
+  if (!nativeMode) assert.deepEqual(runtime, {
     core: { collection: "function", key: "function" },
     runtime: { isCancellableQueryExecutor: "function" },
     clickhouse: { readOnly: true, queryOrdinal: "function", isOrdinal: true, sameAlias: true, keyedOrWriteMethods: false },
@@ -417,18 +514,25 @@ try {
     },
   });
 
-  const tree = JSON.parse(run("npm", [
-    "ls",
-    "--all",
-    "--json",
-    "@dalgo/core",
-    "@dalgo/adapter-runtime",
-    "@dalgo/dalgo2clickhouse",
-    "@dalgo/dalgo2couchdb",
-    "@dalgo/dalgo2libsql",
-    "@dalgo/dalgo2postgrest",
-    "@dalgo/dalgo2typesense",
-  ], { cwd: consumer }));
+  let browserImports;
+  let browserBundle;
+  if (nativeMode) {
+    assert.deepEqual(runtime, {
+      core: { sharedUnsupportedError: true },
+      runtime: { sharedCancellationError: true, ordinal: true },
+      redisResp: { node: "function", http: "function" },
+      mongodb: { node: "function", database: "function", browserAlias: true },
+      duckdb: { rootEngineFree: true, node: "function", browser: "function", preAbortEngineFree: true },
+    });
+    for (const name of ["browser-roots.mjs", "browser-guard-loader.mjs"]) {
+      copyFileSync(join(repository, ".github", "fixtures", "native-packed-consumer", name), join(consumer, name));
+    }
+    browserBundle = await packedBrowserBundle(consumer);
+    browserImports = JSON.parse(run(process.execPath, ["--experimental-vm-modules", "--import", "./browser-guard-loader.mjs", "browser-roots.mjs"], { cwd: consumer, timeout: 30_000 }).trim());
+    assert.deepEqual(browserImports, { packageGraphGuard: true, guardNegativeControls: true, coreIdentity: true, duckLazyRootAndBrowser: true, fetches: 0, workers: 0 });
+  }
+
+  const tree = JSON.parse(run("npm", ["ls", "--all", "--json", "@dalgo/core", ...packageDirectories.map(packageSpecifier)], { cwd: consumer, ...(nativeMode ? { timeout: 30_000 } : {}) }));
   assertNoLegacyTree(tree, "installed npm");
   assert.deepEqual(sourceHashes(), inputHashes, "pack/Changesets preview changed source inputs");
   assert.deepEqual(packedHashes(), originalTarballHashes, "tested packed tarballs changed during installation or consumer checks");
@@ -447,7 +551,13 @@ try {
       const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
       return [label, { name: manifest.name, version: manifest.version }];
     })),
+    mode: nativeMode ? "native" : "generic",
     typecheck: "tsc --strict --skipLibCheck=false (packed declarations, no @dal-go/dalgo)",
+    ...(nativeMode ? { declarationProfiles: {
+      node: { moduleResolution: "NodeNext", types: ["node"], lib: ["ES2022", "DOM", "ESNext.Disposable"] },
+      browser: { moduleResolution: "Bundler", types: [], lib: ["ES2022", "DOM"], noNodeAmbientLeaks: true },
+    } } : {}),
+    ...(nativeMode ? { browserImports, browserBundle } : {}),
     runtime,
     legacyReferences: 0,
   };
