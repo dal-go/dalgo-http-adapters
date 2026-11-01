@@ -55,8 +55,11 @@ describe("same-token Google execution identity", () => {
     expect(connected.cancel).toBe(false);
     expect(connected.principal.subject).toBe("stable-google-subject");
     expect(f.calls).toHaveLength(2);
-    expect(f.calls[0].init.headers).not.toHaveProperty("Authorization");
-    expect(f.calls[1].init.headers).toHaveProperty("Authorization", `Bearer ${response.access_token}`);
+    const discovery = f.calls[0];
+    const userinfo = f.calls[1];
+    if (discovery === undefined || userinfo === undefined) throw new Error("discovery and same-token userinfo requests are required");
+    expect(discovery.init.headers).not.toHaveProperty("Authorization");
+    expect(userinfo.init.headers).toHaveProperty("Authorization", `Bearer ${response.access_token}`);
     expect((await f.provider.authorize(signal())).accessToken).toBe(response.access_token);
   });
   it.each([

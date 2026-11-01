@@ -50,6 +50,10 @@ interface Session {
   mode: "" | "row" | "page";
   digest: string;
 }
+interface PendingDelivery {
+  readonly previous: { readonly offset: number; readonly rows: number; readonly cursor: CursorState | null };
+  readonly provisional: { readonly offset: number; readonly rows: number; readonly ledgerRef: string };
+}
 interface RunDriver {
   receipt(): Promise<Receipt>;
   schema(): Promise<readonly import("./protocol.js").SchemaField[]>;
@@ -450,77 +454,100 @@ export class BigQueryAnalyticalClient {
     if (session.mode !== "" && session.mode !== mode)
       fail("invalid_input");
     session.mode = mode;
+    const pending: { delivery?: PendingDelivery; session?: Session; index?: number; emptyDelivered?: boolean } = {};
+    let executionDeadline = 0;
+    const assertActive = (): void => {
+      // The clock is injectable and may synchronously trigger cancellation.
+      // Read both signals only after sampling it, including after lease release.
+      const now = this.#clock.now();
+      if (options.signal?.aborted || session.controller.signal.aborted || now >= executionDeadline ||
+          options.callerDeadline !== undefined && now >= options.callerDeadline)
+        fail("local_stopped");
+    };
+    const abort = (): void => session.controller.abort();
+    options.signal?.addEventListener("abort", abort, { once: true });
     try {
-      return await this.#ledger.withLease(session.id, options.signal, async () => {
-        const abort = (): void => session.controller.abort();
-        options.signal?.addEventListener("abort", abort, {
-          once: true
-        });
+      const result = await this.#ledger.withLease(session.id, options.signal, async () => {
         const safeOptions = {
           ...options, signal: session.controller.signal
         };
-        try {
-          const initial = await this.#load(session.id);
-          if(!same(initial.activePrincipal,session.accessPrincipal))fail("approval_changed");
-          await this.#reauthorize(initial.preview, safeOptions.signal, Math.min(Date.parse(initial.receipt.executionDeadline), this.#clock.now() + initial.receipt.bounds.httpMs, options.callerDeadline ?? Number.MAX_SAFE_INTEGER));
-          await this.#transport.verify(initial.activePrincipal, Math.min(Date.parse(initial.receipt.executionDeadline), this.#clock.now() + initial.receipt.bounds.httpMs, options.callerDeadline ?? Number.MAX_SAFE_INTEGER), safeOptions.signal);
-          while (true) {
-            const record = await this.#load(session.id);
-            if (session.controller.signal.aborted || this.#clock.now() >= Date.parse(record.receipt.executionDeadline) || (options.callerDeadline !== undefined && this.#clock.now() >= options.callerDeadline))
-              fail("local_stopped");
-            if (session.loaded && (record.offset !== session.index || record.pageDigest !== session.digest))
-              fail("cursor_invalid");
-            if (session.loaded && session.index < session.rows.length)
-              break;
-            if (session.loaded && session.done) {
-              if (session.rows.length === 0 && !session.emptyDelivered) {
-                session.emptyDelivered = true;
-                const cursor = await this.#delivery(session, 0);
-                const current = await this.#load(session.id);
-                return cloneFrozen({
-                  schema: current.schema, rows: [], cursor, receipt: current.receipt
-                });
-              }
-              return null;
-            }
-            if (record.receipt.counters.rows >= Math.min(record.preview.plan.limit, record.receipt.bounds.maxRows) || record.receipt.counters.pages >= record.receipt.bounds.maxPages)
-              fail("response_limit");
-            await this.#fetchPage(session, session.loaded ? record.nextToken : record.pageToken, false, safeOptions);
-            if (!session.loaded) {
-              await this.#clock.sleep(100, safeOptions.signal);
-            }
-          }
+        const initial = await this.#load(session.id);
+        executionDeadline = Date.parse(initial.receipt.executionDeadline);
+        if(!same(initial.activePrincipal,session.accessPrincipal))fail("approval_changed");
+        await this.#reauthorize(initial.preview, safeOptions.signal, Math.min(Date.parse(initial.receipt.executionDeadline), this.#clock.now() + initial.receipt.bounds.httpMs, options.callerDeadline ?? Number.MAX_SAFE_INTEGER));
+        await this.#transport.verify(initial.activePrincipal, Math.min(Date.parse(initial.receipt.executionDeadline), this.#clock.now() + initial.receipt.bounds.httpMs, options.callerDeadline ?? Number.MAX_SAFE_INTEGER), safeOptions.signal);
+        while (true) {
           const record = await this.#load(session.id);
-          let amount = mode === "row" ? 1 : session.rows.length - session.index;
-          amount = Math.min(amount, Math.min(record.preview.plan.limit, record.receipt.bounds.maxRows) - record.receipt.counters.rows);
-          if (amount < 1)
+          assertActive();
+          if (session.loaded && (record.offset !== session.index || record.pageDigest !== session.digest))
+            fail("cursor_invalid");
+          if (session.loaded && session.index < session.rows.length)
+            break;
+          if (session.loaded && session.done) {
+            if (session.rows.length === 0 && !session.emptyDelivered) {
+              pending.session = { ...session };
+              pending.emptyDelivered = true;
+              const cursor = await this.#delivery(session, 0, pending);
+              const current = await this.#load(session.id);
+              return cloneFrozen({
+                schema: current.schema, rows: [], cursor, receipt: current.receipt
+              });
+            }
+            return null;
+          }
+          if (record.receipt.counters.rows >= Math.min(record.preview.plan.limit, record.receipt.bounds.maxRows) || record.receipt.counters.pages >= record.receipt.bounds.maxPages)
             fail("response_limit");
-          const rows = cloneFrozen(session.rows.slice(session.index, session.index + amount));
-          const offset = session.index + amount;
-          const cursor = await this.#delivery(session, amount);
-          session.index = offset;
-          const current = await this.#load(session.id);
-          return cloneFrozen({
-            schema: current.schema, rows, cursor, receipt: current.receipt
-          });
+          await this.#fetchPage(session, session.loaded ? record.nextToken : record.pageToken, false, safeOptions);
+          if (!session.loaded) {
+            await this.#clock.sleep(100, safeOptions.signal);
+          }
         }
-        finally {
-          options.signal?.removeEventListener("abort", abort);
-        }
+        const record = await this.#load(session.id);
+        let amount = mode === "row" ? 1 : session.rows.length - session.index;
+        amount = Math.min(amount, Math.min(record.preview.plan.limit, record.receipt.bounds.maxRows) - record.receipt.counters.rows);
+        if (amount < 1)
+          fail("response_limit");
+        const rows = cloneFrozen(session.rows.slice(session.index, session.index + amount));
+        const offset = session.index + amount;
+        pending.session = { ...session };
+        const cursor = await this.#delivery(session, amount, pending);
+        pending.index = offset;
+        const current = await this.#load(session.id);
+        return cloneFrozen({
+          schema: current.schema, rows, cursor, receipt: current.receipt
+        });
       });
+      assertActive();
+      if (pending.index !== undefined) session.index = pending.index;
+      if (pending.emptyDelivered !== undefined) session.emptyDelivered = pending.emptyDelivered;
+      return result;
     }
     catch (error) {
-      await this.#mutate(session.id, r => { r.receipt = {
-        ...r.receipt, localStopped: true, reason: codeOf(error)
-      }; });
-      throw new ExecutionFailure(error, (await this.#load(session.id)).receipt, this.#run(session));
+      await this.#mutate(session.id, r => {
+        const delivery = pending.delivery;
+        // The lease may already have been released. Never undo another
+        // reader's acknowledgment or any transport/budget/accounting mutation.
+        if (delivery !== undefined && r.cursor?.ledgerRef === delivery.provisional.ledgerRef &&
+            r.offset === delivery.provisional.offset && r.receipt.counters.rows === delivery.provisional.rows) {
+          r.offset = delivery.previous.offset;
+          r.cursor = delivery.previous.cursor;
+          r.receipt = { ...r.receipt, counters: { ...r.receipt.counters, rows: delivery.previous.rows } };
+        }
+        r.receipt = { ...r.receipt, localStopped: true, reason: codeOf(error) };
+      });
+      const recovery = { ...(pending.session ?? session), controller: new AbortController() };
+      throw new ExecutionFailure(error, (await this.#load(session.id)).receipt, this.#run(recovery));
+    }
+    finally {
+      options.signal?.removeEventListener("abort", abort);
     }
   }
-  async #delivery(session: Session, amount: number): Promise<string> {
+  async #delivery(session: Session, amount: number, pending: { delivery?: PendingDelivery }): Promise<string> {
     const offset = session.index + amount;
     const cursor = await this.#mutate(session.id, r => {
       if (r.receipt.counters.rows + amount > Math.min(r.preview.plan.limit, r.receipt.bounds.maxRows))
         fail("response_limit");
+      const previous = { offset: r.offset, rows: r.receipt.counters.rows, cursor: r.cursor };
       r.offset = offset;
       r.receipt = {
         ...r.receipt, localStopped: false, counters: {
@@ -531,6 +558,7 @@ export class BigQueryAnalyticalClient {
       const cursor: CursorState = {
         version: 1, runId: session.id, job: r.receipt.job as JobRef, planDigest: r.preview.plan.digest, schemaDigest: r.receipt.schemaDigest, principal: r.activePrincipal, pageToken: boundary ? r.nextToken : r.pageToken, pageSize: r.receipt.bounds.pageSize, offset: boundary ? 0 : offset, pageDigest: boundary ? "" : r.pageDigest, ordinal: r.pageOrdinal + (boundary ? 1 : 0), counters: r.receipt.counters, ledgerRef: opaqueID()
       };
+      pending.delivery = { previous, provisional: { offset, rows: r.receipt.counters.rows, ledgerRef: cursor.ledgerRef } };
       r.cursor = cursor;
       return cursor;
     });
