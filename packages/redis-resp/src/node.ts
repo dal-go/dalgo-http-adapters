@@ -1,8 +1,8 @@
 import { connect as connectTcp, type Socket } from "node:net";
 import { connect as connectTls } from "node:tls";
 import { createAbortScope, QueryCancelledError } from "@dalgo/adapter-runtime";
-import { RedisReadError, resolveRedisLimits, validateRedisRead, type RedisLimits, type RedisReadExecutor, type RedisValue } from "./contracts.js";
-import { parseRedisReply } from "./resp.js";
+import { RedisReadError, resolveRedisLimits, type RedisLimits, type RedisReadExecutor, type RedisValue } from "./contracts.js";
+import { assertScopedRedisScanReply, parseRedisReply, scopeRedisRead } from "./protocol.js";
 
 export interface RedisNodeOptions extends RedisLimits {
   /** Server-owned endpoint; never accept this object from an HTTP body. */
@@ -28,24 +28,6 @@ function encode(command: readonly string[]): Buffer {
   return Buffer.concat(chunks);
 }
 
-/** Refuse the whole page rather than filtering/truncating an untrusted reply. */
-function assertScopedScanReply(value: RedisValue, prefix: string | undefined): void {
-  if (prefix === undefined || value === null || typeof value === "string" || value.kind !== "array" || value.values.length !== 2) throw new RedisReadError("protocol");
-  const cursor = value.values[0];
-  const keys = value.values[1];
-  if (cursor === undefined || cursor === null || typeof cursor === "string" || cursor.kind !== "bytes"
-    || keys === undefined || keys === null || typeof keys === "string" || keys.kind !== "array") throw new RedisReadError("protocol");
-  const cursorBytes = Buffer.from(cursor.base64, "base64");
-  const cursorText = cursorBytes.toString("utf8");
-  if (!/^\d{1,20}$/u.test(cursorText) || BigInt(cursorText) > 18_446_744_073_709_551_615n) throw new RedisReadError("protocol");
-  const literal = Buffer.from(prefix, "utf8");
-  for (const key of keys.values) {
-    if (key === null || typeof key === "string" || key.kind !== "bytes") throw new RedisReadError("protocol");
-    const bytes = Buffer.from(key.base64, "base64");
-    if (!bytes.subarray(0, literal.length).equals(literal)) throw new RedisReadError("protocol");
-  }
-}
-
 /** Independent TypeScript RESP2 read executor. Each operation owns and destroys one socket. */
 export class RedisNodeExecutor implements RedisReadExecutor {
   readonly #options: RedisNodeOptions;
@@ -64,17 +46,7 @@ export class RedisNodeExecutor implements RedisReadExecutor {
   }
 
   public async execute(command: readonly string[], signal?: AbortSignal): Promise<RedisValue> {
-    let admitted = validateRedisRead(command, this.#limits);
-    if (admitted[0] === "SCAN") {
-      if (this.#options.scanPrefix === undefined) throw new RedisReadError("policy");
-      let pattern = "";
-      for (const char of this.#options.scanPrefix) pattern += "\\*?[]".includes(char) ? `\\${char}` : char;
-      pattern += "*";
-      const match = admitted.indexOf("MATCH", 2);
-      if (match === -1) admitted = [...admitted, "MATCH", pattern];
-      else if (admitted[match + 1] !== pattern) throw new RedisReadError("policy");
-      admitted = validateRedisRead(admitted, this.#limits);
-    }
+    const admitted = scopeRedisRead(command, this.#options.scanPrefix, this.#limits);
     const scope = createAbortScope(signal, this.#limits.timeoutMs);
     let socket: Socket | undefined;
     try {
@@ -124,7 +96,7 @@ export class RedisNodeExecutor implements RedisReadExecutor {
         if (await request(["SELECT", String(this.#options.database)]) !== "OK") throw new RedisReadError("protocol");
       }
       const value = await request(admitted);
-      if (admitted[0] === "SCAN") assertScopedScanReply(value, this.#options.scanPrefix);
+      if (admitted[0] === "SCAN") assertScopedRedisScanReply(value, this.#options.scanPrefix);
       if (scope.callerAborted || scope.deadlineExceeded) throw new QueryCancelledError(scope.callerAborted ? "caller" : "deadline");
       return value;
     } catch (error) {
