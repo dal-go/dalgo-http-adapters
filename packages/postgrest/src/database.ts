@@ -117,6 +117,96 @@ export class PostgrestRequestError extends Error {
   }
 }
 
+interface ReadOperationScope {
+  readonly signal: AbortSignal;
+  readonly signed: boolean;
+  readonly callerAborted: boolean;
+  readonly deadlineExceeded: boolean;
+  checkpoint(): void;
+  failure(): Error;
+  stop(): void;
+  dispose(): void;
+}
+
+/** A private sibling-stop marker; never surfaced by a public read. */
+class ReadOperationStoppedError extends Error {
+  public constructor() {
+    super("PostgREST read operation stopped");
+    this.name = "ReadOperationStoppedError";
+  }
+}
+
+/**
+ * One read operation owns one configured deadline. A timer covers awaited
+ * work, while every checkpoint also compares monotonic elapsed time so a
+ * synchronous header, relation or codec callback cannot cross the deadline
+ * while the timer callback is unable to run.
+ */
+function createReadOperationScope(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): ReadOperationScope {
+  const controller = new AbortController();
+  const startedAt = performance.now();
+  const signed = callerSignal !== undefined;
+  let callerAborted = callerSignal?.aborted === true;
+  let deadlineExceeded = false;
+  let stopped = false;
+  let disposed = false;
+  const abort = (): void => {
+    if (!controller.signal.aborted) controller.abort();
+  };
+  const onCallerAbort = (): void => {
+    if (disposed) return;
+    callerAborted = true;
+    abort();
+  };
+  if (callerAborted) abort();
+  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  const timer = setTimeout(() => {
+    if (disposed) return;
+    deadlineExceeded = true;
+    abort();
+  }, timeoutMs);
+  const deadlineReached = (): boolean => performance.now() - startedAt >= timeoutMs;
+  // The unsignalled API keeps its historical redacted timeout error.
+  const deadlineError = (): Error => signed
+    ? new QueryCancelledError("deadline")
+    : new PostgrestRequestError();
+  const failure = (): Error => {
+    if (callerAborted) return new QueryCancelledError("caller");
+    if (deadlineExceeded || deadlineReached()) return deadlineError();
+    if (stopped) return new ReadOperationStoppedError();
+    return deadlineError();
+  };
+  return {
+    signal: controller.signal,
+    signed,
+    get callerAborted(): boolean { return callerAborted; },
+    get deadlineExceeded(): boolean { return deadlineExceeded || deadlineReached(); },
+    checkpoint(): void {
+      if (callerAborted) throw new QueryCancelledError("caller");
+      if (!deadlineExceeded && deadlineReached()) {
+        deadlineExceeded = true;
+        abort();
+      }
+      if (deadlineExceeded) throw deadlineError();
+      if (stopped) throw new ReadOperationStoppedError();
+    },
+    failure,
+    stop(): void {
+      stopped = true;
+      abort();
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
 function positive(value: number | undefined, fallback: number, field: string, maximum = 16_777_216): number {
   const result = value ?? fallback;
   if (!Number.isSafeInteger(result) || result < 1 || result > maximum) {
@@ -360,29 +450,145 @@ export class PostgrestDatabase implements Database, WriteSession {
     this.#maxSchemaDepth = positive(options.maxSchemaDepth, DEFAULT_MAX_SCHEMA_DEPTH, "maxSchemaDepth", 16);
   }
 
-  public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
-    const url = this.keyUrl(key);
-    url.searchParams.set("select", "*");
-    url.searchParams.set("limit", "1");
-    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled));
-    const row = rows[0];
-    return row === undefined ? { key, exists: false } : this.record(row, key, codec);
+  private async readThrough<T>(
+    signal: AbortSignal | undefined,
+    read: (scope: ReadOperationScope) => Promise<T>,
+  ): Promise<T> {
+    const scope = createReadOperationScope(signal, this.#timeoutMs);
+    try {
+      const result = await read(scope);
+      scope.checkpoint();
+      return result;
+    } catch (error) {
+      if (scope.callerAborted || scope.deadlineExceeded) {
+        scope.checkpoint();
+      }
+      throw error;
+    } finally {
+      scope.dispose();
+    }
   }
 
-  public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
-    if (keys.length > this.#maxGetManyKeys) throw new UnsupportedError(`PostgREST getMany above ${String(this.#maxGetManyKeys)} keys`);
-    const records: RecordSnapshot<T>[] = new Array(keys.length);
+  public get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.readThrough(undefined, (scope) => this.getInScope(key, codec, scope));
+  }
+
+  /** Cancellable point read with the same caller/deadline reasons as `queryWithSignal`. */
+  public getWithSignal<T>(key: Key, signal: AbortSignal, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.readThrough(signal, (scope) => this.getInScope(key, codec, scope));
+  }
+
+  private async getInScope<T>(key: Key, codec: Codec<T> | undefined, scope: ReadOperationScope): Promise<RecordSnapshot<T>> {
+    scope.checkpoint();
+    const url = this.keyUrl(key, scope);
+    url.searchParams.set("select", "*");
+    url.searchParams.set("limit", "1");
+    scope.checkpoint();
+    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled), undefined, scope);
+    scope.checkpoint();
+    const row = rows[0];
+    if (row === undefined) {
+      scope.checkpoint();
+      return { key, exists: false };
+    }
+    scope.checkpoint();
+    const record = this.record(row, key, codec);
+    scope.checkpoint();
+    return record;
+  }
+
+  public getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    return this.readThrough(undefined, (scope) => this.getManyInScope(keys, codec, scope));
+  }
+
+  /** Cancellable batch read sharing one deadline and one fail-stop signal. */
+  public getManyWithSignal<T>(keys: readonly Key[], signal: AbortSignal, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    return this.readThrough(signal, (scope) => this.getManyInScope(keys, codec, scope));
+  }
+
+  private async getManyInScope<T>(
+    keys: readonly Key[],
+    codec: Codec<T> | undefined,
+    scope: ReadOperationScope,
+  ): Promise<readonly RecordSnapshot<T>[]> {
+    // The caller's abort wins even when its key vector is invalid: no relation
+    // callback, header provider or fetch is reached first.
+    scope.checkpoint();
+    const count = keys.length;
+    if (count > this.#maxGetManyKeys) throw new UnsupportedError(`PostgREST getMany above ${String(this.#maxGetManyKeys)} keys`);
+    // Refuse every unusable slot before cloning any admitted key.
+    for (let index = 0; index < count; index += 1) {
+      if (!Object.hasOwn(keys, index)) throw new UnsupportedError("PostgREST getMany sparse keys");
+      const entry: unknown = keys[index];
+      if (entry === null || typeof entry !== "object") throw new UnsupportedError("PostgREST getMany keys");
+      const candidate = entry as Key;
+      if (candidate.parent !== undefined) throw new UnsupportedError("PostgREST nested DALgo keys");
+      if (typeof candidate.collection !== "string") throw new UnsupportedError("PostgREST key collections");
+      const id = candidate.id;
+      if (typeof id !== "string" && typeof id !== "number") throw new UnsupportedError("PostgREST key IDs");
+      if (typeof id === "number" && (!Number.isFinite(id) || Object.is(id, -0) || isUnsafeNativeNumber(id))) {
+        throw new TypeError("PostgREST read keys must have a finite, lossless number or string ID");
+      }
+      scope.checkpoint();
+    }
+    // Copy every admitted primitive before any user callback can mutate the
+    // caller's key objects or vector. The owned vector is the only work list.
+    const owned: Key[] = new Array(count);
+    for (let index = 0; index < count; index += 1) {
+      const candidate = keys[index] as Key;
+      owned[index] = new Key(candidate.collection, candidate.id);
+      scope.checkpoint();
+    }
+    scope.checkpoint();
+    if (count === 0) return [];
+    const records: RecordSnapshot<T>[] = new Array(count);
     let next = 0;
+    let failed = false;
+    let failure: unknown;
+    const stop = (error: unknown): void => {
+      if (failed) return;
+      failed = true;
+      failure = error;
+      scope.stop();
+    };
     const worker = async (): Promise<void> => {
       for (;;) {
+        if (failed) return;
+        try {
+          scope.checkpoint();
+        } catch (error) {
+          if (!(error instanceof ReadOperationStoppedError)) stop(error);
+          return;
+        }
         const index = next;
-        next += 1;
-        const key = keys[index];
-        if (key === undefined) return;
-        records[index] = await this.get(key, codec);
+        if (index >= count) return;
+        next = index + 1;
+        const ownedKey = owned[index];
+        if (ownedKey === undefined) {
+          stop(new UnsupportedError("PostgREST getMany keys"));
+          return;
+        }
+        try {
+          const record = await this.getInScope(ownedKey, codec, scope);
+          if (failed) return;
+          records[index] = record;
+          scope.checkpoint();
+        } catch (error) {
+          if (!(error instanceof ReadOperationStoppedError)) stop(error);
+          return;
+        }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(this.#maxParallelReads, keys.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(this.#maxParallelReads, count) }, () => worker()));
+    // A genuine caller abort has priority over a sibling's first real failure;
+    // an internal sibling stop is never reported as a caller cancellation.
+    if (scope.callerAborted) throw new QueryCancelledError("caller");
+    if (failed) {
+      // A sibling stop is never the public result; only a real first failure is.
+      if (failure instanceof ReadOperationStoppedError) throw new PostgrestRequestError();
+      throw failure;
+    }
+    scope.checkpoint();
     return records;
   }
 
@@ -415,55 +621,82 @@ export class PostgrestDatabase implements Database, WriteSession {
     this.assertExactlyOne(rows);
   }
 
-  public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
-    const { url, limit } = this.prepareQuery(query, false);
-    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled));
-    return this.queryPage(rows, limit, query);
+  public query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
+    return this.readThrough(undefined, (scope) => this.queryInScope(query, false, scope));
   }
 
   /**
    * Cancellable query entry point with an optional adapter-owned keyset cursor.
-   * The caller signal covers header acquisition, fetch and response-body
-   * reading, and shares one deadline with `query`.
+   * The caller signal covers query preparation, header acquisition, fetch,
+   * response-body reading, codecs and cursor serialization under one deadline.
    */
-  public async queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
-    if (signal.aborted) throw new QueryCancelledError("caller");
-    const { url, limit, continuation } = this.prepareQuery(query, true);
-    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, readSignal, cancelled) => this.rows(response, readSignal, cancelled), signal);
-    if (signal.aborted) throw new QueryCancelledError("caller");
-    return this.queryPage(rows, limit, query, continuation);
+  public queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
+    return this.readThrough(signal, (scope) => this.queryInScope(query, true, scope));
+  }
+
+  private async queryInScope<T>(
+    query: StructuredQuery<T>,
+    cursorMode: boolean,
+    scope: ReadOperationScope,
+  ): Promise<QueryPage<T>> {
+    scope.checkpoint();
+    const { url, limit, continuation } = this.prepareQuery(query, cursorMode, scope);
+    scope.checkpoint();
+    const rows = await this.request(url, "GET", { accept: "application/json" }, undefined, (response, signal, cancelled) => this.rows(response, signal, cancelled), undefined, scope);
+    scope.checkpoint();
+    const page = this.queryPage(rows, limit, query, scope, continuation);
+    scope.checkpoint();
+    return page;
   }
 
   private queryPage<T>(
     rows: readonly Record<string, unknown>[],
     limit: number,
     query: StructuredQuery<T>,
+    scope: ReadOperationScope,
     continuation?: QueryContinuation,
   ): QueryPage<T> {
+    scope.checkpoint();
     if (rows.length > limit) throw new RangeError("PostgREST response returned more rows than the requested query limit");
-    const records = rows.map((row) => this.record(row, undefined, query.source.codec, query.source.name));
+    const records: ExistingRecord<T>[] = [];
+    for (const row of rows) {
+      scope.checkpoint();
+      records.push(this.record(row, undefined, query.source.codec, query.source.name));
+      scope.checkpoint();
+    }
     // A short page is not proof of end-of-data: `db-max-rows` (or a proxy)
     // can cap every response below the requested limit. Continue after every
     // non-empty page and let the next request prove the end with an empty
     // page. Only cursor mode continues; legacy query/offset keeps its exact
     // single-request contract.
-    if (continuation === undefined || rows.length === 0) return { records };
+    if (continuation === undefined || rows.length === 0) {
+      scope.checkpoint();
+      return { records };
+    }
     const last = rows[rows.length - 1];
-    if (last === undefined) return { records };
+    if (last === undefined) {
+      scope.checkpoint();
+      return { records };
+    }
+    scope.checkpoint();
     const values = continuation.orders.map((order) => {
       if (!Object.hasOwn(last, order.field)) {
         throw new TypeError(`PostgREST response row is missing the ${order.field} order column`);
       }
       return last[order.field];
     });
+    scope.checkpoint();
     const cursor = encodePostgrestCursor(continuation.binding, continuation.page, values, this.#maxCursorBytes);
+    scope.checkpoint();
     return { records, nextCursor: { values: [cursor] } };
   }
 
   private prepareQuery<T>(
     query: StructuredQuery<T>,
     cursorMode: boolean,
+    scope: ReadOperationScope,
   ): { readonly url: URL; readonly limit: number; readonly continuation?: QueryContinuation } {
+    scope.checkpoint();
     if (query.source.kind !== "collection" || query.source.parent !== undefined) {
       throw new UnsupportedError("PostgREST collection-group or nested-collection queries");
     }
@@ -479,12 +712,13 @@ export class PostgrestDatabase implements Database, WriteSession {
     if (query.startAfter !== undefined && query.offset !== undefined) {
       throw new UnsupportedError("PostgREST query cursors combined with offset");
     }
-    const url = this.relationUrlForCollection(query.source.name);
+    const url = this.relationUrlForCollection(query.source.name, scope);
     url.searchParams.set("select", "*");
     for (const filter of query.filters) {
       const [field, value] = filterParameter(filter, this.#idColumn);
       url.searchParams.append(field, value);
     }
+    scope.checkpoint();
     const orders = cursorMode ? this.cursorOrders(query.orders) : this.legacyOrders(query.orders);
     if (orders.length > 0) {
       url.searchParams.set("order", orders.map((order) => `${postgrestFieldKey(order.field)}.${order.direction}`).join(","));
@@ -503,9 +737,11 @@ export class PostgrestDatabase implements Database, WriteSession {
       }
       url.searchParams.set("offset", String(query.offset));
     }
+    scope.checkpoint();
     if (!cursorMode) return { url, limit };
 
-    const continuationBinding = this.cursorBinding(query, orders, limit);
+    const continuationBinding = this.cursorBinding(query, orders, limit, scope);
+    scope.checkpoint();
     let page = 1;
     if (query.startAfter !== undefined) {
       if (query.startAfter.values.length !== 1 || typeof query.startAfter.values[0] !== "string") {
@@ -517,6 +753,7 @@ export class PostgrestDatabase implements Database, WriteSession {
         throw new UnsupportedError(`PostgREST query cursor page above ${String(this.#maxQueryPages)}`);
       }
       url.searchParams.set("or", postgrestKeysetFilter(orders, decoded.values));
+      scope.checkpoint();
     }
     return { url, limit, continuation: { binding: continuationBinding, page: page + 1, orders } };
   }
@@ -549,11 +786,12 @@ export class PostgrestDatabase implements Database, WriteSession {
     query: StructuredQuery<T>,
     orders: readonly PostgrestCursorOrder[],
     limit: number,
+    scope: ReadOperationScope,
   ): PostgrestCursorBinding {
     return {
       endpoint: this.#baseUrl,
       collection: query.source.name,
-      relation: this.relationForCollection(query.source.name),
+      relation: this.relationForCollection(query.source.name, scope),
       ...(this.#schema === undefined ? {} : { schema: this.#schema }),
       idColumn: this.#idColumn,
       select: "*",
@@ -703,22 +941,29 @@ export class PostgrestDatabase implements Database, WriteSession {
     throw new UnsupportedError("PostgREST callback transactions");
   }
 
-  private relationUrl(key: Key): URL {
+  private relationUrl(key: Key, scope?: ReadOperationScope): URL {
     if (key.parent !== undefined) throw new UnsupportedError("PostgREST nested DALgo keys");
-    return this.relationUrlForCollection(key.collection);
+    return this.relationUrlForCollection(key.collection, scope);
   }
 
-  private relationForCollection(collection: string): string {
-    return identifier(this.#relationName(collection), "relation");
+  private relationForCollection(collection: string, scope?: ReadOperationScope): string {
+    scope?.checkpoint();
+    const relation = identifier(this.#relationName(collection), "relation");
+    scope?.checkpoint();
+    return relation;
   }
 
-  private relationUrlForCollection(collection: string): URL {
-    return new URL(encodeURIComponent(this.relationForCollection(collection)), this.#baseUrl);
+  private relationUrlForCollection(collection: string, scope?: ReadOperationScope): URL {
+    const url = new URL(encodeURIComponent(this.relationForCollection(collection, scope)), this.#baseUrl);
+    scope?.checkpoint();
+    return url;
   }
 
-  private keyUrl(key: Key): URL {
-    const url = this.relationUrl(key);
+  private keyUrl(key: Key, scope?: ReadOperationScope): URL {
+    const url = this.relationUrl(key, scope);
+    scope?.checkpoint();
     url.searchParams.set(postgrestFieldKey(this.#idColumn), `eq.${scalar(key.id)}`);
+    scope?.checkpoint();
     return url;
   }
 
@@ -751,58 +996,99 @@ export class PostgrestDatabase implements Database, WriteSession {
     body: unknown | undefined,
     consume: (response: Response, signal: AbortSignal, cancelled: () => Error) => Promise<T>,
     callerSignal?: AbortSignal,
+    readScope?: ReadOperationScope,
   ): Promise<T> {
     const text = body === undefined ? undefined : JSON.stringify(body);
     if (text !== undefined && new TextEncoder().encode(text).byteLength > this.#maxRequestBytes) throw new RangeError("PostgREST request exceeds maxRequestBytes");
+    if (readScope !== undefined) {
+      // A read operation owns and disposes its scope; this request borrows it.
+      return await this.performRequest(
+        url, method, requiredHeaders, text, consume,
+        readScope.signal,
+        () => readScope.failure(),
+        () => readScope.checkpoint(),
+      );
+    }
     const scope = createAbortScope(callerSignal, this.#timeoutMs);
     const cancelled = (): Error => callerSignal === undefined
       ? new PostgrestRequestError()
       : new QueryCancelledError(scope.deadlineExceeded ? "deadline" : "caller");
+    try {
+      return await this.performRequest(
+        url, method, requiredHeaders, text, consume,
+        scope.signal,
+        cancelled,
+        () => undefined,
+      );
+    } finally {
+      scope.dispose();
+    }
+  }
+
+  private async performRequest<T>(
+    url: URL,
+    method: string,
+    requiredHeaders: Record<string, string>,
+    text: string | undefined,
+    consume: (response: Response, signal: AbortSignal, cancelled: () => Error) => Promise<T>,
+    signal: AbortSignal,
+    cancelled: () => Error,
+    checkpoint: () => void,
+  ): Promise<T> {
     let response: Response | undefined;
     try {
+      checkpoint();
       let provided: PostgrestHeaders | undefined;
       try {
         provided = await raceAbort(
-          Promise.resolve().then(() => typeof this.#headers === "function" ? this.#headers() : this.#headers),
-          scope.signal,
+          Promise.resolve().then(() => {
+            if (signal.aborted) throw cancelled();
+            return typeof this.#headers === "function" ? this.#headers() : this.#headers;
+          }),
+          signal,
           cancelled,
         );
       } catch {
-        if (scope.signal.aborted) throw cancelled();
+        if (signal.aborted) throw cancelled();
         throw new PostgrestRequestError();
       }
+      checkpoint();
       if (provided !== undefined) validateHeaders(provided);
       const headers = new Headers(provided);
       for (const [name, value] of Object.entries(this.profileHeaders(method))) headers.set(name, value);
       for (const [name, value] of Object.entries(requiredHeaders)) headers.set(name, value);
-      if (scope.signal.aborted) throw cancelled();
-      const pending = Promise.resolve().then(() => this.#fetch(url, {
-        method,
-        headers,
-        redirect: "error",
-        ...(text === undefined ? {} : { body: text }),
-        signal: scope.signal,
-      }));
-      void pending.then((late) => { if (scope.signal.aborted) cancelQuietly(late.body); }, () => undefined);
-      const responseValue = await raceAbort(pending, scope.signal, cancelled);
+      checkpoint();
+      if (signal.aborted) throw cancelled();
+      const pending = Promise.resolve().then(() => {
+        if (signal.aborted) throw cancelled();
+        return this.#fetch(url, {
+          method,
+          headers,
+          redirect: "error",
+          ...(text === undefined ? {} : { body: text }),
+          signal,
+        });
+      });
+      void pending.then((late) => { if (signal.aborted) cancelQuietly(late.body); }, () => undefined);
+      const responseValue = await raceAbort(pending, signal, cancelled);
       response = responseValue;
-      if (scope.signal.aborted) throw cancelled();
+      checkpoint();
+      if (signal.aborted) throw cancelled();
       if (!responseValue.ok) {
         cancelQuietly(responseValue.body);
         throw new PostgrestHttpError(responseValue.status);
       }
-      const value = await consume(responseValue, scope.signal, cancelled);
-      if (scope.signal.aborted) throw cancelled();
+      const value = await consume(responseValue, signal, cancelled);
+      checkpoint();
+      if (signal.aborted) throw cancelled();
       return value;
     } catch (error) {
-      if (scope.signal.aborted) {
+      if (signal.aborted) {
         cancelQuietly(response?.body);
         throw cancelled();
       }
       if (error instanceof PostgrestHttpError || error instanceof PostgrestRequestError || error instanceof QueryCancelledError) throw error;
       throw new PostgrestRequestError();
-    } finally {
-      scope.dispose();
     }
   }
 

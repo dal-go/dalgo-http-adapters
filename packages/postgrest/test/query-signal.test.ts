@@ -1,5 +1,5 @@
 import { QueryCancelledError } from "@dalgo/adapter-runtime";
-import { DOCUMENT_ID, UnsupportedError, collection, key } from "@dalgo/core";
+import { DOCUMENT_ID, UnsupportedError, collection, key, type Codec } from "@dalgo/core";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -282,4 +282,263 @@ describe("PostgrestDatabase.queryWithSignal", () => {
     expect(POSTGREST_READ_CAPABILITIES.bounds.maxQueryOffset.default).toBe(100_000);
     expect(POSTGREST_READ_CAPABILITIES.bounds.filterOperators).toContain("array-contains-any");
   });
+});
+
+type Item = { done: boolean; priority: number };
+
+function isItem(data: unknown): data is Item {
+  if (typeof data !== "object" || data === null) return false;
+  const row = data as Record<string, unknown>;
+  return typeof row.done === "boolean" && typeof row.priority === "number";
+}
+
+function decodeItem(data: unknown): Item {
+  if (!isItem(data)) throw new TypeError("unexpected item response");
+  return data;
+}
+
+function readCodec(
+  decode: (data: unknown, entered: number) => Item,
+): { readonly codec: Codec<Item>; readonly entered: () => number } {
+  let entries = 0;
+  return {
+    codec: {
+      encode: (value) => value,
+      decode: (data) => {
+        entries += 1;
+        return decode(data, entries);
+      },
+    },
+    entered: () => entries,
+  };
+}
+
+function expectCallerCancellation(error: unknown, privateMessage: string): void {
+  expect(error).toBeInstanceOf(QueryCancelledError);
+  expect(error).toMatchObject({
+    name: "QueryCancelledError",
+    reason: "caller",
+    message: "query cancelled by caller",
+  });
+  expect(String(error)).not.toContain(privateMessage);
+  expect((error as { cause?: unknown }).cause).toBeUndefined();
+}
+
+describe("PostgrestDatabase read codec cancellation", () => {
+  it("stops after the first synchronous caller-aborting query codec", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, [
+      { id: "milk", done: false, priority: 1 },
+      { id: "eggs", done: true, priority: 2 },
+    ]));
+    const controller = new AbortController();
+    const privateReason = new Error("private synchronous codec reason");
+    const { codec, entered } = readCodec((data, count) => {
+      if (count === 1) controller.abort(privateReason);
+      return decodeItem(data);
+    });
+    const items = collection<Item>("items", { codec });
+
+    const error = await db
+      .queryWithSignal(items.query().build(), controller.signal)
+      .catch((reason: unknown) => reason);
+
+    expect(entered()).toBe(1);
+    expectCallerCancellation(error, privateReason.message);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    fetch.mockResolvedValueOnce(response(200, [{ id: "bread", done: true, priority: 3 }]));
+    const page = await db.queryWithSignal(items.query().build(), new AbortController().signal);
+    expect(page.records).toEqual([
+      { key: key("items", "bread"), exists: true, data: { done: true, priority: 3 } },
+    ]);
+    expect(entered()).toBe(2);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a codec-queued caller abort after the final inner check", async () => {
+    const point = database();
+    const pointController = new AbortController();
+    const pointReason = new Error("private point reason");
+    const pointCodec = readCodec((data, count) => {
+      if (count === 1) queueMicrotask(() => { pointController.abort(pointReason); });
+      return decodeItem(data);
+    });
+    point.fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: false, priority: 1 }]));
+
+    const pointError = await point.database
+      .getWithSignal(key("items", "milk"), pointController.signal, pointCodec.codec)
+      .catch((reason: unknown) => reason);
+
+    expect(pointCodec.entered()).toBe(1);
+    expectCallerCancellation(pointError, pointReason.message);
+    expect(point.fetch).toHaveBeenCalledTimes(1);
+
+    const query = database();
+    const queryController = new AbortController();
+    const queryReason = new Error("private query reason");
+    const queryCodec = readCodec((data, count) => {
+      if (count === 1) queueMicrotask(() => { queryController.abort(queryReason); });
+      return decodeItem(data);
+    });
+    const items = collection<Item>("items", { codec: queryCodec.codec });
+    query.fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: false, priority: 1 }]));
+
+    const queryError = await query.database
+      .queryWithSignal(items.query().build(), queryController.signal)
+      .catch((reason: unknown) => reason);
+
+    expect(queryCodec.entered()).toBe(1);
+    expectCallerCancellation(queryError, queryReason.message);
+    expect(query.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets caller cancellation win over a codec callback throw", async () => {
+    const { database: db, fetch } = database();
+    fetch.mockResolvedValueOnce(response(200, [
+      { id: "milk", done: false, priority: 1 },
+      { id: "eggs", done: true, priority: 2 },
+    ]));
+    const controller = new AbortController();
+    const privateReason = new Error("private callback abort reason");
+    const callbackError = new Error("private callback error marker");
+    const { codec, entered } = readCodec((data, count) => {
+      if (count === 1) {
+        controller.abort(privateReason);
+        throw callbackError;
+      }
+      return decodeItem(data);
+    });
+    const items = collection<Item>("items", { codec });
+
+    const error = await db
+      .queryWithSignal(items.query().build(), controller.signal)
+      .catch((reason: unknown) => reason);
+
+    expect(entered()).toBe(1);
+    expectCallerCancellation(error, callbackError.message);
+    expect(String(error)).not.toContain(privateReason.message);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets caller cancellation win when a relation callback aborts and throws before fetch", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const headers = vi.fn(() => ({ authorization: "Bearer opaque" }));
+    const controller = new AbortController();
+    const privateReason = new Error("private relation abort reason");
+    const callbackError = new Error("private relation error marker");
+    const db = new PostgrestDatabase({
+      baseUrl: "https://api.example.com/rest/v1",
+      fetch,
+      headers,
+      relationName: () => {
+        controller.abort(privateReason);
+        throw callbackError;
+      },
+    });
+    const items = collection<Item>("items");
+
+    const error = await db
+      .queryWithSignal(items.query().build(), controller.signal)
+      .catch((reason: unknown) => reason);
+
+    expectCallerCancellation(error, callbackError.message);
+    expect(String(error)).not.toContain(privateReason.message);
+    expect(headers).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("enforces the original deadline across a synchronous codec even when its timer cannot run", async () => {
+    const timeoutMs = 100;
+    const { database: db, fetch } = database({ timeoutMs });
+    fetch.mockResolvedValueOnce(response(200, [
+      { id: "milk", done: false, priority: 1 },
+      { id: "eggs", done: true, priority: 2 },
+    ]));
+    const { codec, entered } = readCodec((data) => {
+      const until = performance.now() + timeoutMs + 1;
+      while (performance.now() < until) { /* spin on the real monotonic clock */ }
+      return decodeItem(data);
+    });
+    const items = collection<Item>("items", { codec });
+
+    const error = await db
+      .queryWithSignal(items.query().build(), new AbortController().signal)
+      .catch((reason: unknown) => reason);
+
+    expect(entered()).toBe(1);
+    expect(error).toBeInstanceOf(QueryCancelledError);
+    expect(error).toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  }, 2_000);
+
+  it("keeps the unsignalled deadline error redacted across a synchronous codec", async () => {
+    const timeoutMs = 100;
+    const { database: db, fetch } = database({ timeoutMs });
+    fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: false, priority: 1 }]));
+    const { codec, entered } = readCodec((data) => {
+      const until = performance.now() + timeoutMs + 1;
+      while (performance.now() < until) { /* spin on the real monotonic clock */ }
+      return decodeItem(data);
+    });
+    const items = collection<Item>("items", { codec });
+
+    const error = await db.query(items.query().build()).catch((reason: unknown) => reason);
+
+    expect(entered()).toBe(1);
+    expect(error).toEqual(new PostgrestRequestError());
+    expect(fetch).toHaveBeenCalledTimes(1);
+  }, 2_000);
+
+  it("public point promise commits before a two-hop post-commit abort", async () => {
+    const point = database();
+    const controller = new AbortController();
+    const privateReason = new Error("private post-commit point reason");
+    const events: string[] = [];
+    const markerGate = deferred<boolean>();
+    let firstHopEntered = false;
+    let secondHopEntered = false;
+    let abortedAtProbe = false;
+    const publicPending: { value: Promise<unknown> | undefined } = { value: undefined };
+    const pointCodec = readCodec((data, count) => {
+      if (count === 1) {
+        queueMicrotask(() => {
+          firstHopEntered = true;
+          queueMicrotask(() => {
+            secondHopEntered = true;
+            controller.abort(privateReason);
+            abortedAtProbe = controller.signal.aborted;
+            const pending = publicPending.value;
+            if (pending === undefined) throw new Error("public point promise was not captured before the codec ran");
+            void pending.then(
+              () => { events.push("public-reaction"); },
+              () => { events.push("public-rejected"); },
+            );
+            queueMicrotask(() => {
+              events.push("marker");
+              markerGate.resolve(true);
+            });
+          });
+        });
+      }
+      return decodeItem(data);
+    });
+    point.fetch.mockResolvedValueOnce(response(200, [{ id: "milk", done: false, priority: 1 }]));
+
+    const pending = point.database.getWithSignal(key("items", "milk"), controller.signal, pointCodec.codec);
+    publicPending.value = pending;
+
+    await markerGate.promise;
+    const publicResult = await pending;
+    await flush();
+
+    expect(pointCodec.entered()).toBe(1);
+    expect(firstHopEntered).toBe(true);
+    expect(secondHopEntered).toBe(true);
+    expect(abortedAtProbe).toBe(true);
+    expect(events).toEqual(["public-reaction", "marker"]);
+    expect(decodeItem(publicResult.data)).toEqual({ done: false, priority: 1 });
+    expect(publicResult.key).toEqual(key("items", "milk"));
+    expect(point.fetch).toHaveBeenCalledTimes(1);
+  }, 2_000);
 });
