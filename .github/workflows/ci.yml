@@ -159,6 +159,10 @@ jobs:
         env:
           DALGO_PACKED_CONSUMER_RECEIPT: ${{ runner.temp }}/adapter-packed-consumer/convex-receipt.json
         run: pnpm check:convex-packed-consumer
+      - name: Check native Cloudflare KV source and official Worker types
+        env:
+          DALGO_PACKED_CONSUMER_RECEIPT: ${{ runner.temp }}/adapter-packed-consumer/cloudflare-kv-receipt.json
+        run: pnpm check:cloudflare-kv-packed-consumer
       - name: Retain packed consumer and release-preview receipt
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
