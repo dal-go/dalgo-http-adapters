@@ -634,7 +634,8 @@ describe("NativeCouchDbDatabase cursor binding", () => {
     expect(limits.maxIssuedCursors).toBeGreaterThan(0);
     expect(limits.maxConservedCursors).toBeGreaterThan(0);
 
-    fetch.mockImplementation(() => Promise.resolve(response(200, { docs: [{ _id: "a" }], bookmark: "bookmark" })));
+    let serverPage = 0;
+    fetch.mockImplementation(() => Promise.resolve(response(200, { docs: [{ _id: "a" }], bookmark: `owned-page-${String(++serverPage)}` })));
     let oldest: string | undefined;
     let newest: string | undefined;
     for (let index = 0; index < limits.maxIssuedCursors + 1; index += 1) {
@@ -686,6 +687,7 @@ describe("NativeCouchDbDatabase response validation and bounds", () => {
 
     fetch.mockResolvedValueOnce(response(200, { docs: [{ _id: "a" }, { _id: "a" }], bookmark: "b" }));
     await expect(database.query(query(coded.query().limit(2).build()))).rejects.toThrow("duplicate");
+    expect(decode).not.toHaveBeenCalled();
   });
 
   it("enforces exact page, byte and batch bounds", async () => {
