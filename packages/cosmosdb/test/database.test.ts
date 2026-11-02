@@ -160,13 +160,71 @@ describe("CosmosNoSqlDatabase", () => {
   });
 
   it("keeps the deadline through a stalled response stream and cancels the reader", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
     let cancelled = false;
     let resolvePull: (() => void) | undefined;
-    const stalled = new ReadableStream<Uint8Array>({ pull: () => new Promise<void>((resolve) => { resolvePull = resolve; }), cancel: () => { cancelled = true; } });
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(stalled, { status: 200 }));
-    const database = new CosmosNoSqlDatabase({ endpoint: "https://example.documents.azure.com", databaseId: "app", containerId: "records", authorization: () => "resource", fetch, timeoutMs: 1 });
-    await expect(database.get(key("items", "a"))).rejects.toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
-    expect(cancelled).toBe(true);
-    resolvePull?.();
+    let resolveFetch!: (value: undefined) => void;
+    let resolveReader!: (value: undefined) => void;
+    let resolveRead!: (value: undefined) => void;
+    let resolveEnteredPull!: (value: undefined) => void;
+    const fetchEntered = new Promise<undefined>((resolve) => { resolveFetch = resolve; });
+    const readerEntered = new Promise<undefined>((resolve) => { resolveReader = resolve; });
+    const readEntered = new Promise<undefined>((resolve) => { resolveRead = resolve; });
+    const pullEntered = new Promise<undefined>((resolve) => { resolveEnteredPull = resolve; });
+    let advanced = false;
+    let outcome: Promise<void> | undefined;
+    try {
+      // Zero high-water mark prevents eager stream pull before adapter ownership.
+      const stalled = new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>((resolve) => { resolvePull = resolve; resolveEnteredPull(undefined); }),
+        cancel: () => { cancelled = true; },
+      }, { highWaterMark: 0 });
+      const ownedResponse = new Response(stalled, { status: 200 });
+      // Install only after Response construction; these ACKs observe actual
+      // adapter reader acquisition/read, delegating both bound native methods.
+      const nativeGetReader = stalled.getReader.bind(stalled);
+      vi.spyOn(stalled, "getReader").mockImplementation(() => {
+        const reader = nativeGetReader();
+        const nativeRead = reader.read.bind(reader);
+        vi.spyOn(reader, "read").mockImplementation(() => {
+          const pending = nativeRead();
+          resolveRead(undefined);
+          return pending;
+        });
+        resolveReader(undefined);
+        return reader;
+      });
+      const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(() => {
+        resolveFetch(undefined);
+        return Promise.resolve(ownedResponse);
+      });
+      const database = new CosmosNoSqlDatabase({ endpoint: "https://example.documents.azure.com", databaseId: "app", containerId: "records", authorization: () => "resource", fetch, timeoutMs: 1 });
+      outcome = expect(database.get(key("items", "a"))).rejects.toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
+      await fetchEntered;
+      await readerEntered;
+      await readEntered;
+      await pullEntered;
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(stalled.locked).toBe(true);
+      expect(cancelled).toBe(false);
+      clock.mockReturnValue(1);
+      await vi.advanceTimersByTimeAsync(1);
+      advanced = true;
+      await outcome;
+      expect(cancelled).toBe(true);
+      expect(stalled.locked).toBe(false);
+    } finally {
+      try {
+        // Even an earlier assertion failure must release this owned operation.
+        if (!advanced) { clock.mockReturnValue(1); await vi.advanceTimersByTimeAsync(1); }
+        resolvePull?.();
+        await outcome;
+      } finally {
+        vi.clearAllTimers();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    }
   });
 });
