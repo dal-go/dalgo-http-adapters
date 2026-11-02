@@ -1,4 +1,4 @@
-import { collection, key } from "@dalgo/core";
+import { Key, collection, key, type Codec } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,6 +9,7 @@ import {
 } from "../src/index.js";
 import {
   blob,
+  deferred,
   executed,
   failingBody,
   firstStatement,
@@ -495,5 +496,117 @@ describe("NativeLibSQLDatabase", () => {
     const table = discovery.tables[0];
     expect(table?.adapterQueryable).toBe(false);
     expect(table?.adapterQueryableReason).toContain("key type");
+  });
+
+  function expectNativeBatch(
+    calls: readonly Call[],
+    snapshots: readonly {
+      readonly key: { readonly id: unknown; readonly collection: string };
+      readonly exists: boolean;
+      readonly data?: unknown;
+      readonly metadata?: unknown;
+    }[],
+  ): void {
+    expect(snapshots.map((snapshot) => snapshot.key.id)).toEqual([1, 2, 1, 3]);
+    expect(snapshots.map((snapshot) => snapshot.key.collection)).toEqual(["items", "items", "items", "items"]);
+    expect(snapshots.map((snapshot) => snapshot.exists)).toEqual([true, true, true, false]);
+    expect(snapshots[0]?.data).toEqual({ title: "One", rank: null, score: null });
+    expect(snapshots[1]?.data).toEqual({ title: "Two", rank: 7, score: 0.5 });
+    expect(snapshots[2]?.data).toEqual({ title: "One", rank: null, score: null });
+    expect(snapshots[0]?.metadata).toEqual({ id: 1 });
+    expect(snapshots[1]?.metadata).toEqual({ id: 2 });
+    expect(snapshots[2]?.metadata).toEqual({ id: 1 });
+    expect(calls).toHaveLength(4);
+    const expected = [1, 2, 1, 3];
+    for (const [index, call] of calls.entries()) {
+      const sent = firstStatement(call);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([integer(expected[index] ?? 0)]);
+    }
+  }
+
+  it("owns native numeric key identities and membership before authheaders settle", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Readonly<Record<string, string>>>();
+    const normalHeaders: Readonly<Record<string, string>> = { authorization: "Bearer reader-token" };
+    const db = new NativeLibSQLDatabase({
+      ...options({ maxParallelReads: 1, maxGetManyKeys: 4 }),
+      headers: () => {
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+      fetch: mockFetch([
+        response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+        response([ok(executed(itemProjection, [[integer(2), text("Two"), integer(7), float(0.5)]]))]),
+        response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+        response([ok(executed(itemProjection, []))]),
+      ], calls),
+    });
+    const originalOne = items.key(1);
+    const originalTwo = items.key(2);
+    const missing = items.key(3);
+    const keys: Key[] = [originalOne, originalTwo, originalOne, missing];
+    const pending = db.getManyWithSignal(keys, new AbortController().signal);
+    try {
+      await entered.promise;
+      expect(calls).toHaveLength(0);
+      expect(Reflect.set(originalOne, "id", 99)).toBe(true);
+      expect(Reflect.set(originalTwo, "collection", "labels")).toBe(true);
+      expect(Reflect.set(originalTwo, "id", "substitution")).toBe(true);
+      expect(Reflect.set(missing, "parent", new Key("items", 4))).toBe(true);
+      keys.splice(0, keys.length, items.key(9));
+      expect(calls).toHaveLength(0);
+      expect(originalOne.id).toBe(99);
+      expect(originalTwo.id).toBe("substitution");
+      expect(originalTwo.collection).toBe("labels");
+      expect(missing.parent).toEqual(new Key("items", 4));
+      expect(keys.map((key) => key.id)).toEqual([9]);
+      gate.resolve(normalHeaders);
+      expectNativeBatch(calls, await pending);
+    } finally {
+      gate.resolve(normalHeaders);
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it("owns later native keys and fixed work count through first codec", async () => {
+    const calls: Call[] = [];
+    let entered = false;
+    const originalOne = items.key(1);
+    const originalTwo = items.key(2);
+    const missing = items.key(3);
+    const keys: Key[] = [originalOne, originalTwo, originalOne, missing];
+    const codec: Codec<unknown> = {
+      encode: (value) => value,
+      decode: (value) => {
+        if (!entered) {
+          entered = true;
+          expect(Reflect.set(originalTwo, "id", 77)).toBe(true);
+          expect(Reflect.set(originalTwo, "collection", "labels")).toBe(true);
+          expect(Reflect.set(missing, "id", 88)).toBe(true);
+          expect(Reflect.set(missing, "parent", new Key("items", 5))).toBe(true);
+          keys[1] = items.key(4);
+          keys.push(items.key(5));
+        }
+        return value;
+      },
+    };
+    const db = database([
+      response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+      response([ok(executed(itemProjection, [[integer(2), text("Two"), integer(7), float(0.5)]]))]),
+      response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+      response([ok(executed(itemProjection, []))]),
+    ], calls, { maxParallelReads: 1, maxGetManyKeys: 4 });
+    const snapshots = await db.getMany(keys, codec);
+    expect(entered).toBe(true);
+    expect(originalTwo.id).toBe(77);
+    expect(originalTwo.collection).toBe("labels");
+    expect(missing.id).toBe(88);
+    expect(missing.parent).toEqual(new Key("items", 5));
+    expect(keys).toHaveLength(5);
+    expect(keys[1]).toEqual(items.key(4));
+    expect(keys[4]).toEqual(items.key(5));
+    expectNativeBatch(calls, snapshots);
   });
 });

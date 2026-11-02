@@ -1,4 +1,4 @@
-import { AlreadyExistsError, collection } from "@dalgo/core";
+import { AlreadyExistsError, Key, collection, type Codec } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,6 +9,7 @@ import {
 } from "../src/index.js";
 import {
   blob,
+  deferred,
   executed,
   failed,
   failingBody,
@@ -601,5 +602,113 @@ describe("LibSQLDatabase managed tables", () => {
     const discovery = await db.discover();
     expect(discovery).toMatchObject({ status: "available", tableCount: 2, truncated: true, omittedTables: 1 });
     expect(discovery.tables.map((table) => table.name)).toEqual(["a", "b"]);
+  });
+
+  function expectManagedBatch(
+    calls: readonly Call[],
+    snapshots: readonly {
+      readonly key: { readonly id: unknown; readonly collection: string };
+      readonly exists: boolean;
+      readonly data?: unknown;
+    }[],
+  ): void {
+    expect(snapshots.map((snapshot) => snapshot.key.id)).toEqual(["one", "two", "one", "missing"]);
+    expect(snapshots.map((snapshot) => snapshot.key.collection)).toEqual(["items", "items", "items", "items"]);
+    expect(snapshots.map((snapshot) => snapshot.exists)).toEqual([true, true, true, false]);
+    expect(snapshots[0]?.data).toEqual({ title: "Milk", rank: 10 });
+    expect(snapshots[1]?.data).toEqual({ title: "Tea", rank: 11 });
+    expect(snapshots[2]?.data).toEqual({ title: "Milk", rank: 10 });
+    expect(calls).toHaveLength(4);
+    const expected = ["one", "two", "one", "missing"];
+    for (const [index, call] of calls.entries()) {
+      const sent = firstStatement(call);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([text(expected[index] ?? "")]);
+    }
+  }
+
+  it("owns admitted managed key values and fixed list before async authheaders", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Readonly<Record<string, string>>>();
+    const normalHeaders: Readonly<Record<string, string>> = {
+      authorization: "Bearer rotating-token",
+      "x-deployment-header": "example",
+    };
+    const db = new LibSQLDatabase({
+      ...options({ maxParallelReads: 1, maxGetManyKeys: 4 }),
+      headers: () => {
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+      fetch: mockFetch([
+        response([ok(executed(projection, [one]))]),
+        response([ok(executed(projection, [two]))]),
+        response([ok(executed(projection, [one]))]),
+        response([ok(executed(projection, []))]),
+      ], calls),
+    });
+    const firstKey = items.key("one");
+    const secondKey = items.key("two");
+    const missingKey = items.key("missing");
+    const keys = [firstKey, secondKey, firstKey, missingKey];
+    const pending = db.getManyWithSignal(keys, new AbortController().signal);
+    try {
+      await entered.promise;
+      expect(calls).toHaveLength(0);
+      expect(Reflect.set(firstKey, "id", "spoof")).toBe(true);
+      expect(Reflect.set(secondKey, "id", "substituted")).toBe(true);
+      expect(Reflect.set(secondKey, "collection", "substituted")).toBe(true);
+      expect(Reflect.set(missingKey, "parent", new Key("items", "parent"))).toBe(true);
+      keys.splice(0, keys.length, items.key("other"));
+      expect(calls).toHaveLength(0);
+      expect(firstKey.id).toBe("spoof");
+      expect(secondKey.id).toBe("substituted");
+      expect(secondKey.collection).toBe("substituted");
+      expect(missingKey.parent).toEqual(new Key("items", "parent"));
+      expect(keys.map((key) => key.id)).toEqual(["other"]);
+      gate.resolve(normalHeaders);
+      expectManagedBatch(calls, await pending);
+    } finally {
+      gate.resolve(normalHeaders);
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it("owns all managed batch keys across first codec callback", async () => {
+    const calls: Call[] = [];
+    let entered = false;
+    const firstKey = items.key("one");
+    const secondKey = items.key("two");
+    const missingKey = items.key("missing");
+    const keys = [firstKey, secondKey, firstKey, missingKey];
+    const codec: Codec<unknown> = {
+      encode: (value) => value,
+      decode: (value) => {
+        if (!entered) {
+          entered = true;
+          expect(Reflect.set(firstKey, "id", "spoof")).toBe(true);
+          expect(Reflect.set(secondKey, "id", "substituted")).toBe(true);
+          expect(Reflect.set(secondKey, "collection", "substituted")).toBe(true);
+          keys[1] = items.key("replaced");
+          keys.push(items.key("extra"));
+        }
+        return value;
+      },
+    };
+    const db = database([
+      response([ok(executed(projection, [one]))]),
+      response([ok(executed(projection, [two]))]),
+      response([ok(executed(projection, [one]))]),
+      response([ok(executed(projection, []))]),
+    ], calls, { maxParallelReads: 1, maxGetManyKeys: 4 });
+    const snapshots = await db.getMany(keys, codec);
+    expect(entered).toBe(true);
+    expect(firstKey.id).toBe("spoof");
+    expect(secondKey.id).toBe("substituted");
+    expect(secondKey.collection).toBe("substituted");
+    expect(keys.map((key) => key.id)).toEqual(["spoof", "replaced", "spoof", "missing", "extra"]);
+    expectManagedBatch(calls, snapshots);
+    expect(snapshots[0]?.key.id).toBe("one");
   });
 });
