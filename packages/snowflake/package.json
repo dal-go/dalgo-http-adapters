@@ -22,7 +22,7 @@
     "check": "eslint . && tsc --noEmit && vitest run && npm run build",
     "lint": "eslint .",
     "test": "vitest run",
-    "prepack": "npm run build"
+    "prepack": "npm --prefix ../adapter-runtime run build && npm run build"
   },
   "repository": {
     "type": "git",
@@ -34,15 +34,17 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@dal-go/dalgo": "^0.1.0"
+    "@dalgo/core": ">=0.8.1 <0.9.0",
+    "@dalgo/adapter-runtime": ">=0.1.2 <1.0.0"
   },
   "devDependencies": {
-    "@dal-go/dalgo": "npm:@dalgo/core@0.8.1",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "5.0.1"
+    "vitest": "5.0.1",
+    "@dalgo/core": "^0.8.1",
+    "@dalgo/adapter-runtime": "workspace:^"
   },
   "homepage": "https://github.com/dal-go/dalgo-http-adapters/tree/main/packages/snowflake#readme",
   "bugs": {

@@ -33,7 +33,7 @@ const NODE_TYPES_SPEC = "@types/node@26.6.5";
 const ESBUILD_VERSION = "0.28.2";
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
 const arguments_ = process.argv.slice(2);
-assert.ok(arguments_.length === 0 || (arguments_.length === 1 && ["--native", "--upstash", "--influx", "--dynamodb", "--cosmos", "--convex", "--cloudflare-kv"].includes(arguments_[0])), "usage: check-adapter-packed-consumer.mjs [--native|--upstash|--influx|--dynamodb|--cosmos|--convex|--cloudflare-kv]");
+assert.ok(arguments_.length === 0 || (arguments_.length === 1 && ["--native", "--upstash", "--influx", "--dynamodb", "--cosmos", "--convex", "--cloudflare-kv", "--snowflake"].includes(arguments_[0])), "usage: check-adapter-packed-consumer.mjs [--native|--upstash|--influx|--dynamodb|--cosmos|--convex|--cloudflare-kv|--snowflake]");
 const nativeMode = arguments_[0] === "--native";
 const upstashMode = arguments_[0] === "--upstash";
 const packageDirectories = upstashMode ? ["redis-resp", "upstash-redis"] : nativeMode
@@ -235,7 +235,14 @@ async function packedBrowserBundle(consumer) {
   };
 }
 
-if (arguments_[0] === "--cloudflare-kv") {
+if (arguments_[0] === "--snowflake") {
+  const { checkSnowflakePackedConsumer } = await import("./snowflake-packed-consumer.mjs");
+  await checkSnowflakePackedConsumer({
+    repository, scratch, run, walk, sourceHashes, assertNoLegacyDependency, assertNoLegacyTree,
+    core: { version: CORE_VERSION, spec: CORE_SPEC, tarball: CORE_TARBALL, integrity: CORE_INTEGRITY },
+    typescript: TYPESCRIPT_SPEC, nodeTypes: NODE_TYPES_SPEC, esbuild: ESBUILD_VERSION,
+  });
+} else if (arguments_[0] === "--cloudflare-kv") {
   const { checkCloudflareKvPackedConsumer } = await import("./cloudflare-kv-packed-consumer.mjs");
   await checkCloudflareKvPackedConsumer({
     repository, scratch, run, walk, sourceHashes, assertNoLegacyDependency, assertNoLegacyTree,
