@@ -33,7 +33,7 @@ const NODE_TYPES_SPEC = "@types/node@26.6.5";
 const ESBUILD_VERSION = "0.28.2";
 const legacySpecifier = /@dal-go\/dalgo(?![\w-])/u;
 const arguments_ = process.argv.slice(2);
-assert.ok(arguments_.length === 0 || (arguments_.length === 1 && ["--native", "--upstash", "--influx", "--dynamodb"].includes(arguments_[0])), "usage: check-adapter-packed-consumer.mjs [--native|--upstash|--influx|--dynamodb]");
+assert.ok(arguments_.length === 0 || (arguments_.length === 1 && ["--native", "--upstash", "--influx", "--dynamodb", "--cosmos"].includes(arguments_[0])), "usage: check-adapter-packed-consumer.mjs [--native|--upstash|--influx|--dynamodb|--cosmos]");
 const nativeMode = arguments_[0] === "--native";
 const upstashMode = arguments_[0] === "--upstash";
 const packageDirectories = upstashMode ? ["redis-resp", "upstash-redis"] : nativeMode
@@ -235,7 +235,14 @@ async function packedBrowserBundle(consumer) {
   };
 }
 
-if (arguments_[0] === "--dynamodb") {
+if (arguments_[0] === "--cosmos") {
+  const { checkCosmosPackedConsumer } = await import("./cosmos-packed-consumer.mjs");
+  await checkCosmosPackedConsumer({
+    repository, scratch, run, walk, sourceHashes, assertNoLegacyDependency, assertNoLegacyTree,
+    core: { version: CORE_VERSION, spec: CORE_SPEC, tarball: CORE_TARBALL, integrity: CORE_INTEGRITY },
+    typescript: TYPESCRIPT_SPEC, nodeTypes: NODE_TYPES_SPEC, esbuild: ESBUILD_VERSION,
+  });
+} else if (arguments_[0] === "--dynamodb") {
   const { checkDynamoDBPackedConsumer } = await import("./dynamodb-packed-consumer.mjs");
   await checkDynamoDBPackedConsumer({
     repository, scratch, run, walk, sourceHashes, assertNoLegacyDependency, assertNoLegacyTree,

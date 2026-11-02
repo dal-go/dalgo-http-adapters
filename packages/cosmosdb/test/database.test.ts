@@ -1,4 +1,4 @@
-import { DOCUMENT_ID, UnsupportedError, collection, key } from "@dal-go/dalgo";
+import { DOCUMENT_ID, UnsupportedError, collection, key } from "@dalgo/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { CosmosHttpError, CosmosNoSqlDatabase } from "../src/index.js";
@@ -75,7 +75,7 @@ describe("CosmosNoSqlDatabase", () => {
     expect(JSON.parse(request(fetch).body as string)).toEqual({ query: 'SELECT * FROM c WHERE c.__dalgo_collection = @collection AND c.data["done"] = @p0', parameters: [{ name: "@collection", value: "items" }, { name: "@p0", value: false }] });
     expect(request(fetch).headers).toMatchObject({ "content-type": "application/query+json", "x-ms-documentdb-isquery": "True", "x-ms-max-item-count": "10" });
     fetch.mockResolvedValueOnce(response(200, { Documents: [] }));
-    await database.query(items.query().startAfter(...(first.nextCursor?.values ?? [])).build());
+    await database.query(items.query().where("done", "==", false).limit(10).startAfter(...(first.nextCursor?.values ?? [])).build());
     expect(request(fetch, 1).headers).toMatchObject({ "x-ms-continuation": "opaque-token" });
   });
 
@@ -165,7 +165,7 @@ describe("CosmosNoSqlDatabase", () => {
     const stalled = new ReadableStream<Uint8Array>({ pull: () => new Promise<void>((resolve) => { resolvePull = resolve; }), cancel: () => { cancelled = true; } });
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(stalled, { status: 200 }));
     const database = new CosmosNoSqlDatabase({ endpoint: "https://example.documents.azure.com", databaseId: "app", containerId: "records", authorization: () => "resource", fetch, timeoutMs: 1 });
-    await expect(database.get(key("items", "a"))).rejects.toThrow("timed out");
+    await expect(database.get(key("items", "a"))).rejects.toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
     expect(cancelled).toBe(true);
     resolvePull?.();
   });
