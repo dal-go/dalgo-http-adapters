@@ -1,7 +1,7 @@
-import { collection, type Codec } from "@dal-go/dalgo";
+import { collection, type Codec } from "@dalgo/core";
 import { SnowflakeDatabase } from "../src/index.js";
 
-export async function readUsers(endpoint: string, token: () => Promise<string>) {
+export async function readUsers(endpoint: string, token: (signal?: AbortSignal) => Promise<string>, signal?: AbortSignal) {
   type User = { ID: string; NAME: string };
   const codec: Codec<User> = {
     encode: value => value,
@@ -13,5 +13,7 @@ export async function readUsers(endpoint: string, token: () => Promise<string>) 
   };
   const db = new SnowflakeDatabase({ endpoint, token, database: "APP", schema: "PUBLIC", warehouse: "COMPUTE_WH", tables: { users: { table: "USERS", idColumn: "ID" } } });
   const users = collection<User>("users", { codec });
-  return { user: await db.get(users.key("user-1"), codec), page: await db.query(users.query().where("NAME", "==", "Ada").orderBy("NAME").limit(20).build()) };
+  try {
+    return { user: await db.getWithSignal(users.key("user-1"), signal, codec), page: await db.queryWithSignal(users.query().where("NAME", "==", "Ada").orderBy("NAME").limit(20).build(), signal) };
+  } finally { db.close(); }
 }

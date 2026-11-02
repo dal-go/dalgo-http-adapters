@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { collection, collectionGroup, DOCUMENT_ID, Key, UnsupportedError, type Codec } from "@dal-go/dalgo";
+import { collection, collectionGroup, DOCUMENT_ID, Key, UnsupportedError, type Codec } from "@dalgo/core";
 import { SnowflakeDatabase, SnowflakeError, type SnowflakeOptions } from "../src/index.js";
 
 const statementHandle = "536fad38-b564-4dc5-9892-a4543504df6c";
@@ -148,7 +148,7 @@ describe("Snowflake SQL API HTTP contract", () => {
 
   it("bounds a token provider that never resolves", async () => {
     const { db } = fixture([], { token: () => new Promise<string>(() => {}), timeoutMs: 5 });
-    await expect(db.get(users.key("a"))).rejects.toThrow("timed out");
+    await expect(db.get(users.key("a"))).rejects.toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
   });
 
   it("bounds fetch and response body decoding", async () => {
@@ -157,7 +157,7 @@ describe("Snowflake SQL API HTTP contract", () => {
       vi.fn<typeof globalThis.fetch>(async () => new Response(new ReadableStream())),
     ]) {
       const { db } = fixture([], { fetch, timeoutMs: 5 });
-      await expect(db.get(users.key("a"))).rejects.toThrow("timed out");
+      await expect(db.get(users.key("a"))).rejects.toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
     }
   });
 
