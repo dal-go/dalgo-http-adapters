@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createContext, Script, SourceTextModule } from "node:vm";
 let fetches = 0; let workers = 0;
 const context = createContext({
-  URL, btoa, atob, TextEncoder, TextDecoder, AbortController, AbortSignal, performance,
+  URL, btoa, atob, TextEncoder, TextDecoder, EventTarget, AbortController, AbortSignal, performance,
   Request, Response, Headers, ReadableStream, setTimeout, clearTimeout,
   fetch() { fetches++; throw new Error("unexpected browser fixture fetch"); },
   Worker: class { constructor() { workers++; throw new Error("unexpected worker"); } },

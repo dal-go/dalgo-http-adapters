@@ -22,3 +22,41 @@ const compatible = new CosmosNoSqlDatabase({ ...options, authorization: () => "o
 void [database, cancellable, one, many, page, insert, set, remove, compatible, QueryCancelledError, CosmosHttpError, CosmosTransportError];
 const nodeBuffer: Buffer = Buffer.from("Node-only type profile");
 void nodeBuffer;
+
+// Additive native existing-document public API; managed contracts above remain.
+import {
+  NativeCosmosNoSqlDatabase, NativeCosmosError, NativeCosmosHttpError,
+  NativeCosmosJsonNumber, nativeCosmosNumber, nativeCosmosResourceToken, nativeCosmosAadToken,
+  encodeNativeCosmosJson, decodeNativeCosmosJson,
+  type NativeCosmosNoSqlOptions, type NativeCosmosKey, type NativeCosmosReadResult,
+  type NativeCosmosBatchResult, type NativeCosmosPage, type NativeCosmosJsonObject,
+  type NativeCosmosAuthorizationRequest, type NativeCosmosSession, type NativeCosmosCursor,
+} from "@dal-go/dalgo2cosmosdb";
+const nativeOptions: NativeCosmosNoSqlOptions = {
+  endpoint: "https://cosmos.example.test", databaseId: "fixture", containerId: "records",
+  partitionKeyField: "tenant", authScopeId: "trusted-fixture-user",
+  authorization: (request: NativeCosmosAuthorizationRequest) => {
+    request.signal.throwIfAborted(); return nativeCosmosResourceToken("type=resource&ver=1.0&sig=owned+/=");
+  },
+  collections: { items: { partition: "tenant:a" } },
+};
+const native = new NativeCosmosNoSqlDatabase(nativeOptions);
+const nativeDatabase: Database = native;
+const nativeKey: NativeCosmosKey = { id: "original", partition: "tenant:a" };
+const number: NativeCosmosJsonNumber = nativeCosmosNumber("9223372036854775807");
+const nativeOne: Promise<NativeCosmosReadResult> = native.getNative(nativeKey, { signal });
+const nativeMany: Promise<NativeCosmosBatchResult> = native.getManyNative([nativeKey, nativeKey], { signal });
+const nativeExists: Promise<boolean> = native.existsNative(nativeKey, { signal });
+declare const nativeSession: NativeCosmosSession;
+declare const nativeCursor: NativeCosmosCursor;
+const nativePage: Promise<NativeCosmosPage<NativeCosmosJsonObject>> = native.queryNative({
+  sql: "SELECT * FROM c WHERE c.wide >= @wide", partition: "tenant:a", limit: 2,
+  parameters: [{ name: "@wide", value: number }], cursor: nativeCursor,
+}, { signal, session: nativeSession });
+const nativeBridge: Promise<RecordSnapshot<NativeCosmosJsonObject>> = native.getWithSignal<NativeCosmosJsonObject>(key("items", "original"), signal);
+const nativeInsert: Promise<void> = native.insert(key("items", "original"), { native: true });
+const nativeTransaction: Promise<number> = native.runReadwriteTransaction(() => Promise.resolve(1));
+const nativeData = decodeNativeCosmosJson(encodeNativeCosmosJson({ exact: number }));
+void [nativeDatabase, nativeOne, nativeMany, nativeExists, nativePage, nativeBridge,
+  nativeInsert, nativeTransaction, nativeData, nativeCosmosAadToken, NativeCosmosError, NativeCosmosHttpError];
+native.close();
