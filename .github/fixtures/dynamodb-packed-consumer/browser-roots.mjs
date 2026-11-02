@@ -18,10 +18,11 @@ const module = new SourceTextModule(readFileSync(new URL("./browser-bundle.mjs",
 await module.link(() => { throw new Error("unexpected browser static external"); });
 await module.evaluate({ timeout: 5000 });
 assert.deepEqual(JSON.parse(JSON.stringify(await module.namespace.verifyBrowserRoots())), { coreAndErrorIdentity: true, lazy: true, parsedNativeValues: true });
+assert.deepEqual(JSON.parse(JSON.stringify(await module.namespace.verifyNativeBrowserRoots())), { nativeRootIdentity: true, nativeLazy: true, nativeClosedValues: true, borrowedNeverDestroyed: true });
 assert.equal(absent.runInContext(context), true);
 const blocked = error => error?.code === "ERR_NATIVE_PACKED_BROWSER_IMPORT";
 await assert.rejects(import("mongodb"), blocked);
 const fromAdapter = createRequire(import.meta.resolve("@dal-go/dalgo2dynamodb"));
 assert.throws(() => fromAdapter("node:net"), blocked, "actual package graph must reject CommonJS builtins too");
 assert.equal(fetches, 0); assert.equal(workers, 0);
-console.log(JSON.stringify({ packageGraphGuard: true, guardNegativeControls: true, coreAndErrorIdentity: true, lazy: true, parsedNativeValues: true, fetches, workers }));
+console.log(JSON.stringify({ packageGraphGuard: true, guardNegativeControls: true, coreAndErrorIdentity: true, lazy: true, parsedNativeValues: true, nativeRootIdentity: true, nativeLazy: true, nativeClosedValues: true, borrowedNeverDestroyed: true, fetches, workers }));
