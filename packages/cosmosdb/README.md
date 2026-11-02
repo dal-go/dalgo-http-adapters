@@ -188,9 +188,8 @@ transport and redacted errors. Cancellation or timeout does not prove a remote
 write was rolled back: it may already have completed. No automatic retry or
 rollback is added.
 
-Arbitrary existing native application documents remain a separate
-**not implemented** mapping mode: this source requires the managed envelope
-and base64url key layout. Hosted authorization/RU/consistency behavior, Cosmos
+The original `CosmosNoSqlDatabase` requires its managed envelope and base64url
+key layout. The additive native mode below uses a separate contract. Hosted authorization/RU/consistency behavior, Cosmos
 emulator or actual service, CORS, actual browser execution, installed CLI and
 package release acceptance remain separate unverified gates. Deterministic
 fetch/stream lifecycle tests establish only their local contract boundaries.
@@ -198,4 +197,138 @@ fetch/stream lifecycle tests establish only their local contract boundaries.
 Managed document data uses JavaScript JSON values, including ordinary `number`
 precision. It does not preserve arbitrary Cosmos numeric lexemes or promise
 lossless integers/decimals outside JavaScript representability. Native numeric
-fidelity requires a separate contract and qualification.
+fidelity uses the separate native contract below and requires its own qualification.
+
+## Native existing documents (additive read-only mode)
+
+`NativeCosmosNoSqlDatabase` reads original `id` values and full document JSON,
+with no envelope, ID rewrite, resource provisioning or account discovery.
+The package remains private `@dal-go/dalgo2cosmosdb@0.1.0`: source support does
+not establish registry availability, a deployed application or hosted acceptance.
+The existing managed class and its write behavior remain separate.
+
+```ts
+import { NativeCosmosNoSqlDatabase, nativeCosmosResourceToken,
+  nativeCosmosNumber, encodeNativeCosmosJson } from "@dal-go/dalgo2cosmosdb";
+
+const db = new NativeCosmosNoSqlDatabase({
+  endpoint: "https://your-account.documents.azure.com",
+  databaseId: "app", containerId: "items", partitionKeyField: "tenant",
+  authScopeId: "trusted-user-principal",
+  // Supply a raw, unencoded broker-issued resource token. No account key.
+  authorization: async ({ signal }) => nativeCosmosResourceToken(await broker(signal)),
+  collections: { items: { partition: "tenant:a" } },
+});
+const result = await db.getNative({ id: "original-id", partition: "tenant:a" });
+if (result.document) console.log(encodeNativeCosmosJson(result.document.data));
+const first = await db.queryNative({
+  sql: "SELECT * FROM c WHERE c.amount >= @amount", partition: "tenant:a", limit: 25,
+  parameters: [{ name: "@amount", value: nativeCosmosNumber("1.230000000000000001") }],
+});
+// Resume only on this instance, with identical SQL/parameters/partition/limit.
+if (first.nextCursor) await db.queryNative({
+  sql: "SELECT * FROM c WHERE c.amount >= @amount", partition: "tenant:a", limit: 25,
+  parameters: [{ name: "@amount", value: nativeCosmosNumber("1.230000000000000001") }],
+  cursor: first.nextCursor,
+});
+db.close();
+```
+
+Here `broker` is trusted application code, not an adapter account-key service.
+Alternatively `nativeCosmosAadToken(rawAccessToken)` supplies the official raw
+`type=aad&ver=1.0&sig=...` header format; audience and RBAC remain the caller's
+responsibility. The resource helper accepts the closed unencoded
+`type=resource&ver=1.0&sig=...` envelope and percent-encodes it exactly once.
+There is no header guessing, master-key signing, anonymous fallback, retry or
+authorization promotion. Errors expose safe codes/status and observed metadata,
+never SQL, URLs, IDs, credentials, response bodies or raw transport causes.
+
+Native keys require nonempty string `id` and nonempty string partition values.
+The physical partition field is one explicitly configured top-level property;
+every returned document must contain that exact field/value and original ID.
+Point IDs reject control characters and path delimiters. IDs/partitions are
+bounded to 1,024/2,048 UTF-8 bytes. Numeric, null, empty, hierarchical,
+unpartitioned and cross-partition query modes are **not implemented** here;
+this is not a claim that Cosmos intrinsically lacks those capabilities.
+`getManyNative` accepts separately explicit point partitions, snapshots all keys
+before dispatch and preserves order, duplicate positions and missing documents.
+`get`/`getMany` and their `WithSignal` variants use only declared collection
+bindings; a DALgo string key ID is the original native ID. Generic structured
+query compilation, native writes and callback transactions are **not implemented**;
+those methods fail without invoking authorization, network or transaction callbacks.
+`configuredMetadata()` reports local declarations, not container/index discovery.
+
+Every inbound JSON number is an immutable branded `NativeCosmosJsonNumber`,
+with an exact `lexeme` such as `9223372036854775807`, `1.2300`, `1e+99` or `-0`.
+Use `encodeNativeCosmosJson` for native wire JSON. Ordinary `JSON.stringify`
+does not implicitly turn number wrappers into numeric literals. A user object
+containing `lexeme` or another tag remains ordinary data; there is no tag guessing.
+Parameters accept the same wrappers, or finite JS numbers with their existing
+JS precision; unsafe integer JS numbers are refused. The closed encoder rejects
+accessors, custom classes/serialization, cycles, sparse arrays and invalid Unicode,
+and charges every escaped repeated wire occurrence before constructing output.
+The decoder rejects duplicate names, malformed Unicode/UTF-8, extra values,
+depth above 32, more than 65,536 nodes and number lexemes above 128 characters.
+Native own keys, arrays, booleans and null retain their JSON meanings. Codecs may
+transform data intentionally; native key/revision metadata is snapshotted before
+the codec, and cancellation/Close/elapsed time are checked after it.
+
+Queries use the NoSQL read-query REST route and explicit partition header;
+there is no local SQL-parser claim. Parameterized whole-document queries must
+return `Documents` with valid identity/partition fields. Scalar/aggregate or
+projection-only mapping is not implemented. Optional response counts must match,
+over-return and duplicate identities fail whole, and empty/short evaluated pages
+with a continuation remain nonterminal. The client collects whole physical pages
+up to the requested limit, adjusting item count to the remaining bound; it never
+truncates an over-returning reply. `pages` reports requests in this public call.
+All traversal state keeps the original deadline and spent request/body/page/row
+budget across resumes. Repeated service positions are refused before codecs.
+
+Continuation and observed-session handles are opaque, same-instance capabilities.
+They cannot be serialized, copied, reconstructed or used concurrently. A successful
+resume consumes its incoming handle exactly once. Refused/cancelled delivery
+preserves the old handle and spent work, and ignored pending I/O keeps it busy.
+Exact admitted query fields use fixed SHA-256 binding; actual credential header
+fingerprints also bind cursor and session authority. `authScopeId` partitions
+trusted principal context but cannot substitute for a credential. Token rotation
+requires a new journey/session; retaining only a stable scope ID does not grant
+continuation authority. Cleanup, final caller/deadline checks and net retention
+admission precede cursor ACK; no foreign callback or await follows successful ACK.
+
+Response metadata preserves exact observed request charge (absence is unknown,
+not zero), activity ID, revision and bounded opaque session handles. A 429 raises
+`NativeCosmosHttpError` with safe status, optional validated `retryAfterMs` and
+observed charge; the client never retries automatically or promises an RU/billing
+cap. Default requests never echo session tokens or override consistency. Passing
+an observed same-partition `session` deliberately opts into Session consistency;
+only that traversal echoes its latest observed token. Sessions share the cursor
+registry's bounded count/byte/node/TTL policy, expire without implicit renewal,
+and are invalidated on Close. Raw session and service continuation tokens are
+never exposed by public handles.
+
+Native defaults are 30 s whole-operation timeout (maximum 120 s), 4 physical
+operations (maximum 16; no queue), 100 batch keys, 1,000 cumulative rows,
+100 pages/requests, page size 100, 64 KiB aggregate request bodies and 1 MiB
+aggregate response bodies. Caps are validated; keys/pages/requests/page size
+have maxima 1,000, rows 10,000, request bodies 1 MiB and response bodies 16 MiB.
+Headers have a 64 KiB total bound; individual service/session positions 16 KiB.
+Shared retained handles default/max to 1,000, logical bytes to 16 MiB and nodes
+to 65,536, with a 5 min TTL (maximum 10 min); query journeys also retain their
+shorter original operation deadline. Logical quota includes fixed entry charges,
+UTF-8 IDs/tokens and session data, not an exact JS heap measurement. Idle expired
+handles release quota on later use; Close clears the registry.
+
+The operation begins before input copying, credentials, digest, transport,
+decoding and final delivery. Caller signals and monotonic deadlines cover all of
+them. Ignored credential/fetch/read/cancel promises remain observed and hold an
+admission slot until they settle; cancellation does not wait for hostile cleanup.
+Borrowed fetch and globals are never destroyed. These bounds cover adapter-owned
+materialization/work/retention, not a fetch/provider's internal allocation, caller
+codec allocation, server scan work, RU, remote cancellation or total process RAM.
+
+Node uses the caller's verified transport/CA policy through fetch; browsers need
+trusted time-bound resource/AAD credentials and actual service CORS permission.
+An endpoint is trusted configuration, HTTPS except explicit loopback development.
+Do not expose master/admin keys in either runtime. Deterministic source fixtures
+do not establish an Azure emulator, real account/RBAC/RU/consistency, actual
+Chromium/Workers runtime, installed release, registry publication or Apps approval.
