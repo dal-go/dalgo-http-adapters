@@ -479,8 +479,25 @@ export class PostgrestDatabase implements Database, WriteSession {
   }
 
   private async getInScope<T>(key: Key, codec: Codec<T> | undefined, scope: ReadOperationScope): Promise<RecordSnapshot<T>> {
+    // The caller's abort or deadline wins even when the key itself is invalid:
+    // no relation callback, header provider or fetch is reached first.
     scope.checkpoint();
-    const url = this.keyUrl(key, scope);
+    // Capture the caller's key primitives once, before any user callback can
+    // observe or mutate the original Key. The owned key is the only key this
+    // read may use for the URL, matching and both returned snapshots.
+    const collection = key.collection;
+    const id = key.id;
+    const parent = key.parent;
+    if (parent !== undefined) throw new UnsupportedError("PostgREST nested DALgo keys");
+    if (typeof collection !== "string") throw new UnsupportedError("PostgREST key collections");
+    if (typeof id !== "string" && typeof id !== "number") throw new UnsupportedError("PostgREST key IDs");
+    if (typeof id === "number" && (!Number.isFinite(id) || Object.is(id, -0) || isUnsafeNativeNumber(id))) {
+      throw new TypeError("PostgREST read keys must have a finite, lossless number or string ID");
+    }
+    scope.checkpoint();
+    const ownedKey = new Key(collection, id);
+    scope.checkpoint();
+    const url = this.keyUrl(ownedKey, scope);
     url.searchParams.set("select", "*");
     url.searchParams.set("limit", "1");
     scope.checkpoint();
@@ -489,10 +506,10 @@ export class PostgrestDatabase implements Database, WriteSession {
     const row = rows[0];
     if (row === undefined) {
       scope.checkpoint();
-      return { key, exists: false };
+      return { key: ownedKey, exists: false };
     }
     scope.checkpoint();
-    const record = this.record(row, key, codec);
+    const record = this.record(row, ownedKey, codec);
     scope.checkpoint();
     return record;
   }
