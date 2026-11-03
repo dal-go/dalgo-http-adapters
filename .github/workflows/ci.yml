@@ -470,7 +470,7 @@ jobs:
       - name: Generate a masked Node-only fixture admin secret
         run: |
           set -euo pipefail
-          secret=$(node --input-type=module -e 'import {randomBytes} from "node:crypto"; console.log(randomBytes(32).toString("base64url"))')
+          secret=$(node --input-type=module -e 'import {randomBytes} from "node:crypto"; console.log("f"+randomBytes(32).toString("base64url"))')
           echo "::add-mask::$secret"
           echo "CLICKHOUSE_FIXTURE_ADMIN_PASSWORD=$secret" >> "$GITHUB_ENV"
       - name: Real pinned ClickHouse in Node20, Node24 and Chromium, sequentially
