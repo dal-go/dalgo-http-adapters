@@ -58,6 +58,65 @@ function database(responses: readonly Response[], calls: Call[], overrides: Part
 const items = collection<{ title: string; rank: number }>("items");
 const numericItems = collection<{ title: string; rank: number }, number>("items");
 
+const deferredPointBoundMs = 2_000;
+
+type PointSettlement<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: unknown };
+
+function observePointSettlement<T>(promise: Promise<T>): Promise<PointSettlement<T>> {
+  return promise.then(
+    (value): PointSettlement<T> => ({ ok: true, value }),
+    (error: unknown): PointSettlement<T> => ({ ok: false, error }),
+  );
+}
+
+async function withinPointBound<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} exceeded the ${deferredPointBoundMs}ms test bound`)),
+          deferredPointBoundMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function waitForPointFetchEntry<T>(
+  entered: Promise<undefined>,
+  settlement: Promise<PointSettlement<T>>,
+  label: string,
+): Promise<void> {
+  const winner = await withinPointBound(
+    Promise.race([
+      entered.then(() => "entered" as const),
+      settlement.then((outcome) => ({ outcome })),
+    ]),
+    `${label} fetch entry`,
+  );
+  if (winner === "entered") return;
+  if (winner.outcome.ok) throw new Error(`${label}: point get settled before fetch entry`);
+  throw winner.outcome.error;
+}
+
+async function awaitPointSettlement<T>(settlement: Promise<PointSettlement<T>>, label: string): Promise<T> {
+  const outcome = await withinPointBound(settlement, `${label} settlement`);
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
+}
+
+async function awaitPointRejection<T>(settlement: Promise<PointSettlement<T>>, label: string): Promise<unknown> {
+  const outcome = await withinPointBound(settlement, `${label} rejection`);
+  if (outcome.ok) throw new Error(`${label}: expected a public rejection but the point get resolved`);
+  return outcome.error;
+}
+
 describe("LibSQLDatabase managed tables", () => {
   it("uses one close-ended v3 pipeline with header injection, redirect refusal and positional binding", async () => {
     const calls: Call[] = [];
@@ -710,5 +769,150 @@ describe("LibSQLDatabase managed tables", () => {
     expect(keys.map((key) => key.id)).toEqual(["spoof", "replaced", "spoof", "missing", "extra"]);
     expectManagedBatch(calls, snapshots);
     expect(snapshots[0]?.key.id).toBe("one");
+  });
+
+  it("keeps a managed point key owned when a legacy codec mutates the caller key", async () => {
+    const calls: Call[] = [];
+    const original = items.key("one");
+    let entered = false;
+    const codec: Codec<unknown> = {
+      encode: (value) => value,
+      decode: (value) => {
+        entered = true;
+        expect(Reflect.set(original, "collection", "labels")).toBe(true);
+        expect(Reflect.set(original, "id", "other")).toBe(true);
+        expect(Reflect.set(original, "parent", new Key("items", "parent"))).toBe(true);
+        return value;
+      },
+    };
+    const db = database([response([ok(executed(projection, [one]))])], calls);
+    const snapshot = await db.get(original, codec);
+
+    expect(entered).toBe(true);
+    expect(snapshot).toEqual({ key: items.key("one"), exists: true, data: { title: "Milk", rank: 10 } });
+    expect(snapshot.key).not.toBe(original);
+    expect(original.collection).toBe("labels");
+    expect(original.id).toBe("other");
+    expect(original.parent).toEqual(new Key("items", "parent"));
+    expect(calls).toHaveLength(1);
+    const sent = firstStatement(calls[0]);
+    expect(sent.sql).toContain('FROM "items"');
+    expect(sent.args).toEqual([text("one")]);
+  });
+
+  it("owns a managed point key before a deferred fetch settles", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Response>();
+    const db = new LibSQLDatabase({
+      ...options(),
+      fetch: (input, init) => {
+        calls.push({ url: String(input), init });
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+    });
+    const original = items.key("one");
+    const pending = db.get(original);
+    const settlement = observePointSettlement(pending);
+    try {
+      await waitForPointFetchEntry(entered.promise, settlement, "managed point get");
+      expect(calls).toHaveLength(1);
+      expect(Reflect.set(original, "id", "other")).toBe(true);
+      expect(Reflect.set(original, "collection", "labels")).toBe(true);
+      expect(Reflect.set(original, "parent", new Key("items", "parent"))).toBe(true);
+      gate.resolve(response([ok(executed(projection, [one]))]));
+      const snapshot = await awaitPointSettlement(settlement, "managed point get");
+
+      expect(snapshot).toEqual({ key: items.key("one"), exists: true, data: { title: "Milk", rank: 10 } });
+      expect(snapshot.key).not.toBe(original);
+      expect(original.id).toBe("other");
+      expect(original.collection).toBe("labels");
+      expect(original.parent).toEqual(new Key("items", "parent"));
+      const sent = firstStatement(calls[0]);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([text("one")]);
+      expect(calls).toHaveLength(1);
+    } finally {
+      entered.resolve(undefined);
+      gate.resolve(response([ok(executed(projection, []))]));
+      await withinPointBound(settlement, "managed point get cleanup").catch(() => undefined);
+    }
+  });
+
+  it("returns an owned managed key for a deferred empty point result", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Response>();
+    const db = new LibSQLDatabase({
+      ...options(),
+      fetch: (input, init) => {
+        calls.push({ url: String(input), init });
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+    });
+    const original = items.key("missing");
+    const pending = db.get(original);
+    const settlement = observePointSettlement(pending);
+    try {
+      await waitForPointFetchEntry(entered.promise, settlement, "managed point get");
+      expect(Reflect.set(original, "id", "other")).toBe(true);
+      expect(Reflect.set(original, "collection", "labels")).toBe(true);
+      expect(Reflect.set(original, "parent", new Key("items", "parent"))).toBe(true);
+      gate.resolve(response([ok(executed(projection, []))]));
+      const snapshot = await awaitPointSettlement(settlement, "managed point get");
+
+      expect(snapshot).toEqual({ key: items.key("missing"), exists: false });
+      expect(snapshot.key).not.toBe(original);
+      expect(original.id).toBe("other");
+      expect(original.collection).toBe("labels");
+      expect(original.parent).toEqual(new Key("items", "parent"));
+      const sent = firstStatement(calls[0]);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([text("missing")]);
+      expect(calls).toHaveLength(1);
+    } finally {
+      entered.resolve(undefined);
+      gate.resolve(response([ok(executed(projection, []))]));
+      await withinPointBound(settlement, "managed point get cleanup").catch(() => undefined);
+    }
+  });
+
+  it("still refuses a managed reply that only matches a mutated caller id", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Response>();
+    const db = new LibSQLDatabase({
+      ...options(),
+      fetch: (input, init) => {
+        calls.push({ url: String(input), init });
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+    });
+    const original = items.key("one");
+    const pending = db.get(original);
+    const settlement = observePointSettlement(pending);
+    try {
+      await waitForPointFetchEntry(entered.promise, settlement, "managed point get");
+      expect(Reflect.set(original, "id", "other")).toBe(true);
+      gate.resolve(response([ok(executed(projection, [[text("other"), text("Wrong"), integer(99)]]))]));
+      const failure = await awaitPointRejection(settlement, "managed point get");
+
+      expect(String(failure)).toContain("different record");
+      expect(String(failure)).not.toContain("other");
+      expect(String(failure)).not.toContain("Wrong");
+      expect(String(failure)).not.toContain("rotating-token");
+      expect(original.id).toBe("other");
+      const sent = firstStatement(calls[0]);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([text("one")]);
+      expect(calls).toHaveLength(1);
+    } finally {
+      entered.resolve(undefined);
+      gate.resolve(response([ok(executed(projection, []))]));
+      await withinPointBound(settlement, "managed point get cleanup").catch(() => undefined);
+    }
   });
 });

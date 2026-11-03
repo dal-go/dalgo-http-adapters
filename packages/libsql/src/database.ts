@@ -367,17 +367,20 @@ export class LibSQLDatabase implements Database {
 
   private async readOne<T>(key: Key, codec: Codec<T> | undefined, context: RequestContext): Promise<{ readonly snapshot: RecordSnapshot<T>; readonly bytes: number }> {
     const table = this.tableFor(key);
+    const collection = key.collection;
+    const id = key.id;
     const compiled = compileLibSQLQuery(table, {
-      source: { kind: "collection", name: key.collection },
-      filters: [{ field: DOCUMENT_ID, operator: "==", value: key.id }],
+      source: { kind: "collection", name: collection },
+      filters: [{ field: DOCUMENT_ID, operator: "==", value: id }],
       orders: [],
     }, 2);
     const { rows, bytes } = await this.select(compiled.sql, compiled.args, table, 2, context);
-    if (rows.length === 0) return { snapshot: { key, exists: false }, bytes };
+    const owned = new Key(collection, id);
+    if (rows.length === 0) return { snapshot: { key: owned, exists: false }, bytes };
     if (rows.length !== 1) throw new UnsupportedError("libSQL key mapping returned more than one record");
     const row = rows[0];
-    if (row === undefined || !Object.is(rowKey(row), key.id)) throw new UnsupportedError("libSQL key mapping returned a different record");
-    return { snapshot: this.snapshot(key, row, codec), bytes };
+    if (row === undefined || !Object.is(rowKey(row), id)) throw new UnsupportedError("libSQL key mapping returned a different record");
+    return { snapshot: this.snapshot(owned, row, codec), bytes };
   }
 
   private async readMany<T>(keys: readonly Key[], codec: Codec<T> | undefined, context: RequestContext): Promise<readonly RecordSnapshot<T>[]> {
