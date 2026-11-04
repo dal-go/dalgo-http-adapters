@@ -1,0 +1,29 @@
+{
+  "package": "@duckdb/duckdb-wasm",
+  "version": "1.32.0",
+  "npmIntegrity": "sha512-IewXTNYEjsZCPE9weUWgtjGxUlMRo7qhX0GF6tq/KjK8bnY+RAl4cyUdYUfcdzbyb4b9ZxPC+FOsCcxgaKFWMg==",
+  "engine": {
+    "file": "duckdb-mvp.wasm",
+    "bytes": 39362651,
+    "sha256": "45d72a81fba8e57693d890da837c7041310e385e75619a8559839b15388dfe97",
+    "coreVersion": "v1.4.3",
+    "versionQualification": "The core version was observed through the actual pinned worker's getVersion() in contained browser diagnostics; browser Parquet acceptance remains separate."
+  },
+  "worker": {
+    "file": "duckdb-browser-mvp.worker.js",
+    "sha256": "b0387027f174e2b60c2d5cfa31cecca9b89d8a9762346b6449a784cd1c4dde3c"
+  },
+  "browserModule": {
+    "file": "duckdb-browser.mjs",
+    "sha256": "4f8c0bb3c23d1ec457a451cc27418597b9a40dd772cceacc436a2cb7b9a49c18"
+  },
+  "parquetExtension": {
+    "sourceURL": "https://extensions.duckdb.org/v1.4.3/wasm_mvp/parquet.duckdb_extension.wasm",
+    "coreVersion": "v1.4.3",
+    "platform": "wasm_mvp",
+    "bytes": 2867304,
+    "sha256": "0785c6c95d003eff4faa7b3b4b660f02c9c92f6d68d135ddf330d42e3a650600",
+    "format": "Decoded WASM binary; no HTTP content encoding was used in the controlled fetch.",
+    "qualification": "Root fetched the official fixed HTTPS artifact only inside the capped namespace. Normal engine signature verification remains required during actual LOAD; fetching and hashing alone is not signature verification."
+  }
+}

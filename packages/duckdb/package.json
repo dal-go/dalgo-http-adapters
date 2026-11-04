@@ -1,0 +1,71 @@
+{
+  "name": "@dalgo/dalgo2duckdb",
+  "version": "0.1.0",
+  "description": "Explicit Node and lazy browser WASM read-only DuckDB ordinal executors",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "check": "tsc -p tsconfig.json --noEmit && vitest run",
+    "test:real": "node scripts/real-node.mjs",
+    "test:browser": "node scripts/real-browser.mjs"
+  },
+  "peerDependencies": {
+    "@dalgo/core": ">=0.8.1 <0.9.0",
+    "@dalgo/adapter-runtime": ">=0.2.0 <1.0.0",
+    "@duckdb/node-api": "1.4.5-r.1",
+    "@duckdb/duckdb-wasm": "1.32.0"
+  },
+  "peerDependenciesMeta": {
+    "@duckdb/node-api": {
+      "optional": true
+    },
+    "@duckdb/duckdb-wasm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@dalgo/core": "^0.8.1",
+    "@dalgo/adapter-runtime": "workspace:^",
+    "@duckdb/node-api": "1.4.5-r.1",
+    "@duckdb/duckdb-wasm": "1.32.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.1",
+    "esbuild": "0.28.2",
+    "playwright": "1.64.1"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dal-go/dalgo-http-adapters.git",
+    "directory": "packages/duckdb"
+  }
+}
