@@ -147,6 +147,7 @@ export class FirestoreDatabase implements Database {
   }
 
   public async query<T>(dalQuery: StructuredQuery<T>): Promise<QueryPage<T>> {
+    const sourceKind = dalQuery.source.kind;
     const compiled = compileFirestoreQuery(this.firestore, dalQuery);
     const snapshot = await getDocs(compiled.query);
     const records = snapshot.docs.map((document): ExistingRecord<T> => {
@@ -158,7 +159,7 @@ export class FirestoreDatabase implements Database {
     });
     const last = snapshot.docs.at(-1);
     const nextCursor = dalQuery.limit !== undefined && snapshot.size === dalQuery.limit && last !== undefined
-      ? cursorFromSnapshot(last, compiled.orders)
+      ? cursorFromSnapshot(last, compiled.orders, sourceKind)
       : undefined;
     return {
       records,
