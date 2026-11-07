@@ -162,7 +162,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.3'
           cache-dependency-path: .github/fixtures/ovdb-yaml-parity/go.sum
       - run: pnpm --filter @dalgo/ovdb check
       - name: Verify native YAML string parity with the released Go parser

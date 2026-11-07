@@ -2,7 +2,7 @@ module ovdb-yaml-parity
 
 go 1.26.1
 
-toolchain go1.27.0
+toolchain go1.27.3
 
 // Exact parser/YAML versions used by released openvaultdb-go v0.26.2.
 require (
