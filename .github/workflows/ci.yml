@@ -135,6 +135,10 @@ jobs:
         env:
           DALGO_PACKED_CONSUMER_RECEIPT: ${{ runner.temp }}/adapter-packed-consumer/receipt.json
         run: pnpm check:packed-consumer
+      - name: Qualify native SDK tarballs with strict runtime and browser entry contracts
+        env:
+          DALGO_PACKED_CONSUMER_RECEIPT: ${{ runner.temp }}/adapter-packed-consumer/native-receipt.json
+        run: pnpm check:native-packed-consumer
       - name: Retain packed consumer and release-preview receipt
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
