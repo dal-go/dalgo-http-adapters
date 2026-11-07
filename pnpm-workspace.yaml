@@ -3,7 +3,7 @@ packages:
 
 overrides:
   "@dalgo/http>@dalgo/core": "0.8.0"
-  "@dalgo/d1>@dalgo/core": "0.8.0"
+  "@dalgo/d1>@dalgo/core": "0.8.1"
   "@dalgo/firestore>@dalgo/core": "0.8.1"
   "@dal-go/dalgo": "npm:@dalgo/core@0.8.1"
   "@dalgo/bigquery>@dalgo/core": "0.1.0"
