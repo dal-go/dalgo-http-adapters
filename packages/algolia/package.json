@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "DALgo adapter for the Algolia Search REST API",
   "type": "module",
-  "packageManager": "pnpm@11.20.0",
+  "packageManager": "pnpm@11.28.11",
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
