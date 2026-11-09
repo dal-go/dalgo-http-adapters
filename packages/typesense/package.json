@@ -45,11 +45,11 @@
   },
   "peerDependencies": {
     "@dalgo/adapter-runtime": ">=0.1.0 <1.0.0",
-    "@dalgo/core": ">=0.7.4 <0.10.0"
+    "@dalgo/core": ">=0.7.4 <0.9.0"
   },
   "devDependencies": {
     "@dalgo/adapter-runtime": "workspace:^",
-    "@dalgo/core": "^0.9.0",
+    "@dalgo/core": "^0.7.4",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.65.0",
     "@types/node": "26.6.6",

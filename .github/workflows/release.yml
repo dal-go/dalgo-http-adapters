@@ -175,7 +175,7 @@ jobs:
       - name: Install the declared adapter runtime floor
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '20.20.2'
+          node-version: '20.0.0'
       - name: Record the Node 20 runtime path
         run: |
           {
