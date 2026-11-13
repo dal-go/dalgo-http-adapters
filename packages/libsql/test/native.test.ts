@@ -1,4 +1,4 @@
-import { collection, key } from "@dalgo/core";
+import { Key, collection, key, type Codec } from "@dalgo/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,6 +9,7 @@ import {
 } from "../src/index.js";
 import {
   blob,
+  deferred,
   executed,
   failingBody,
   firstStatement,
@@ -73,6 +74,65 @@ function database(responses: readonly Response[], calls: Call[], overrides: Part
 }
 
 const items = collection<{ title: string; rank: number | null; score: number | null }, number>("items");
+
+const deferredPointBoundMs = 2_000;
+
+type PointSettlement<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: unknown };
+
+function observePointSettlement<T>(promise: Promise<T>): Promise<PointSettlement<T>> {
+  return promise.then(
+    (value): PointSettlement<T> => ({ ok: true, value }),
+    (error: unknown): PointSettlement<T> => ({ ok: false, error }),
+  );
+}
+
+async function withinPointBound<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} exceeded the ${deferredPointBoundMs}ms test bound`)),
+          deferredPointBoundMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function waitForPointFetchEntry<T>(
+  entered: Promise<undefined>,
+  settlement: Promise<PointSettlement<T>>,
+  label: string,
+): Promise<void> {
+  const winner = await withinPointBound(
+    Promise.race([
+      entered.then(() => "entered" as const),
+      settlement.then((outcome) => ({ outcome })),
+    ]),
+    `${label} fetch entry`,
+  );
+  if (winner === "entered") return;
+  if (winner.outcome.ok) throw new Error(`${label}: point get settled before fetch entry`);
+  throw winner.outcome.error;
+}
+
+async function awaitPointSettlement<T>(settlement: Promise<PointSettlement<T>>, label: string): Promise<T> {
+  const outcome = await withinPointBound(settlement, `${label} settlement`);
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
+}
+
+async function awaitPointRejection<T>(settlement: Promise<PointSettlement<T>>, label: string): Promise<unknown> {
+  const outcome = await withinPointBound(settlement, `${label} rejection`);
+  if (outcome.ok) throw new Error(`${label}: expected a public rejection but the point get resolved`);
+  return outcome.error;
+}
 
 describe("NativeLibSQLDatabase", () => {
   it("preserves native integer, text and real IDs and returns non-key fields without an envelope", async () => {
@@ -495,5 +555,237 @@ describe("NativeLibSQLDatabase", () => {
     const table = discovery.tables[0];
     expect(table?.adapterQueryable).toBe(false);
     expect(table?.adapterQueryableReason).toContain("key type");
+  });
+
+  function expectNativeBatch(
+    calls: readonly Call[],
+    snapshots: readonly {
+      readonly key: { readonly id: unknown; readonly collection: string };
+      readonly exists: boolean;
+      readonly data?: unknown;
+      readonly metadata?: unknown;
+    }[],
+  ): void {
+    expect(snapshots.map((snapshot) => snapshot.key.id)).toEqual([1, 2, 1, 3]);
+    expect(snapshots.map((snapshot) => snapshot.key.collection)).toEqual(["items", "items", "items", "items"]);
+    expect(snapshots.map((snapshot) => snapshot.exists)).toEqual([true, true, true, false]);
+    expect(snapshots[0]?.data).toEqual({ title: "One", rank: null, score: null });
+    expect(snapshots[1]?.data).toEqual({ title: "Two", rank: 7, score: 0.5 });
+    expect(snapshots[2]?.data).toEqual({ title: "One", rank: null, score: null });
+    expect(snapshots[0]?.metadata).toEqual({ id: 1 });
+    expect(snapshots[1]?.metadata).toEqual({ id: 2 });
+    expect(snapshots[2]?.metadata).toEqual({ id: 1 });
+    expect(calls).toHaveLength(4);
+    const expected = [1, 2, 1, 3];
+    for (const [index, call] of calls.entries()) {
+      const sent = firstStatement(call);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([integer(expected[index] ?? 0)]);
+    }
+  }
+
+  it("owns native numeric key identities and membership before authheaders settle", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Readonly<Record<string, string>>>();
+    const normalHeaders: Readonly<Record<string, string>> = { authorization: "Bearer reader-token" };
+    const db = new NativeLibSQLDatabase({
+      ...options({ maxParallelReads: 1, maxGetManyKeys: 4 }),
+      headers: () => {
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+      fetch: mockFetch([
+        response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+        response([ok(executed(itemProjection, [[integer(2), text("Two"), integer(7), float(0.5)]]))]),
+        response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+        response([ok(executed(itemProjection, []))]),
+      ], calls),
+    });
+    const originalOne = items.key(1);
+    const originalTwo = items.key(2);
+    const missing = items.key(3);
+    const keys: Key[] = [originalOne, originalTwo, originalOne, missing];
+    const pending = db.getManyWithSignal(keys, new AbortController().signal);
+    try {
+      await entered.promise;
+      expect(calls).toHaveLength(0);
+      expect(Reflect.set(originalOne, "id", 99)).toBe(true);
+      expect(Reflect.set(originalTwo, "collection", "labels")).toBe(true);
+      expect(Reflect.set(originalTwo, "id", "substitution")).toBe(true);
+      expect(Reflect.set(missing, "parent", new Key("items", 4))).toBe(true);
+      keys.splice(0, keys.length, items.key(9));
+      expect(calls).toHaveLength(0);
+      expect(originalOne.id).toBe(99);
+      expect(originalTwo.id).toBe("substitution");
+      expect(originalTwo.collection).toBe("labels");
+      expect(missing.parent).toEqual(new Key("items", 4));
+      expect(keys.map((key) => key.id)).toEqual([9]);
+      gate.resolve(normalHeaders);
+      expectNativeBatch(calls, await pending);
+    } finally {
+      gate.resolve(normalHeaders);
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it("owns later native keys and fixed work count through first codec", async () => {
+    const calls: Call[] = [];
+    let entered = false;
+    const originalOne = items.key(1);
+    const originalTwo = items.key(2);
+    const missing = items.key(3);
+    const keys: Key[] = [originalOne, originalTwo, originalOne, missing];
+    const codec: Codec<unknown> = {
+      encode: (value) => value,
+      decode: (value) => {
+        if (!entered) {
+          entered = true;
+          expect(Reflect.set(originalTwo, "id", 77)).toBe(true);
+          expect(Reflect.set(originalTwo, "collection", "labels")).toBe(true);
+          expect(Reflect.set(missing, "id", 88)).toBe(true);
+          expect(Reflect.set(missing, "parent", new Key("items", 5))).toBe(true);
+          keys[1] = items.key(4);
+          keys.push(items.key(5));
+        }
+        return value;
+      },
+    };
+    const db = database([
+      response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+      response([ok(executed(itemProjection, [[integer(2), text("Two"), integer(7), float(0.5)]]))]),
+      response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]),
+      response([ok(executed(itemProjection, []))]),
+    ], calls, { maxParallelReads: 1, maxGetManyKeys: 4 });
+    const snapshots = await db.getMany(keys, codec);
+    expect(entered).toBe(true);
+    expect(originalTwo.id).toBe(77);
+    expect(originalTwo.collection).toBe("labels");
+    expect(missing.id).toBe(88);
+    expect(missing.parent).toEqual(new Key("items", 5));
+    expect(keys).toHaveLength(5);
+    expect(keys[1]).toEqual(items.key(4));
+    expect(keys[4]).toEqual(items.key(5));
+    expectNativeBatch(calls, snapshots);
+  });
+
+  it("owns a native point key before a deferred fetch settles", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Response>();
+    const db = new NativeLibSQLDatabase({
+      ...options(),
+      fetch: (input, init) => {
+        calls.push({ url: String(input), init });
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+    });
+    const original = items.key(1);
+    const pending = db.get(original);
+    const settlement = observePointSettlement(pending);
+    try {
+      await waitForPointFetchEntry(entered.promise, settlement, "native point get");
+      expect(calls).toHaveLength(1);
+      expect(Reflect.set(original, "id", 2)).toBe(true);
+      expect(Reflect.set(original, "collection", "labels")).toBe(true);
+      expect(Reflect.set(original, "parent", new Key("items", 3))).toBe(true);
+      gate.resolve(response([ok(executed(itemProjection, [[integer(1), text("One"), nullValue(), nullValue()]]))]));
+      const snapshot = await awaitPointSettlement(settlement, "native point get");
+
+      expect(snapshot).toEqual({
+        key: items.key(1),
+        exists: true,
+        data: { title: "One", rank: null, score: null },
+        metadata: { id: 1 },
+      });
+      expect(snapshot.key).not.toBe(original);
+      expect(original.id).toBe(2);
+      expect(original.collection).toBe("labels");
+      expect(original.parent).toEqual(new Key("items", 3));
+      const sent = firstStatement(calls[0]);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([integer(1)]);
+      expect(calls).toHaveLength(1);
+    } finally {
+      entered.resolve(undefined);
+      gate.resolve(response([ok(executed(itemProjection, []))]));
+      await withinPointBound(settlement, "native point get cleanup").catch(() => undefined);
+    }
+  });
+
+  it("returns an owned native key for a deferred empty point result", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Response>();
+    const db = new NativeLibSQLDatabase({
+      ...options(),
+      fetch: (input, init) => {
+        calls.push({ url: String(input), init });
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+    });
+    const original = items.key(3);
+    const pending = db.get(original);
+    const settlement = observePointSettlement(pending);
+    try {
+      await waitForPointFetchEntry(entered.promise, settlement, "native point get");
+      expect(Reflect.set(original, "id", 9)).toBe(true);
+      expect(Reflect.set(original, "collection", "labels")).toBe(true);
+      expect(Reflect.set(original, "parent", new Key("items", 3))).toBe(true);
+      gate.resolve(response([ok(executed(itemProjection, []))]));
+      const snapshot = await awaitPointSettlement(settlement, "native point get");
+
+      expect(snapshot).toEqual({ key: items.key(3), exists: false });
+      expect(snapshot.key).not.toBe(original);
+      expect(original.id).toBe(9);
+      expect(original.collection).toBe("labels");
+      expect(original.parent).toEqual(new Key("items", 3));
+      const sent = firstStatement(calls[0]);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([integer(3)]);
+      expect(calls).toHaveLength(1);
+    } finally {
+      entered.resolve(undefined);
+      gate.resolve(response([ok(executed(itemProjection, []))]));
+      await withinPointBound(settlement, "native point get cleanup").catch(() => undefined);
+    }
+  });
+
+  it("still refuses a native reply that only matches a mutated caller id", async () => {
+    const calls: Call[] = [];
+    const entered = deferred<undefined>();
+    const gate = deferred<Response>();
+    const db = new NativeLibSQLDatabase({
+      ...options(),
+      fetch: (input, init) => {
+        calls.push({ url: String(input), init });
+        entered.resolve(undefined);
+        return gate.promise;
+      },
+    });
+    const original = items.key(1);
+    const pending = db.get(original);
+    const settlement = observePointSettlement(pending);
+    try {
+      await waitForPointFetchEntry(entered.promise, settlement, "native point get");
+      expect(Reflect.set(original, "id", 2)).toBe(true);
+      gate.resolve(response([ok(executed(itemProjection, [[integer(2), text("Wrong"), integer(7), float(0.5)]]))]));
+      const failure = await awaitPointRejection(settlement, "native point get");
+
+      expect(String(failure)).toContain("different record");
+      expect(String(failure)).not.toContain("Wrong");
+      expect(String(failure)).not.toContain("reader-token");
+      expect(original.id).toBe(2);
+      const sent = firstStatement(calls[0]);
+      expect(sent.sql).toContain('FROM "items"');
+      expect(sent.args).toEqual([integer(1)]);
+      expect(calls).toHaveLength(1);
+    } finally {
+      entered.resolve(undefined);
+      gate.resolve(response([ok(executed(itemProjection, []))]));
+      await withinPointBound(settlement, "native point get cleanup").catch(() => undefined);
+    }
   });
 });

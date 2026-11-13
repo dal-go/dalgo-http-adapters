@@ -367,27 +367,42 @@ export class LibSQLDatabase implements Database {
 
   private async readOne<T>(key: Key, codec: Codec<T> | undefined, context: RequestContext): Promise<{ readonly snapshot: RecordSnapshot<T>; readonly bytes: number }> {
     const table = this.tableFor(key);
+    const collection = key.collection;
+    const id = key.id;
     const compiled = compileLibSQLQuery(table, {
-      source: { kind: "collection", name: key.collection },
-      filters: [{ field: DOCUMENT_ID, operator: "==", value: key.id }],
+      source: { kind: "collection", name: collection },
+      filters: [{ field: DOCUMENT_ID, operator: "==", value: id }],
       orders: [],
     }, 2);
     const { rows, bytes } = await this.select(compiled.sql, compiled.args, table, 2, context);
-    if (rows.length === 0) return { snapshot: { key, exists: false }, bytes };
+    const owned = new Key(collection, id);
+    if (rows.length === 0) return { snapshot: { key: owned, exists: false }, bytes };
     if (rows.length !== 1) throw new UnsupportedError("libSQL key mapping returned more than one record");
     const row = rows[0];
-    if (row === undefined || !Object.is(rowKey(row), key.id)) throw new UnsupportedError("libSQL key mapping returned a different record");
-    return { snapshot: this.snapshot(key, row, codec), bytes };
+    if (row === undefined || !Object.is(rowKey(row), id)) throw new UnsupportedError("libSQL key mapping returned a different record");
+    return { snapshot: this.snapshot(owned, row, codec), bytes };
   }
 
   private async readMany<T>(keys: readonly Key[], codec: Codec<T> | undefined, context: RequestContext): Promise<readonly RecordSnapshot<T>[]> {
-    if (keys.length > this.#maxGetManyKeys) throw new UnsupportedError(`libSQL getMany above maxGetManyKeys (${String(this.#maxGetManyKeys)})`);
-    const results: RecordSnapshot<T>[] = new Array(keys.length);
-    if (keys.length === 0) return results;
-    const first = keys[0];
+    const count = keys.length;
+    if (count > this.#maxGetManyKeys) throw new UnsupportedError(`libSQL getMany above maxGetManyKeys (${String(this.#maxGetManyKeys)})`);
+    const results: RecordSnapshot<T>[] = new Array(count);
+    if (count === 0) return results;
+    const callerFirst = keys[0];
+    if (callerFirst === undefined) throw new Error("libSQL lost first key");
+    const callerTable = this.tableFor(callerFirst);
+    const admitted: Key[] = new Array(count);
+    admitted[0] = new Key(callerFirst.collection, callerFirst.id);
+    for (let index = 1; index < count; index += 1) {
+      const key = keys[index];
+      if (key === undefined) throw new Error("libSQL lost key");
+      if (this.tableFor(key) !== callerTable) throw new UnsupportedError("libSQL getMany across table mappings");
+      admitted[index] = new Key(key.collection, key.id);
+    }
+    const first = admitted[0];
     if (first === undefined) throw new Error("libSQL lost first key");
     const table = this.tableFor(first);
-    for (const key of keys) {
+    for (const key of admitted) {
       if (this.tableFor(key) !== table) throw new UnsupportedError("libSQL getMany across table mappings");
     }
     const batch = new AbortController();
@@ -408,8 +423,9 @@ export class LibSQLDatabase implements Database {
         if (failure !== undefined || batch.signal.aborted) return;
         const index = next;
         next += 1;
-        const key = keys[index];
-        if (key === undefined) return;
+        if (index >= count) return;
+        const key = admitted[index];
+        if (key === undefined) { stop(new Error("libSQL lost admitted key")); return; }
         try {
           const { snapshot, bytes } = await this.readOne(key, codec, batchContext);
           if (failure !== undefined || batch.signal.aborted) return;
@@ -423,7 +439,7 @@ export class LibSQLDatabase implements Database {
       }
     };
     try {
-      await Promise.all(Array.from({ length: Math.min(this.#maxParallelReads, keys.length) }, () => worker()));
+      await Promise.all(Array.from({ length: Math.min(this.#maxParallelReads, count) }, () => worker()));
       if (context.signal.aborted) throw context.cancelled();
       if (failure !== undefined) throw failure.error;
       return results;
