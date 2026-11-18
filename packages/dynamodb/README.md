@@ -205,3 +205,127 @@ hosted IAM/STS/capacity, DynamoDB Local, browser CORS or installed-release proof
 ## License
 
 MIT
+
+## Existing tables and classic secondary indexes
+
+`NativeDynamoDbDatabase` is an additive, read-only API for explicitly configured
+existing tables. `DynamoDbDatabase` and its managed DALgo key/data layout and
+CRUD API remain separate. Native keys are low-level AWS S/N/B attribute maps;
+they are not fabricated DALgo `Key` IDs. Native items retain all ten AWS
+attribute tags, including decimal number **strings**, binary `Uint8Array`,
+sets, nested maps/lists and explicit null. No DocumentClient marshalling or
+JavaScript `number` conversion is used by this mode.
+
+```ts
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { NativeDynamoDbDatabase } from "@dal-go/dalgo2dynamodb";
+
+const sdk = new DynamoDBClient({ region: "us-east-1", credentials });
+const native = new NativeDynamoDbDatabase(sdk, {
+  tables: {
+    orders: {
+      tableName: "existing-orders",
+      partitionKey: { name: "account", type: "S" },
+      sortKey: { name: "sequence", type: "N" },
+      indexes: {
+        status: {
+          indexName: "status-index", kind: "gsi",
+          partitionKey: { name: "status", type: "S" },
+          sortKey: { name: "created", type: "N" },
+          projection: ["total"],
+        },
+      },
+    },
+  },
+});
+const item = await native.get("orders", {
+  account: { S: "tenant-one" }, sequence: { N: "9007199254740993" },
+});
+const page = await native.queryPartition({
+  collection: "orders", index: "status", partition: { S: "open" }, limit: 10,
+});
+const next = page.nextCursor === undefined ? undefined : await native.queryPartition({
+  collection: "orders", index: "status", partition: { S: "open" }, limit: 10,
+  cursor: page.nextCursor,
+});
+native.close(); // Cancels only this adapter's owned scopes; does not destroy sdk.
+```
+
+The caller supplies the SDK client, endpoint/region/credential policy and retry
+configuration. The constructor does no credentials, network or discovery work.
+Never expose long-lived access keys in a browser; use an independently qualified
+temporary-credential/IAM flow. Table/index mappings are local read grants and
+do not replace IAM. Physical names use the ordinary 3–255 ASCII table/index
+name syntax; table ARNs and new multi-attribute index schemas are not implemented.
+
+`get` returns an owned native item or null; `exists` returns a boolean.
+`getMany` admits at most 100 distinct native keys in one BatchGet, reconstructs
+input order, duplicates and null missing positions, and refuses the **whole**
+operation on any unprocessed, duplicate or foreign response key. It does not
+silently equate unprocessed keys with missing records or add automatic retries.
+The default logical-request limit is 1,000, so 101 copies of one key are valid.
+Duplicate outputs have independent binary/container ownership and are charged
+to the aggregate parsed-work budget.
+
+All read methods have `WithSignal` variants. Point/batch signatures are
+`getWithSignal(collection, key, signal, options?)`,
+`existsWithSignal(collection, key, signal)`, and
+`getManyWithSignal(collection, keys, signal, options?)`. Query uses
+`queryPartitionWithSignal(request, signal)`. One deadline starts before input
+admission, credential/send waits and parsing and remains authoritative through
+final delivery, including synchronous work crossing the monotonic deadline.
+Errors redact raw SDK causes and cancellation reasons. `close()` is idempotent;
+subsequent reads refuse locally. Borrowed SDK calls that ignore abortion retain
+one admission slot until actual settlement, including after their caller timed
+out; no client/transport is destroyed. At most 128 local admission waiters are
+accepted. This is not a remote cancellation or billing guarantee.
+
+`queryPartition` requires one typed partition value and optionally a sort
+predicate (`=`, `<`, `<=`, `>`, `>=`, `between`, string/binary `begins_with`),
+direction, projection and positive limit. Only configured logical indexes are
+accepted. GSI strong reads and nonprojected requests refuse before SDK send or
+credential acquisition. LSI strong reads are allowed, but implicit table fetches
+for nonprojected attributes are deliberately refused. `readAttributes` can
+restrict a table's returned attributes; default `"all"` grants its full item.
+Identity key attributes are always included in projections and returned items.
+Missing non-key projected attributes remain legitimately absent.
+
+Equal index sort keys are legal, including across pages: identities are based
+on the **base table** key. String ordering compares UTF-8 bytes, binary ordering
+compares unsigned bytes, and decimal identities/comparisons never use float64
+(`1` and `1.0` denote the same key). Numbers preserve the string received from
+the SDK; DynamoDB may already have trimmed input zeroes. Number values enforce
+the documented 38 significant digits and magnitude range. Non-key empty strings,
+binary values and containers are supported; empty sets are refused.
+
+Cursors are reusable opaque handles bound to this instance and the exact table,
+index, partition, sort predicate, projection, consistency, direction and limit.
+Their private key includes the configured base and index attributes. Repeated
+service keys, foreign scopes, overreturn, invalid counts or out-of-order rows
+fail the whole operation. Empty pages may carry a continuation and are followed
+within the same budgets. A continuation does not prove another matching item,
+a stable snapshot or transaction. Handles cannot be serialized or reconstructed.
+
+Default limits are 30 seconds (maximum 120 seconds), 1,000 records, 4,000,000
+accounted parsed bytes, 100 pages, 10,000 evaluated work units, page size 100,
+and four outstanding SDK calls (maximum 32). Configuration itself is bounded
+to 1 MiB, 128 table grants and 32 indexes per table. Projections/attribute grants
+admit 128 requested names plus identity keys. Native documents have at most
+1,000 attributes per map, nesting 32, and shared parsed-node accounting 100,000.
+These are conservative parsed SDK/request/output work bounds, **not** a raw
+response allocation, engine-memory, exact network-attempt or capacity-unit cap.
+The borrowed SDK can perform retries internally; all waits still share one
+operation deadline.
+
+`configuredTables()` reports immutable **configured** metadata without
+Describe/List calls or proof that a live table/index exists or is accessible.
+Scan/parallel Scan, arbitrary filter expressions, raw PartiQL, native writes,
+transactions and admin/discovery APIs are not implemented. Missing partition
+conditions never trigger Scan. The managed class retains its existing writes.
+
+Native tests include an actual official low-level SDK with an owned signed
+request handler and synthetic JSON-wire responses, as well as deterministic
+admission, byte/type/page/cursor and cancellation regressions. This source alone
+does not qualify DynamoDB Local, hosted AWS IAM/STS/capacity, actual browser
+execution/CORS, or a registry/installed release. Package name/private flag/version
+stay unchanged; repository policy disables versioning/tagging private packages.

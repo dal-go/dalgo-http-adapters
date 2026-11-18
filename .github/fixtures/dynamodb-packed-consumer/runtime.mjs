@@ -1,3 +1,4 @@
+import { verifyNativePackedConsumer } from "./native-runtime.mjs";
 // Actual packed adapter + official SDK middleware and owned request handler.
 // This performs no network/AWS/IAM call and is not DynamoDB Local/hosted proof.
 import assert from "node:assert/strict";
@@ -119,4 +120,4 @@ try{
   for(const entry of [...active])entry.stop();
   await bounded(Promise.allSettled(work));assert.equal(active.size,0);assert.equal(destroys,0);
 }
-console.log(JSON.stringify({coreAndErrorIdentity:true,actualSdkHandlerProtocol:true,typedValues:true,paging:true,batchOrderDuplicates:true,callerAfterDispatch:true,deadlineAfterDispatch:true,credentialWaiting:true,parsedBudgets:true,clientNeverDestroyed:true,reopen:true,cleanup:true,actualDynamoDBOrHostedIAM:false}));
+console.log(JSON.stringify({coreAndErrorIdentity:true,actualSdkHandlerProtocol:true,typedValues:true,paging:true,batchOrderDuplicates:true,callerAfterDispatch:true,deadlineAfterDispatch:true,credentialWaiting:true,parsedBudgets:true,clientNeverDestroyed:true,reopen:true,cleanup:true,actualDynamoDBOrHostedIAM:false,native:await verifyNativePackedConsumer()}));

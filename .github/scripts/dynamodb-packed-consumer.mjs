@@ -45,7 +45,7 @@ export async function checkDynamoDBPackedConsumer({ repository, scratch, run, wa
     const originalTarballHash = createHash("sha256").update(readFileSync(archive)).digest("hex");
     const archiveIntegrity = `sha512-${createHash("sha512").update(readFileSync(archive)).digest("base64")}`;
     writeFileSync(join(consumer, "package.json"), JSON.stringify({ name: "private-dynamodb-source-consumer", private: true, type: "module", devDependencies: { esbuild } }, null, 2) + "\n");
-    for (const [from, to] of [["consumer.ts", "src/consumer.ts"], ["browser.ts", "browser-src/consumer.ts"], ["vendor-browser.ts", "vendor-src/consumer.ts"], ["runtime.mjs", "runtime.mjs"], ["browser-entry.mjs", "browser-entry.mjs"], ["browser-roots.mjs", "browser-roots.mjs"]]) copyFileSync(join(fixture, from), join(consumer, to));
+    for (const [from, to] of [["consumer.ts", "src/consumer.ts"], ["browser.ts", "browser-src/consumer.ts"], ["vendor-browser.ts", "vendor-src/consumer.ts"], ["runtime.mjs", "runtime.mjs"], ["native-runtime.mjs", "native-runtime.mjs"], ["browser-entry.mjs", "browser-entry.mjs"], ["browser-roots.mjs", "browser-roots.mjs"]]) copyFileSync(join(fixture, from), join(consumer, to));
     copyFileSync(join(repository, ".github", "fixtures", "native-packed-consumer", "browser-guard-loader.mjs"), join(consumer, "browser-guard-loader.mjs"));
     const compilerOptions = { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", lib: ["ES2022", "ESNext.Disposable"], types: ["node"], strict: true, skipLibCheck: false, noUncheckedIndexedAccess: true, exactOptionalPropertyTypes: true, noEmit: true };
     writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["src/**/*.ts"] }, null, 2) + "\n");
@@ -97,7 +97,9 @@ export async function checkDynamoDBPackedConsumer({ repository, scratch, run, wa
       vendorDOM = { passed: false, scope: "direct official SDK DOM imports; separate upstream ambient diagnostic, not an adapter DOM pass", diagnostics };
     }
     const runtime = JSON.parse(run(process.execPath, ["runtime.mjs"], { cwd: consumer, timeout: 30_000 }).trim());
-    assert.deepEqual(runtime, { coreAndErrorIdentity: true, actualSdkHandlerProtocol: true, typedValues: true, paging: true, batchOrderDuplicates: true, callerAfterDispatch: true, deadlineAfterDispatch: true, credentialWaiting: true, parsedBudgets: true, clientNeverDestroyed: true, reopen: true, cleanup: true, actualDynamoDBOrHostedIAM: false });
+    const { native: nativeRuntime, ...managedRuntime } = runtime;
+    assert.deepEqual(managedRuntime, { coreAndErrorIdentity: true, actualSdkHandlerProtocol: true, typedValues: true, paging: true, batchOrderDuplicates: true, callerAfterDispatch: true, deadlineAfterDispatch: true, credentialWaiting: true, parsedBudgets: true, clientNeverDestroyed: true, reopen: true, cleanup: true, actualDynamoDBOrHostedIAM: false });
+    assert.deepEqual(nativeRuntime, { officialLowLevelSdk: true, exactNativeValues: true, binaryNumericKeys: true, indexSortTiesAndBaseIdentity: true, fullUnionCursor: true, emptyEvaluatedPages: true, scopedCursor: true, projectionRefusals: true, batchOrderDuplicatesAnd101: true, unprocessedFailsWithoutRetry: true, parsedBudget: true, callerAfterDispatch: true, deadlineAfterDispatch: true, credentialWaiting: true, borrowedNeverDestroyed: true, reopen: true, cleanup: true, actualDynamoDBOrHostedIAM: false });
     const require = createRequire(join(consumer, "package.json")); assert.equal(require("esbuild/package.json").version, esbuild); const { build } = require("esbuild");
     const result = await build({ absWorkingDir: consumer, entryPoints: ["browser-entry.mjs"], outfile: "browser-bundle.mjs", platform: "browser", conditions: ["browser"], bundle: true, format: "esm", target: "es2022", metafile: true });
     const inputs = Object.keys(result.metafile.inputs).sort();
@@ -109,7 +111,7 @@ export async function checkDynamoDBPackedConsumer({ repository, scratch, run, wa
     for (const output of Object.values(result.metafile.outputs)) for (const imported of output.imports) assert.ok(!imported.external && !isBuiltin(imported.path) && !imported.path.startsWith("node:"));
     const yamlInputs = inputs.filter(name => /(?:^|\/)node_modules\/yaml\//u.test(name)); assert.ok(yamlInputs.every(name => /(?:^|\/)node_modules\/yaml\/browser\//u.test(name)));
     const browser = JSON.parse(run(process.execPath, ["--experimental-vm-modules", "--import", "./browser-guard-loader.mjs", "browser-roots.mjs"], { cwd: consumer, timeout: 30_000 }).trim());
-    assert.deepEqual(browser, { packageGraphGuard: true, guardNegativeControls: true, coreAndErrorIdentity: true, lazy: true, parsedNativeValues: true, fetches: 0, workers: 0 });
+    assert.deepEqual(browser, { packageGraphGuard: true, guardNegativeControls: true, coreAndErrorIdentity: true, lazy: true, parsedNativeValues: true, nativeRootIdentity: true, nativeLazy: true, nativeClosedValues: true, borrowedNeverDestroyed: true, fetches: 0, workers: 0 });
     const tree = JSON.parse(run("npm", ["ls", "--all", "--json", NAME, "@dalgo/core", "@dalgo/adapter-runtime", ...Object.keys(SDK)], { cwd: consumer, timeout: 30_000 })); assertNoLegacyTree(tree, "private DynamoDB consumer");
     assert.deepEqual(sourceHashes(), inputHashes, "private DynamoDB pack changed source");
     assert.equal(createHash("sha256").update(readFileSync(archive)).digest("hex"), originalTarballHash, "tested private tarball changed");

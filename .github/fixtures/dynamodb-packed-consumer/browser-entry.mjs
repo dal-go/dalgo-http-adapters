@@ -35,3 +35,25 @@ export async function verifyBrowserRoots() {
   if(!result.exists || !(result.key instanceof Key) || result.data.exact!==exact || exact.toString()!=="9007199254740993.0001" || result.data.big!==9007199254740993n || result.data.bytes[1]!==255 || result.data.values.size!==2 || calls!==1 || destroys!==0) throw new Error("browser parsed native values changed");
   return {coreAndErrorIdentity:true,lazy:true,parsedNativeValues:true};
 }
+
+// Separate native-mode VM proof; original managed verification above is intact.
+import { NativeDynamoDbDatabase, NativeDynamoDbError } from "@dal-go/dalgo2dynamodb";
+export async function verifyNativeBrowserRoots() {
+  let calls = 0, destroys = 0;
+  const borrowed = { send(command) { calls++; if (command.input.TableName !== "existing") throw new Error("unexpected native browser table"); return Promise.resolve({ Item: { pk: { N: "9007199254740993" }, sk: { B: new Uint8Array([0,255]) }, exact: { N: "123456789012345678901234567890.0001" }, flags: { L: [{ BOOL: false }, { NULL: true }] } } }); }, destroy() { destroys++; throw new Error("borrowed native SDK destroyed"); } };
+  const options = { tables: { native: { tableName: "existing", partitionKey: { name: "pk", type: "N" }, sortKey: { name: "sk", type: "B" } } } };
+  const db = new NativeDynamoDbDatabase(borrowed, options);
+  const key = { pk: { N: "9007199254740993" }, sk: { B: new Uint8Array([0,255]) } };
+  if (calls !== 0) throw new Error("native constructor invoked SDK");
+  const abort = new AbortController(); abort.abort("synthetic-secret-caller");
+  for (const read of [() => db.getWithSignal("native", key, abort.signal), () => db.getManyWithSignal("native", [key], abort.signal), () => db.queryPartitionWithSignal({ collection: "native", partition: { N: "9007199254740993" }, limit: 1 }, abort.signal)]) {
+    let failure; try { await read(); } catch (error) { failure = error; }
+    if (!(failure instanceof QueryCancelledError) || failure.reason !== "caller" || failure.message.includes("synthetic-secret")) throw new Error("native browser cancellation identity changed");
+  }
+  if (calls !== 0) throw new Error("preaborted native operation invoked SDK");
+  const result = await db.get("native", key);
+  if (result?.exact.N !== "123456789012345678901234567890.0001" || result.sk.B[1] !== 255 || result.flags.L[0].BOOL !== false || result.flags.L[1].NULL !== true || calls !== 1) throw new Error("native browser AV values changed");
+  db.close(); let failure; try { await db.get("native", key); } catch (error) { failure = error; }
+  if (!(failure instanceof NativeDynamoDbError) || failure.code !== "closed" || destroys !== 0 || calls !== 1) throw new Error("native borrowed client ownership changed");
+  return { nativeRootIdentity: true, nativeLazy: true, nativeClosedValues: true, borrowedNeverDestroyed: true };
+}
