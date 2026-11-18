@@ -1,2 +1,5 @@
 export { CosmosHttpError, CosmosNoSqlDatabase, type CosmosAuthorizationProvider, type CosmosAuthorizationRequest, type CosmosFetch, type CosmosNoSqlOptions, type CosmosPartitionValue } from "./database.js";
 export { CosmosTransportError } from "./operation.js";
+export { NativeCosmosNoSqlDatabase } from "./native.js";
+export { NativeCosmosJsonNumber, nativeCosmosNumber, decodeNativeCosmosJson, encodeNativeCosmosJson, type NativeCosmosJson, type NativeCosmosJsonObject } from "./native-json.js";
+export { NativeCosmosCredential, NativeCosmosError, NativeCosmosHttpError, nativeCosmosResourceToken, nativeCosmosAadToken, type NativeCosmosAuthorizationProvider, type NativeCosmosAuthorizationRequest, type NativeCosmosNoSqlOptions, type NativeCosmosLimits, type NativeCosmosKey, type NativeCosmosSession, type NativeCosmosCursor, type NativeCosmosReadOptions, type NativeCosmosResponseMetadata, type NativeCosmosDocument, type NativeCosmosReadResult, type NativeCosmosBatchResult, type NativeCosmosQuery, type NativeCosmosPage } from "./native-types.js";
