@@ -150,12 +150,15 @@ export function compileFirestoreQuery<T>(
 }
 
 export function cursorFromSnapshot<T>(
-  snapshot: DocumentSnapshot,
+  snapshot: Pick<DocumentSnapshot, "id" | "get" | "ref">,
   orders: readonly QueryOrder<T>[],
+  sourceKind: QuerySource<unknown>["kind"] = "collection",
 ): QueryCursor {
   return {
     values: orders.map(({ field }): unknown => (
-      field === DOCUMENT_ID ? snapshot.id : snapshot.get(field) as unknown
+      field === DOCUMENT_ID
+        ? sourceKind === "collection" ? snapshot.id : snapshot.ref.path
+        : snapshot.get(field) as unknown
     )),
   };
 }
