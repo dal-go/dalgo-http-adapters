@@ -6,7 +6,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 const coreVersion = process.env.BIGQUERY_CORE_VERSION ?? "0.1.0";
-const coreIntegrity = { "0.1.0": "sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==", "0.6.0": "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==", "0.8.0": "sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A==" }[coreVersion];
+const coreIntegrity = { "0.1.0": "sha512-mhEm1UrpPRHsJ+WbZ95cOxeZzpUioXxmmEa+FsI+FlVs0zFWKMqB/Sj/UkmQ7RSptbSM8OTFnXbQnowo5eTxCw==", "0.6.0": "sha512-C/hoawh4YU5Htm9PnrQi7Z9gP9rsy2PZ3Aj9RU3sV+76mEPHQ2rKWGkBjaxSoHB4PZn4DLpAzqQ+OoMKfzZ8BQ==", "0.8.0": "sha512-k2xNCvWBhQUlk9Vhrt1rEsEAemv4nOlZyCl/AXou/Plr05b+d6kOIeG7rfb0fz46fwr/rMKjQyHG7GuSEZFF3A==", "0.8.1": "sha512-stXi8PPeR3G7AxCairfJEMDGd4KuiU5eyipPDgibCEVlRD435t2FvfQQj3mp+FgZEVzcdel4Z4Iwq3xm9URRSA==" }[coreVersion];
 if (!coreIntegrity) throw new Error("unsupported core compatibility target");
 const [tarballArg, destinationArg, ...runtimes] = process.argv.slice(2);
 if (!tarballArg || !destinationArg || !runtimes.length) throw new Error("tarball, external directory and runtime paths are required");

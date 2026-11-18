@@ -45,8 +45,12 @@ export interface OperationScope {
 // Bound injected providers/transports too: AbortSignal cooperation alone cannot
 // prove a deadline when an integration accidentally ignores cancellation.
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted)
+  if (signal.aborted) {
+    // Integrations may synchronously abort and return a rejected promise.
+    // Observe that input even when there is no need to race it anymore.
+    void promise.catch(() => { });
     return Promise.reject(new AnalyticalError("local_stopped"));
+  }
   return new Promise((resolve, reject) => {
     const abort = (): void => reject(new AnalyticalError("local_stopped"));
     signal.addEventListener("abort", abort, {
@@ -122,6 +126,14 @@ export class Transport {
       });
       const timer = setTimeout(abort, deadline - now);
       let response: Response | undefined;
+      let abandoned = false;
+      let cleanupStarted = false;
+      const discardBody = (): void => {
+        if (response === undefined || cleanupStarted) return;
+        cleanupStarted = true;
+        try { void response.body?.cancel().catch(() => { }); }
+        catch { /* A hostile stream must not replace cancellation or block cleanup. */ }
+      };
       let identity: TrustedIdentity;
       try {
         try {
@@ -149,7 +161,7 @@ export class Transport {
         if(controller.signal.aborted || this.#clock.now()>=deadline)fail("local_stopped");
         beforeDispatch?.();
         try {
-          response = await abortable(this.#fetch(url, {
+          const fetched = this.#fetch(url, {
             method, headers: {
               Authorization: `Bearer ${identity.accessToken}`, Accept: "application/json", ...(body === undefined ? {} : {
                 "Content-Type": "application/json"
@@ -157,7 +169,15 @@ export class Transport {
             }, redirect: "error", credentials: "omit", cache: "no-store", signal: controller.signal, ...(requestBody === undefined ? {} : {
               body: requestBody
             })
-          }), controller.signal);
+          }).then(value => {
+            // Own the response before abortable's fulfillment continuation.
+            // Even a fetch that ignores AbortSignal must release a late body.
+            response = value;
+            const now = this.#clock.now();
+            if (abandoned || controller.signal.aborted || now >= deadline) discardBody();
+            return value;
+          });
+          response = await abortable(fetched, controller.signal);
         }
         catch {
           if (controller.signal.aborted)
@@ -242,6 +262,8 @@ export class Transport {
         fail(method === "POST" ? cancel ? "cancellation_unknown" : "submission_unknown" : "remote_failed");
       }
       finally {
+        abandoned = true;
+        discardBody();
         clearTimeout(timer);
         scope.signal?.removeEventListener("abort", abort);
       }

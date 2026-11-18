@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion -- Firebase SDK module boundary is intentionally mocked */
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return -- Firebase SDK module boundary is intentionally mocked */
 import { AlreadyExistsError, Key, UnsupportedError, collection, type Codec } from "@dal-go/dalgo";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,7 +11,8 @@ const { RealtimeDatabase } = await import("../src/database.js");
 const database = {} as never;
 const key = new Key("items", "milk");
 const codec: Codec<{ title: string }> = { encode: (value) => ({ name: value.title }), decode: (value) => ({ title: (value as { name: string }).name }) };
-function snapshot(exists: boolean, value: unknown, children: readonly { key: string; value: unknown }[] = []) { return { exists: () => exists, val: () => value, forEach: (visitor: (child: ReturnType<typeof snapshot>) => boolean) => { children.forEach((child) => { visitor(snapshot(true, child.value, [] as const) as ReturnType<typeof snapshot> & { key: string }); }); }, key: "ignored" }; }
+interface Snapshot { exists: () => boolean; val: () => unknown; forEach: (visitor: (child: Snapshot) => boolean) => void; key: string }
+function snapshot(exists: boolean, value: unknown, children: readonly { key: string; value: unknown }[] = []): Snapshot { return { exists: () => exists, val: () => value, forEach: (visitor: (child: Snapshot) => boolean) => { children.forEach((child) => { visitor(snapshot(true, child.value, [] as const)); }); }, key: "ignored" }; }
 
 describe("RealtimeDatabase Web SDK contract", () => {
   beforeEach(() => { vi.clearAllMocks(); sdk.ref.mockImplementation((_database, path: string) => ({ path })); sdk.query.mockImplementation((reference) => reference); });
