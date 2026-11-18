@@ -27,48 +27,23 @@ CORS proof against a disposable CouchDB is included as a package script, but
 the DataTug form/factory/query-session wiring and the whole DataTug UI journey
 remain separate verification gates and are not claimed by the package tests.
 
-## Install
+## Compatibility and source artifacts
 
-`@dalgo/core` and `@dalgo/adapter-runtime` are peers. This package is not yet
-published to npm. First-wave consumers pin a reviewed commit of this monorepo as
-a pnpm Git subdirectory dependency, the same pattern used by
-`@dalgo/sqlite-wasm`.
+`@dalgo/core` >=0.8.1 <0.9 and `@dalgo/adapter-runtime` >=0.1.2 <1 are
+peers. Use one canonical core identity; the archived `@dal-go/dalgo` alias is
+not a dependency. The reviewed source version remains 0.2.1 until normal
+Changesets versioning. A source branch, prepared tarball or changeset is not an
+npm publication, installed release or application-deployment claim.
 
-Each `github:` subdirectory dependency is fetched as its own workspace copy, and
-only that copy is prepared. The package's `prepack` therefore builds
-`@dalgo/adapter-runtime` from the same commit before type-checking itself; a
-separate prebuilt runtime tarball or a local workspace link is not required.
-Substitute the full 40-character SHA of the reviewed merged commit for
-`<merged-sha>` in every place below:
-
-```jsonc
-// package.json
-"@dalgo/core": "github:dal-go/dalgo-js#99165e9e1a39c32abee2b39d6395677843bc3559",
-"@dalgo/adapter-runtime": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/adapter-runtime",
-"@dalgo/dalgo2couchdb": "github:dal-go/dalgo-http-adapters#<merged-sha>&path:/packages/couchdb"
-```
-
-```yaml
-# pnpm-workspace.yaml: pnpm blocks build scripts until each exact package is approved
-allowBuilds:
-  '@dalgo/core@https://codeload.github.com/dal-go/dalgo-js/tar.gz/99165e9e1a39c32abee2b39d6395677843bc3559': true
-  '@dalgo/adapter-runtime@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/adapter-runtime': true
-  '@dalgo/dalgo2couchdb@https://codeload.github.com/dal-go/dalgo-http-adapters/tar.gz/<merged-sha>#path:/packages/couchdb': true
-```
-
-If an entry is missing, pnpm names the exact key it needs; approve only the
-reviewed dependency, never a wildcard. From this repository,
-`pnpm check:git-subdir-consumer` installs these three packages from a temporary
-Git repository in a clean consumer and requires a strict typecheck, a dynamic
-import of every entry point, exactly one `@dalgo/core` `0.7.4` instance, no
-`@dal-go/dalgo`, and no local links. Run the identical check against a pushed
-commit with
-`DALGO_ADAPTER_GIT_SUBDIR_REF=github:dal-go/dalgo-http-adapters#<sha> pnpm check:git-subdir-consumer`.
-
-The `@dalgo/core` peer range is `>=0.7.4 <0.9.0`; the workspace tests against the
-exact `0.7.4` commit the web UI pins, so the browser contains one `Key`/query
-identity. From the repository root, `pnpm install --frozen-lockfile` and
-`pnpm --filter @dalgo/dalgo2couchdb check` run the workspace gate.
+From the repository, `pnpm --filter @dalgo/dalgo2couchdb check` runs the local
+package gate. The existing `check:packed-consumer` and
+`check:git-subdir-consumer` workflows exercise isolated artifact installations.
+Their receipts identify the exact core/runtime/artifact versions actually used;
+older receipts using core0.7.4 do not qualify this new source boundary. Do not
+hand-edit versions, weaken peers or substitute a workspace core for a public
+consumer. `prepack` still builds the sibling runtime before package declarations
+inside the producer checkout; that does not require consumers to use an
+unreleased runtime API.
 
 ## Minimal setup
 
@@ -321,7 +296,7 @@ import { collection } from "@dalgo/core";
 const capabilities = COUCHDB_READ_CAPABILITIES;
 const built = collection<{ done: boolean }>("items").query().limit(25).build();
 if (capabilities.query.sort.status === "unsupported" && built.orders.length > 0) {
-  throw new Error("CouchDB does not support ordered DALgo queries");
+  throw new Error("The managed CouchDB adapter does not implement ordered queries");
 }
 
 const controller = new AbortController();
@@ -344,7 +319,7 @@ HTTP work; a late response body is cancelled and a late result is never returned
 `queryWithSignal` rejects with `QueryCancelledError` for caller abort/deadline,
 `CouchDbRequestError` for redacted header/fetch/body transport failures, and
 preserves `UnsupportedError`, `RangeError` and configuration `TypeError` messages.
-Legacy `query` keeps its interface and success behaviour.
+Legacy read methods keep their signatures and successful under-budget result shapes. All read deadlines now use the same public `QueryCancelledError` identity; the old opaque managed body-timeout wording is replaced.
 
 ### Capability rows
 
@@ -475,3 +450,86 @@ and a real application consumer installation.
 ## License
 
 MIT
+
+## Whole-call lifecycle and delivery
+
+Both modes expose `getWithSignal(key, signal, codec?)`.
+The managed mode additionally exposes
+`getManyWithSignal(keys, signal, codec?)`, matching the existing native batch
+surface. The optional header-provider signal is the same whole-call signal;
+zero-argument providers remain compatible. The adapter never destroys the
+caller-supplied fetch implementation or changes global fetch.
+
+One monotonic deadline starts before key/query preflight, header acquisition,
+JSON serialization and fetch. It remains active through bounded stream reads,
+validation, codecs and final delivery. A callback that crosses the deadline
+before the timer can run cannot dispatch or deliver afterward. An already
+observed caller abort keeps its caller reason; raw signal reasons and provider
+errors are never copied into errors or causes. Header/fetch/body/codec failures
+use `CouchDbRequestError`; validated HTTP status, adapter-owned byte bounds,
+configuration errors and MVCC conflict types remain useful and redacted.
+Non-success or accepted-empty responses are discarded without consuming their
+unneeded bodies. Late/unused bodies are cancelled once; reader cancellation is
+best effort, rejection-safe and never awaited. Reader locks are released even
+if cancellation never settles.
+
+Both batch modes snapshot and validate the admitted key array before the first
+request, retain order/duplicates/missing records, and share one deadline and
+aggregate response budget. `maxGetManyBytes` now also exists in managed mode
+(default1MiB, maximum16MiB); native mode retains its existing option/default.
+Bytes are charged while reading each chunk, before retaining a decoded sibling
+result. A failure aborts active siblings and prevents later keys. The original
+safe HTTP/budget error survives internal sibling cancellation, while actual
+caller/deadline cancellation still has priority after cleanup. A failed call
+returns no partial batch. Single-document `maxResponseBytes` remains distinct
+from aggregate batch overflow (`CouchDbBatchSizeError` in native mode).
+
+Request JSON bytes are cumulative across a call, including a managed
+revision-read/write sequence. Managed `set` and `delete` retain exactly their
+read-current-revision then conditional-write MVCC behavior; no retry, overwrite,
+remote rollback or transactional snapshot is invented. A failed or timed-out
+write may already have completed remotely.
+
+Native query documents and bookmarks are validated as a whole before any caller
+codec runs. IDs/revisions, projections, permitted indexes, same-direction
+sorting with `_id` tie-break, raw-wire unsafe-integer refusal and metadata
+provenance remain unchanged. Incoming native single-use handles are consumed,
+and outgoing handles issued, only at final delivery; failed decoding or
+cancellation releases active reservations without consuming the prior handle.
+Managed cursors are now opaque in-process handles, bound to the same instance,
+exact selector/filter and page size. They cannot be serialized or forged from a
+URL/bookmark object. Managed bindings/bookmarks are each bounded to16KiB and
+at most1,000 handles are retained, retiring oldest entries when full. Native
+credential-scope binding and its existing bounded issued/consumed registries
+remain in force. These are cursor-integrity guards, not authorization: the
+server credential and database permissions remain authoritative.
+
+The existing connection/index/field-discovery methods retain configured versus
+sampled/unavailable labels. `describe` shares one deadline across its three
+bounded metadata requests, with the sum of their existing per-request metadata
+byte caps. No cluster enumeration, index creation or new metadata authority is
+added.
+
+Closed JSON validation admits ordinary dense arrays and enumerable data
+properties on plain objects. Accessors, hidden/symbol properties, custom array
+properties/prototypes, cycles, depth beyond32, more than65,536 nodes, or more
+than16MiB aggregate string/key bytes are refused. Configured headers are plain
+string records with no duplicate case-insensitive names, at most128 entries,
+8KiB per value and64KiB total; delivered response headers are bounded to64KiB.
+Managed key/collection-path strings are bounded to4KiB. These bounds protect
+adapter work and delivered data, not allocation inside injected fetch/provider
+code or server/engine work before delivery. Synchronous callbacks/proxies cannot
+be forcibly preempted; custom codecs can allocate arbitrary application values.
+
+Deterministic tests cover both modes with explicit authorization/fetch/reader
+ownership acknowledgements, controlled monotonic deadlines, late failures,
+cleanup cancellation, shared batches, scoped cursors and no decoder prefix on
+malformed pages. Existing native-live/Chromium fixtures remain separate owned
+service/browser gates. Hosted permissions, CORS, current installed artifacts,
+Go/CLI integration and DataTug UI acceptance are not established by these unit
+regressions or by source presence.
+
+For managed-mode compatibility, an exact-limit page without any bookmark is
+still accepted as one bounded page; it is not evidence that an entire collection
+was enumerated. Native mode retains its stricter full-page bookmark requirement.
+Empty supplied bookmarks are refused in both modes.

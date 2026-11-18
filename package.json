@@ -20,6 +20,7 @@
     "check:cosmos-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --cosmos",
     "check:convex-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --convex",
     "check:cloudflare-kv-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --cloudflare-kv",
+    "check:couchdb-packed-consumer": "node .github/scripts/check-adapter-packed-consumer.mjs --couchdb",
     "lint": "pnpm -r --if-present run lint",
     "test": "pnpm -r --if-present run test",
     "release:version": "changeset version"
