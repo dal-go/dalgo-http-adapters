@@ -165,7 +165,9 @@ provider authorization and never proves uniqueness or pagination stability.
 | DALgo operation | PostgREST mapping |
 | --- | --- |
 | `get` | Bounded `GET /relation?id=eq.value&limit=1`; an empty result is a missing snapshot. |
+| `getWithSignal(key, signal, codec?)` | The same bounded point read with caller cancellation and one end-to-end deadline. |
 | `getMany` | Ordered, bounded, bounded-parallel point reads. |
+| `getManyWithSignal(keys, signal, codec?)` | The same batch with one caller cancellation, one shared deadline, and fail-stop sibling handling. |
 | `insert` | `POST /relation` with an adapter-owned ID column; HTTP 409 becomes `AlreadyExistsError`. |
 | `set` | Single-row `PUT /relation?id=eq.value` with the complete payload; exactly one returned row is required. |
 | `update` | `PATCH /relation?id=eq.value` with strict `max-affected=1`; an empty returned representation becomes `NotFoundError`. |
@@ -240,7 +242,8 @@ import { POSTGREST_READ_CAPABILITIES, PostgrestDatabase } from "@dalgo/dalgo2pos
 import { collection } from "@dalgo/core";
 
 const capabilities = POSTGREST_READ_CAPABILITIES;
-const built = collection<{ done: boolean }>("items").query().orderBy("done").limit(25).build();
+const items = collection<{ done: boolean }>("items");
+const built = items.query().orderBy("done").limit(25).build();
 if (capabilities.query.sort.status === "unsupported" && built.orders.length > 0) {
   throw new Error("PostgREST does not support ordering");
 }
@@ -248,7 +251,12 @@ if (capabilities.query.sort.status === "unsupported" && built.orders.length > 0)
 const controller = new AbortController();
 try {
   const page = await db.queryWithSignal(built, controller.signal);
-  return page;
+  const one = await db.getWithSignal(items.key("milk"), controller.signal);
+  const many = await db.getManyWithSignal(
+    [items.key("milk"), items.key("eggs")],
+    controller.signal,
+  );
+  return { page, one, many };
 } catch (error) {
   if (error instanceof QueryCancelledError) {
     // error.reason is "caller" or "deadline"; no token or abort reason leaks.
@@ -258,21 +266,40 @@ try {
 }
 ```
 
-The caller signal covers header acquisition, `fetch`, response-body reading and
-cursor preparation. The adapter combines it with the configured `timeoutMs`
-(15 seconds by default, maximum 120) as one end-to-end deadline. A pre-aborted
-signal does no header or HTTP work; a late response body is cancelled and a late
-result is never returned. `queryWithSignal` rejects with `QueryCancelledError`
-for caller abort/deadline and with the existing redacted
-`PostgrestRequestError` for header/fetch/body transport failures. Deliberate
-query/unsupported errors are raised before any request and keep their messages.
-Legacy `query` keeps its interface and success behaviour.
+The additive signaled entry points are `getWithSignal(key, signal, codec?)`,
+`getManyWithSignal(keys, signal, codec?)` and
+`queryWithSignal(query, signal)`. For each call the original configured
+`timeoutMs` (15 seconds by default, maximum 120) is one end-to-end deadline
+covering local read/query preparation, header acquisition, `fetch`,
+response-body reading, cursor preparation/serialization where applicable, the
+final codec, and the final checkpoint before the result is committed to the
+public promise. A pre-aborted signal does no relation, header or HTTP work; a
+late response body is cancelled on a best-effort basis and a late result is
+never returned.
+
+Signaled calls reject with `QueryCancelledError` (`reason: "caller"` or
+`"deadline"`) for caller abort or deadline expiry, and with the existing redacted
+`PostgrestRequestError` for header/fetch/body transport failures. Caller abort is
+typed, redacted, and takes priority over a sibling batch failure. Legacy `get`,
+`getMany` and `query` remain unsignalled: they retain the same configured
+`timeoutMs` through the final codec, but a timeout is reported as the redacted
+`PostgrestRequestError`. Deliberate query/unsupported errors are raised before
+any request and keep their messages. Legacy success behaviour is unchanged.
+
+Both `getMany` and `getManyWithSignal` capture the admitted key membership and
+copy each key's primitive collection and ID before the first relation callback.
+They then run that fixed work list with `maxParallelReads`, share one original
+deadline, and fail stop: the first real failure aborts sibling requests and
+prevents later dispatch, and the whole batch rejects instead of returning
+partial records. A genuine caller abort wins over a sibling failure. Empty
+batches, sparse keys, nested keys, invalid IDs, an oversized key count and a
+pre-aborted caller do no relation, header or HTTP work.
 
 ### Capability rows
 
 | Feature | Status | Bound / reason |
 | --- | --- | --- |
-| read/get, read/getMany | native | `getMany` max 100 keys, 8 parallel reads by default |
+| read/get, read/getMany | native | `getMany` max 100 keys, 8 parallel reads by default; `getWithSignal`/`getManyWithSignal` add caller cancellation and a shared deadline |
 | projection | unsupported | core `StructuredQuery` has no projection; `select=*` is always used and no field is dropped |
 | filter | native | simple column identifiers or `DOCUMENT_ID`; all DALgo operators; null only for `==`/`!=` |
 | sort | native | `asc`/`desc` on simple column identifiers; `queryWithSignal` adds the primary-key tie-breaker |
@@ -340,8 +367,10 @@ bounds.
   and JSON failures become a generic `PostgrestRequestError`, never their
   original text. Inserts request `return=minimal` and cancel any unexpected
   response body; keyed writes read a bounded representation to prove their
-  cardinality. Cancellation is best-effort and never awaited, so a hostile or
-  broken stream cannot outlive the request deadline.
+  cardinality. Cancellation is best-effort and not awaited, so a hostile or
+  broken `cancel()` cannot block or delay the public operation. It does not
+  prove that pending physical I/O has stopped or that the remote query or
+  database work has terminated.
 - Cursor pagination assumes the configured primary-key column is non-null and
   unique. Discovery reports whether that is declared (`declared-primary-key`)
   or relies on the configured contract (`configured-contract`). When metadata
@@ -366,7 +395,11 @@ bounds.
 ## Verification
 
 `pnpm check` runs ESLint, deterministic Vitest HTTP-contract tests, declaration
-build, and type checks of the minimal example. The unit suite injects `fetch`
+build, and type checks of the minimal example. The current deterministic unit
+suite has 97 cases and passes the strict check. The 12 opt-in real-service cases
+are skipped unless explicitly enabled; the fixture's final service-version
+recheck is pending, so this section describes the test cases rather than
+asserting that a particular service version was exercised. The unit suite injects `fetch`
 for protocol/error/bound coverage. `test/node-http-transport.test.ts` is a Node
 HTTP contract test only: Node does not enforce browser CORS and the test sets
 `Origin` manually, so it does not prove browser behaviour.
