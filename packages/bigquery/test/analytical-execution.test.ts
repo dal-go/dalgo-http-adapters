@@ -1,6 +1,6 @@
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BigQueryAnalyticalClient, ExecutionFailure, MemoryLedger, IndexedDBLedger, compileReadPlan, type Ledger, type Bounds, type Clock, type Execution, type Page, type ReadQuery, type SourceProfile, type TrustedIdentity } from "../src/analytical.js";
+import { BigQueryAnalyticalClient, ExecutionFailure, MemoryLedger, IndexedDBLedger, compileReadPlan, type Ledger, type LedgerState, type Bounds, type Clock, type Execution, type Page, type ReadQuery, type SourceProfile, type TrustedIdentity } from "../src/analytical.js";
 const source: SourceProfile = {
   version: 1, sourceId: "fixture", descriptorDigest: "revision1", logicalCollection: "sample", sourceProject: "source-project", datasetId: "ds", tableId: "tbl", location: "EU", schema: [{
       name: "n", type: "INTEGER", mode: "NULLABLE"
@@ -120,8 +120,190 @@ async function start(f: ReturnType<typeof fixture>, initial: Step = {
 }) { f.steps.push(...f.previewSteps, ...f.executionSteps, initial); const client = await f.create(); const preview = await client.preview(execution, f.limits); const approval = await client.approve(preview, preview.approvalDigest); return {
   client, preview, approval, run: await client.execute(approval)
 }; }
+/** Trusted-storage completion hooks, including callbacks after the lease releases. */
+class CompletionLedger implements Ledger {
+  readonly base = new MemoryLedger();
+  afterCommit: ((before: LedgerState, after: LedgerState) => void) | undefined;
+  afterLease: (() => void | Promise<void>) | undefined;
+  async update<T>(mutator: (state: LedgerState) => T): Promise<T> {
+    let before: LedgerState;
+    let after: LedgerState;
+    const result = await this.base.update(state => {
+      before = structuredClone(state);
+      const value = mutator(state);
+      after = structuredClone(state);
+      return value;
+    });
+    this.afterCommit?.(before!, after!);
+    return result;
+  }
+  async withLease<T>(id: string, signal: AbortSignal | undefined, operation: () => Promise<T>): Promise<T> {
+    const result = await this.base.withLease(id, signal, operation);
+    await this.afterLease?.();
+    return result;
+  }
+  stopAt(boundary: "commit" | "read" | "lease", action: () => void): void {
+    let delivered = false;
+    const fire = (): void => { this.afterCommit = undefined; this.afterLease = undefined; action(); };
+    this.afterCommit = (before, after) => {
+      const previous = Object.values(before.runs)[0];
+      const current = Object.values(after.runs)[0];
+      const delivery = current?.cursor !== null && current?.cursor !== undefined && current.cursor.ledgerRef !== previous?.cursor?.ledgerRef;
+      if (delivery) {
+        delivered = true;
+        if (boundary === "commit") fire();
+      } else if (delivered && boundary === "read") fire();
+    };
+    if (boundary === "lease") this.afterLease = fire;
+  }
+}
 afterEach(() => vi.unstubAllGlobals());
 describe("bounded analytical production execution", () => {
+  for (const boundary of ["commit", "read", "lease"] as const) {
+    for (const mode of ["row", "page", "empty"] as const) {
+      it.each(["caller", "caller-deadline", "execution-deadline"] as const)(`does not acknowledge late ${mode} delivery after ${boundary}: %s`, async stop => {
+        const ledger = new CompletionLedger();
+        const f = fixture([], {}, ledger);
+        const { run } = await start(f, { body: complete(mode === "empty" ? [] : ["1", "2"]) });
+        const original = await ledger.base.update(state => Object.values(state.runs)[0]);
+        if (original === undefined) throw new Error("missing run");
+        const calls = f.calls.length;
+        const controller = new AbortController();
+        const callerDeadline = f.clock.now() + 5000;
+        ledger.stopAt(boundary, () => {
+          if (stop === "caller") controller.abort("synthetic-secret");
+          else f.advance(stop === "caller-deadline" ? 5000 : 120001);
+        });
+        const options = { signal: controller.signal, ...(stop === "caller-deadline" ? { callerDeadline } : {}) };
+        const failure = await (mode === "row" ? run.nextRow(options) : run.nextPage(options)).then(() => { throw new Error("late delivery succeeded"); }, error => error as ExecutionFailure);
+        expect(failure).toBeInstanceOf(ExecutionFailure);
+        expect(failure.code).toBe("local_stopped");
+        expect(failure.message).not.toContain("synthetic-secret");
+        const stopped = await ledger.base.update(state => Object.values(state.runs)[0]);
+        expect(stopped?.offset).toBe(original.offset);
+        expect(stopped?.cursor).toEqual(original.cursor);
+        expect(stopped?.receipt.counters).toEqual(original.receipt.counters);
+        expect(stopped?.receipt.localStopped).toBe(true);
+        expect(stopped?.reservation).toBe(original.reservation);
+        expect(stopped?.receipt.job).toEqual(original.receipt.job);
+        expect(stopped?.receipt.executionDeadline).toBe(original.receipt.executionDeadline);
+        expect(stopped?.activePrincipal).toEqual(original.activePrincipal);
+        if (stop === "execution-deadline") {
+          await expect(mode === "row" ? failure.run.nextRow() : failure.run.nextPage()).rejects.toThrow("local_stopped");
+        } else {
+          const recovered = mode === "row" ? await failure.run.nextRow() : await failure.run.nextPage();
+          expect(recovered?.rows.map(row => row[0]?.value)).toEqual(mode === "empty" ? [] : mode === "row" ? ["1"] : ["1", "2"]);
+          expect(recovered?.receipt.counters.rows).toBe(mode === "empty" ? 0 : mode === "row" ? 1 : 2);
+        }
+        expect(f.calls).toHaveLength(calls);
+        expect(f.calls.filter(call => call.init.method === "POST" && JSON.parse(call.init.body as string).dryRun === false)).toHaveLength(1);
+      });
+    }
+  }
+  it("keeps an acknowledged partial cursor and buffer when the next row is cancelled", async () => {
+    const ledger = new CompletionLedger();
+    const f = fixture([], {}, ledger);
+    const { client, run } = await start(f, { body: complete(["1", "2"]) });
+    const first = await run.nextRow() as Page;
+    const original = await ledger.base.update(state => Object.values(state.runs)[0]);
+    const controller = new AbortController();
+    ledger.stopAt("read", () => controller.abort());
+    const failure = await run.nextRow({ signal: controller.signal }).catch(error => error as ExecutionFailure);
+    expect(failure).toBeInstanceOf(ExecutionFailure);
+    const stopped = await ledger.base.update(state => Object.values(state.runs)[0]);
+    expect(stopped?.cursor).toEqual(original?.cursor);
+    expect(stopped?.offset).toBe(1);
+    expect(stopped?.receipt.counters).toEqual(original?.receipt.counters);
+    // The returned fresh handle must keep the existing partial buffer, not
+    // perform an ordinary fetch that resets offset zero and repeats row one.
+    const count = f.calls.length;
+    const next = await (failure as ExecutionFailure).run.nextRow();
+    expect(next?.rows[0]?.[0]?.value).toBe("2");
+    expect(next?.receipt.counters.rows).toBe(2);
+    expect(f.calls).toHaveLength(count);
+    expect(await (failure as ExecutionFailure).run.nextRow()).toBeNull();
+    await expect(client.resume(first.receipt, first.cursor as string)).rejects.toThrow("cursor_invalid");
+  });
+  it("retains transport charges and the preceding cursor when a later fetched page is not delivered", async () => {
+    const ledger = new CompletionLedger();
+    const f = fixture([], {}, ledger);
+    const { client, run } = await start(f, { body: complete(["1"], "p2") });
+    const first = await run.nextPage() as Page;
+    const original = await ledger.base.update(state => Object.values(state.runs)[0]);
+    f.steps.push({ body: { jobComplete: true, rows: rows("2") } });
+    const controller = new AbortController();
+    ledger.stopAt("lease", () => controller.abort());
+    await expect(run.nextPage({ signal: controller.signal })).rejects.toThrow("local_stopped");
+    const stopped = await ledger.base.update(state => Object.values(state.runs)[0]);
+    expect(stopped?.cursor).toEqual(original?.cursor);
+    expect(stopped?.offset).toBe(0);
+    expect(stopped?.receipt.counters.rows).toBe(1);
+    expect(stopped?.receipt.counters.bytes).toBeGreaterThan(original?.receipt.counters.bytes ?? 0);
+    expect(stopped?.receipt.counters.pages).toBe((original?.receipt.counters.pages ?? 0) + 1);
+    expect(stopped?.reservation).toBe("1000");
+    expect(stopped?.receipt.executionDeadline).toBe(original?.receipt.executionDeadline);
+    expect(stopped?.receipt.job).toEqual(job);
+    f.steps.push({ body: { jobComplete: true, rows: rows("2") } });
+    const resumed = await client.resume(first.receipt, first.cursor as string);
+    const second = await resumed.nextPage();
+    expect(second?.rows[0]?.[0]?.value).toBe("2");
+    expect(second?.receipt.counters.rows).toBe(2);
+    expect(f.calls.filter(call => call.init.method === "POST" && JSON.parse(call.init.body as string).dryRun === false)).toHaveLength(1);
+  });
+  it("checks clock-triggered caller abort and a late null after the final lease callback", async () => {
+    const ledger = new CompletionLedger();
+    const f = fixture([], {}, ledger);
+    const { run } = await start(f, { body: complete([]) });
+    await run.nextPage();
+    const controller = new AbortController();
+    const now = f.clock.now;
+    let finalClock = false;
+    f.clock.now = () => { const value = now(); if (finalClock) controller.abort(); return value; };
+    ledger.afterLease = () => { finalClock = true; };
+    await expect(run.nextPage({ signal: controller.signal })).rejects.toThrow("local_stopped");
+    expect((await ledger.base.update(state => Object.values(state.runs)[0]))?.receipt.counters.rows).toBe(0);
+  });
+  it.each(["caller", "caller-deadline", "execution-deadline"] as const)("rejects a terminal null whose final lease callback stops the read: %s", async stop => {
+    const ledger = new CompletionLedger();
+    const f = fixture([], {}, ledger);
+    const { run } = await start(f, { body: complete([]) });
+    await run.nextPage();
+    const before = await ledger.base.update(state => Object.values(state.runs)[0]);
+    const count = f.calls.length;
+    const controller = new AbortController();
+    const callerDeadline = f.clock.now() + 5000;
+    ledger.afterLease = () => {
+      ledger.afterLease = undefined;
+      if (stop === "caller") controller.abort();
+      else f.advance(stop === "caller-deadline" ? 5000 : 120001);
+    };
+    await expect(run.nextPage({ signal: controller.signal, ...(stop === "caller-deadline" ? { callerDeadline } : {}) })).rejects.toThrow("local_stopped");
+    const after = await ledger.base.update(state => Object.values(state.runs)[0]);
+    expect(after?.cursor).toEqual(before?.cursor);
+    expect(after?.receipt.counters).toEqual(before?.receipt.counters);
+    expect(f.calls).toHaveLength(count);
+  });
+  it.each(["ledgerRef", "offset", "rows"] as const)("never rolls back a superseding delivery when its %s no longer matches", async field => {
+    const ledger = new CompletionLedger();
+    const f = fixture([], {}, ledger);
+    const { run } = await start(f, { body: complete(["1", "2"]) });
+    const controller = new AbortController();
+    let newer: unknown;
+    ledger.afterLease = async () => {
+      ledger.afterLease = undefined;
+      newer = await ledger.base.update(state => {
+        const current = Object.values(state.runs)[0];
+        if (current === undefined || current.cursor === null) throw new Error("missing delivery");
+        if (field === "ledgerRef") current.cursor = { ...current.cursor, ledgerRef: "superseding-cursor" };
+        else if (field === "offset") current.offset += 1;
+        else current.receipt = { ...current.receipt, counters: { ...current.receipt.counters, rows: current.receipt.counters.rows + 1 } };
+        return { offset: current.offset, rows: current.receipt.counters.rows, cursor: current.cursor };
+      });
+      controller.abort();
+    };
+    await expect(run.nextRow({ signal: controller.signal })).rejects.toThrow("local_stopped");
+    expect(await ledger.base.update(state => { const current = Object.values(state.runs)[0]; return { offset: current?.offset, rows: current?.receipt.counters.rows, cursor: current?.cursor }; })).toEqual(newer);
+  });
   it("uses source!=job project, one capped submit, same-job schema reuse and authoritative billing", async () => {
     const f = fixture([]);
     const { client, run, approval } = await start(f);
