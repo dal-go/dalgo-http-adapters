@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Google Cloud Datastore v1 REST adapter for DALgo TypeScript",
   "type": "module",
-  "packageManager": "pnpm@11.20.0",
+  "packageManager": "pnpm@11.28.11",
   "sideEffects": false,
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "files": ["dist", "LICENSE", "README.md"],

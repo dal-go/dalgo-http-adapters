@@ -21,6 +21,7 @@ const app = initializeApp(
 const firestore = getFirestore(app);
 const db = new FirestoreDatabase(firestore);
 const items = collection<Item>("items").in(key("spaces", "space-1"));
+const recursiveItems = collection<Record<string, unknown>>("items").in(key("spaces", "space-1"));
 
 beforeAll(() => {
   connectFirestoreEmulator(firestore, "127.0.0.1", 8089);
@@ -84,7 +85,7 @@ describe("FirestoreDatabase", () => {
     const recursive = parseRecursiveTugQL("from: {name: items, alias: outer}\nwhere:\n  exists:\n    query:\n      from: {name: items, alias: inner}\n      where: {left: {field: done, source: inner}, op: '==', right: {field: done, source: outer}}\norderBy: [{field: rank, source: outer}]\nlimit: 1\ncolumns: [{field: title, source: outer}]\n", schema);
     const page = await executeRecursiveTugQLQuery(db, recursive, {
       maxFetchedRows: 10,
-      resolveSource: () => items.source,
+      resolveSource: () => recursiveItems.source,
     });
     expect(page.records.map((record) => record.data)).toEqual([{ title: "Milk" }]);
   });
