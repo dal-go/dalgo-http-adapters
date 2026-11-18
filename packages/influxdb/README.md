@@ -14,11 +14,11 @@ never accepts credentials in a URL.
 
 ## Install
 
-```sh
-pnpm add github:dal-go/dalgo-js github:dal-go/dalgo2influxdb-js
-```
-
-The package has not been published to npm yet.
+This monorepo package remains **private** at version `0.1.0`; this source change
+does not publish it or the archived standalone repository. It now uses the
+released `@dalgo/core` `0.8.1` identity and `@dalgo/adapter-runtime` cancellation
+APIs available in `0.1.2`. A source build or workspace alias is not registry
+availability or a clean-consumer qualification receipt.
 
 ## Configure an explicit table projection
 
@@ -27,7 +27,7 @@ and an explicit set of fields. Generated SQL gets identifiers solely from that
 validated configuration; application values are named SQL parameters.
 
 ```ts
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { InfluxDB3Database } from "@dal-go/dalgo2influxdb";
 
 interface Reading { room: string; temperature: number; time: string; }
@@ -59,6 +59,44 @@ const page = await db.query(
 loopback are allowed only for development. Each fetch uses `redirect: "error"`,
 a local deadline, header-only bearer authentication, and bounded JSON or write
 payloads. HTTP error bodies are intentionally not read or exposed.
+
+## Cancellation and operation bounds
+
+Existing `get`, `getMany`, `query` and `appendLineProtocol` calls retain their
+signatures. Additive `getWithSignal(key, signal, codec?)`,
+`getManyWithSignal(keys, signal, codec?)`, `queryWithSignal(query, signal)` and
+`appendLineProtocolWithSignal(lines, signal, precision?)` accept caller aborts
+without changing the core `Database` interface. The query signal entry implements
+the shared runtime's `CancellableQueryExecutor` contract.
+
+One configured `timeoutMs` starts **before** token acquisition and covers fetch,
+body reads, conversion, cleanup and final delivery. The token provider receives
+the combined operation signal; existing zero-argument providers still work.
+Caller abort and deadline reject with the shared `QueryCancelledError`, whose
+`reason` is `caller` or `deadline`. Caller reasons and provider exceptions are
+never copied into errors or causes. Token/fetch/reader failures use the fixed
+`InfluxDB3TransportError`; HTTP failures retain only `InfluxDB3HttpError.status`.
+Tokens must be nonempty printable ASCII without whitespace and at most8192
+characters. They remain header-only, and no request is retried automatically.
+
+`getMany` now executes **one request at a time**, preserving requested key order
+and missing snapshots. All its requests share the original deadline and the
+aggregate `maxResponseBytes` budget, rather than allocating that budget per key.
+Input keys are admitted before any request, and failure/abort stops later keys.
+`maxRows` still bounds key count; a query permits only its generated one-row
+lookahead, refusing server over-return instead of silently accepting it.
+
+Late fetch responses and unused/failed/oversized bodies are owned and cancelled.
+The caller does not wait forever for a stream's noncooperative `cancel()`.
+JavaScript cannot forcibly stop arbitrary injected token/fetch code that ignores
+its signal; its late promise is observed and cannot dispatch a later request or
+deliver a late success. These are local execution and materialized-response
+bounds, not server working-memory/scan-cost limits or lossless wide-number
+encoding. This slice adds no remote query-cancel API.
+
+Cancellation of `appendLineProtocol` stops local waiting; **the remote write may
+already have completed**. It does not roll back a write and must not trigger an
+automatic retry. Use the append helper only with explicit write authority.
 
 ## Supported DALgo surface
 
@@ -101,7 +139,7 @@ streaming cursor lifecycle.
 
 ## Version and product limitations
 
-This package supports InfluxDB 3 Core/Enterprise/Cloud installations exposing
+This package targets InfluxDB 3 Core/Enterprise/Cloud installations exposing
 the v3 SQL and line-protocol endpoints. InfluxDB 2’s Flux/bucket model is a
 different API and data model, so it needs a separate adapter if DALgo semantics
 can be proven for a chosen mapping. CORS, token issuance, tenant permissions,
@@ -111,8 +149,12 @@ proved by these tests.
 ## Verification
 
 `pnpm check` runs deterministic mocked HTTP contract tests, lint, and a
-TypeScript build. It does not contact a live InfluxDB server, issue a token, or
-prove CORS configuration. `pnpm pack --dry-run` verifies the package surface.
+TypeScript build. Lifecycle tests use real AbortControllers and deferred
+token/fetch/stream boundaries, including whole-operation `getMany` limits and
+reopen. They do not contact a live InfluxDB server, issue a token, prove CORS,
+or establish hosted product parity. Package/runtime consumer and actual service
+receipts remain separate qualification gates. The private source manifest is
+deliberately retained; no Changesets version or tag is generated for it.
 
 ## Official InfluxData references
 

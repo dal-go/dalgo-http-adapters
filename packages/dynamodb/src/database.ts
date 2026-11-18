@@ -24,7 +24,18 @@ import {
   type UpdateData,
   type RecordSnapshot,
   type ReadwriteTransaction,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
+import type { CancellableQueryExecutor } from "@dalgo/adapter-runtime";
+import { DynamoDbReadError, DynamoDbReadOperation } from "./read-operation.js";
+
+/**
+ * Browser-safe public typing for a borrowed official document client. Its exact
+ * object and SDK commands are retained; no SDK configuration or lifetime is owned.
+ * Keep the method signature: the official overloaded SDK send is assignable.
+ */
+export interface DynamoDbDocumentClientLike {
+  send(command: unknown, options?: { readonly abortSignal?: AbortSignal }): Promise<unknown>;
+}
 
 export interface DynamoDbTableOptions {
   /** DynamoDB table name. */
@@ -39,6 +50,12 @@ export interface DynamoDbTableOptions {
   readonly idAttribute?: string;
   /** Maximum native Query requests for one DALgo query. Defaults to 100. */
   readonly maxQueryPages?: number;
+  /** Whole read-operation deadline, including SDK credential/send waiting. Default 30s, max 120s. */
+  readonly timeoutMs?: number;
+  /** Maximum received/query or requested BatchGet records (duplicates included). Default 1000. */
+  readonly maxReadRecords?: number;
+  /** Accounted parsed SDK/result bytes per read operation. Default 4000000; not a wire allocation cap. */
+  readonly maxReadBytes?: number;
 }
 
 interface ResolvedTableOptions {
@@ -48,6 +65,9 @@ interface ResolvedTableOptions {
   readonly dataAttribute: string;
   readonly idAttribute: string;
   readonly maxQueryPages: number;
+  readonly timeoutMs: number;
+  readonly maxReadRecords: number;
+  readonly maxReadBytes: number;
 }
 
 type DynamoItem = Record<string, unknown>;
@@ -82,7 +102,17 @@ function resolveTable(options: DynamoDbTableOptions): ResolvedTableOptions {
   if (attributes.size !== 4) {
     throw new TypeError("DynamoDB key, data, and ID attribute names must be distinct");
   }
-  return { tableName, partitionKey, sortKey, dataAttribute, idAttribute, maxQueryPages };
+  const timeoutMs = positive(options.timeoutMs, 30_000, "timeoutMs");
+  if (timeoutMs > 120_000) throw new TypeError("timeoutMs must not exceed 120000");
+  return { tableName, partitionKey, sortKey, dataAttribute, idAttribute, maxQueryPages, timeoutMs,
+    maxReadRecords: positive(options.maxReadRecords, 1000, "maxReadRecords"),
+    maxReadBytes: positive(options.maxReadBytes, 4_000_000, "maxReadBytes") };
+}
+
+function positive(value: number | undefined, fallback: number, name: string): number {
+  const result = value ?? fallback;
+  if (!Number.isSafeInteger(result) || result < 1) throw new TypeError(`${name} must be a positive safe integer`);
+  return result;
 }
 
 function requireName(value: string, option: string): string {
@@ -157,57 +187,89 @@ function storageFingerprint(item: DynamoItem, partitionKey: string, sortKey: str
  * The table must use a string partition key and string sort key. The adapter
  * writes `collectionPath` to the partition key and `key.path` to the sort key.
  */
-export class DynamoDbDatabase implements Database {
+export class DynamoDbDatabase implements Database, CancellableQueryExecutor {
   readonly #client: DynamoDBDocumentClient;
   readonly #table: ResolvedTableOptions;
 
-  public constructor(client: DynamoDBDocumentClient, options: DynamoDbTableOptions) {
-    this.#client = client;
+  public constructor(client: DynamoDbDocumentClientLike, options: DynamoDbTableOptions) {
+    // The public boundary does not expose the SDK's Node ambient declarations.
+    // Internally keep official command/output typing and the exact borrowed object.
+    this.#client = client as DynamoDBDocumentClient;
     this.#table = resolveTable(options);
   }
 
-  public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
-    const output = await this.#client.send(new GetCommand({
+  public get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.read(undefined, (operation) => this.getInOperation(operation, key, codec));
+  }
+
+  public getWithSignal<T>(key: Key, signal: AbortSignal, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.read(signal, (operation) => this.getInOperation(operation, key, codec));
+  }
+
+  private async getInOperation<T>(operation: DynamoDbReadOperation, key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    const output = await operation.send((signal) => this.#client.send(new GetCommand({
       TableName: this.#table.tableName,
       Key: this.storageKey(key),
-    }));
+    }), { abortSignal: signal }));
+    operation.account(output);
+    if (!isPlainDocument(output)) throw new DynamoDbReadError("invalid-response");
     if (output.Item === undefined) {
       return { key, exists: false };
     }
+    operation.consumeRecords(1);
     return this.recordFromItem(key, requiredItem(output.Item, "Get"), codec);
   }
 
-  public async getMany<T>(
+  public getMany<T>(
     keys: readonly Key[],
     codec?: Codec<T>,
   ): Promise<readonly RecordSnapshot<T>[]> {
+    return this.read(undefined, (operation) => this.getManyInOperation(operation, keys, codec));
+  }
+
+  public getManyWithSignal<T>(keys: readonly Key[], signal: AbortSignal, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    return this.read(signal, (operation) => this.getManyInOperation(operation, keys, codec));
+  }
+
+  private async getManyInOperation<T>(operation: DynamoDbReadOperation, keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    operation.admitRecords(keys.length);
+    const admittedKeys = keys.slice();
     if (keys.length === 0) {
       return [];
     }
     const requestedByStorageKey = new Map<string, DynamoItem>();
-    for (const key of keys) {
+    for (const key of admittedKeys) {
       const stored = this.storageKey(key);
       requestedByStorageKey.set(storageFingerprint(stored, this.#table.partitionKey, this.#table.sortKey), stored);
     }
     if (requestedByStorageKey.size > 100) {
       throw new UnsupportedError("DynamoDB getMany calls with more than 100 distinct keys");
     }
-    const output = await this.#client.send(new BatchGetCommand({
+    const output = await operation.send((signal) => this.#client.send(new BatchGetCommand({
       RequestItems: { [this.#table.tableName]: { Keys: [...requestedByStorageKey.values()] } },
-    }));
+    }), { abortSignal: signal }));
+    operation.account(output);
+    if (!isPlainDocument(output)) throw new DynamoDbReadError("invalid-response");
     const unprocessed = output.UnprocessedKeys?.[this.#table.tableName]?.Keys ?? [];
+    if (!Array.isArray(unprocessed)) throw new DynamoDbReadError("invalid-response");
     if (unprocessed.length > 0) {
       throw new Error("DynamoDB BatchGet returned unprocessed keys; retry the operation");
     }
     const items = output.Responses?.[this.#table.tableName] ?? [];
+    if (!Array.isArray(items)) throw new DynamoDbReadError("invalid-response");
+    operation.consumeRecords(items.length);
     const byStorageKey = new Map<string, DynamoItem>();
     for (const item of items) {
       const storedItem = requiredItem(item, "BatchGet");
       byStorageKey.set(storageFingerprint(storedItem, this.#table.partitionKey, this.#table.sortKey), storedItem);
     }
-    return keys.map((key) => {
+    return admittedKeys.map((key) => {
+      operation.check();
       const stored = this.storageKey(key);
       const item = byStorageKey.get(storageFingerprint(stored, this.#table.partitionKey, this.#table.sortKey));
+      // Charge each logical output, including duplicate expansion, before its
+      // codec. This does not claim a bound on arbitrary caller codec output.
+      operation.account({ key: key.path, data: item?.[this.#table.dataAttribute] });
       return item === undefined ? { key, exists: false } : this.recordFromItem(key, item, codec);
     });
   }
@@ -289,7 +351,19 @@ export class DynamoDbDatabase implements Database {
     }));
   }
 
-  public async query<T>(dalQuery: StructuredQuery<T>): Promise<QueryPage<T>> {
+  public query<T>(dalQuery: StructuredQuery<T>): Promise<QueryPage<T>> {
+    return this.read(undefined, (operation) => this.queryInOperation(operation, dalQuery));
+  }
+
+  public queryWithSignal<T>(dalQuery: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
+    return this.read(signal, (operation) => this.queryInOperation(operation, dalQuery));
+  }
+
+  private async queryInOperation<T>(operation: DynamoDbReadOperation, dalQuery: StructuredQuery<T>): Promise<QueryPage<T>> {
+    if (dalQuery.limit !== undefined) {
+      if (!Number.isSafeInteger(dalQuery.limit) || dalQuery.limit < 1) throw new TypeError("DynamoDB query limit must be a positive safe integer");
+      operation.admitRecords(dalQuery.limit);
+    }
     if (dalQuery.source.kind !== "collection") {
       throw new UnsupportedError("DynamoDB collection-group queries");
     }
@@ -325,11 +399,12 @@ export class DynamoDbDatabase implements Database {
     let remaining = dalQuery.limit;
     let pageCount = 0;
     do {
+      operation.check();
       if (pageCount >= this.#table.maxQueryPages) {
         throw new Error(`DynamoDB query exceeded the configured ${String(this.#table.maxQueryPages)}-page safety limit`);
       }
       pageCount += 1;
-      const output = await this.#client.send(new QueryCommand({
+      const output = await operation.send((signal) => this.#client.send(new QueryCommand({
         TableName: this.#table.tableName,
         KeyConditionExpression: keyConditionParts.join(" AND "),
         ...(filter.expression === undefined ? {} : { FilterExpression: filter.expression }),
@@ -338,8 +413,15 @@ export class DynamoDbDatabase implements Database {
         ScanIndexForward: order === "asc",
         ...(remaining === undefined ? {} : { Limit: remaining }),
         ...(exclusiveStartKey === undefined ? {} : { ExclusiveStartKey: exclusiveStartKey }),
-      }));
-      for (const item of output.Items ?? []) {
+      }), { abortSignal: signal }));
+      operation.account(output);
+      if (!isPlainDocument(output)) throw new DynamoDbReadError("invalid-response");
+      const pageItems = output.Items ?? [];
+      if (!Array.isArray(pageItems)) throw new DynamoDbReadError("invalid-response");
+      if (remaining !== undefined && pageItems.length > remaining) throw new DynamoDbReadError("limit");
+      operation.consumeRecords(pageItems.length);
+      for (const item of pageItems) {
+        operation.check();
         records.push(this.recordFromQueryItem(requiredItem(item, "Query"), dalQuery.source.name, dalQuery.source.parent, dalQuery.source.codec));
       }
       lastEvaluatedKey = output.LastEvaluatedKey === undefined
@@ -354,7 +436,7 @@ export class DynamoDbDatabase implements Database {
       }
       exclusiveStartKey = lastEvaluatedKey;
       if (remaining !== undefined) {
-        remaining -= output.Items?.length ?? 0;
+        remaining -= pageItems.length;
       }
     } while (lastEvaluatedKey !== undefined && remaining !== 0);
     const nextCursor = lastEvaluatedKey === undefined
@@ -370,6 +452,21 @@ export class DynamoDbDatabase implements Database {
       return Promise.reject(new TypeError("DynamoDB transaction callback must be a function"));
     }
     return Promise.reject(new UnsupportedError("DynamoDB DALgo callback transactions"));
+  }
+
+  private async read<T>(signal: AbortSignal | undefined, worker: (operation: DynamoDbReadOperation) => Promise<T>): Promise<T> {
+    const operation = new DynamoDbReadOperation(signal, this.#table.timeoutMs, this.#table.maxReadBytes, this.#table.maxReadRecords);
+    let result: T;
+    try {
+      operation.check();
+      result = await worker(operation);
+      operation.check();
+    } catch (error: unknown) {
+      operation.check();
+      throw error;
+    } finally { operation.dispose(); }
+    operation.check();
+    return result;
   }
 
   private storageKey(key: Key): DynamoItem {

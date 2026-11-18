@@ -36,9 +36,9 @@ function database(config: NativeBrowserConfig, password = config.password): Nati
 export async function runNativeBrowserProof(config: NativeBrowserConfig) {
   const db = database(config);
   const items = collection<{ title: string; status?: string; nullable?: string | null }>("items");
-  const milk = await db.get(key("items", "milk"));
-  const space = await db.get(key("items", "id with space"));
-  const slash = await db.get(key("items", "id/slash"));
+  const milk = await db.get<Readonly<Record<string, unknown>>>(key("items", "milk"));
+  const space = await db.get<Readonly<Record<string, unknown>>>(key("items", "id with space"));
+  const slash = await db.get<Readonly<Record<string, unknown>>>(key("items", "id/slash"));
   const many = await db.getMany([key("items", "milk"), key("items", "does-not-exist"), key("items", "eggs")]);
 
   const nulls = await db.query({ ...items.query().where("nullable", "==", null).limit(10).build() });

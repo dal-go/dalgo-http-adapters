@@ -1,0 +1,28 @@
+{
+  "name": "@dalgo/dalgo2convex",
+  "version": "0.1.0",
+  "description": "Bounded native Convex public query functions, configured metadata and lossless values",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "sideEffects": false,
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md", "LICENSE", "examples"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check": "eslint . && vitest run && tsc -p tsconfig.json --noEmit && npm run build && node scripts/check-browser-bundle.mjs",
+    "prepack": "npm --prefix ../adapter-runtime run build && npm run build"
+  },
+  "license": "MIT",
+  "engines": { "node": ">=22.0.0" },
+  "dependencies": { "convex": "1.49.0" },
+  "peerDependencies": { "@dalgo/core": ">=0.8.1 <0.9.0", "@dalgo/adapter-runtime": ">=0.1.2 <1.0.0" },
+  "devDependencies": {
+    "@dalgo/core": "^0.8.1", "@dalgo/adapter-runtime": "workspace:^",
+    "@eslint/js": "10.0.1", "@types/node": "26.6.5", "esbuild": "0.28.2",
+    "eslint": "10.11.0", "typescript": "6.0.3", "typescript-eslint": "8.70.0", "vitest": "5.0.1"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/dal-go/dalgo-http-adapters.git", "directory": "packages/convex" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" }
+}

@@ -1,7 +1,7 @@
 # DALgo adapter for Azure Cosmos DB for NoSQL
 
 `@dal-go/dalgo2cosmosdb` is a deliberately bounded adapter from
-[`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) to the Azure Cosmos DB
+[`@dalgo/core`](https://github.com/dal-go/dalgo-js) to the Azure Cosmos DB
 for NoSQL HTTPS data-plane API. It owns one configured, existing container;
 it does not create databases or containers.
 
@@ -57,7 +57,7 @@ a cross-partition query.
 ## Minimal setup
 
 ```ts
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { CosmosNoSqlDatabase } from "@dal-go/dalgo2cosmosdb";
 
 const db = new CosmosNoSqlDatabase({
@@ -123,3 +123,212 @@ live-service acceptance coverage.
 ## License
 
 MIT
+
+## Operation lifecycle and compatibility
+
+The private package name/version remain `@dal-go/dalgo2cosmosdb` 0.1.0. It uses
+one canonical public `@dalgo/core` >=0.8.1 <0.9 and
+`@dalgo/adapter-runtime` >=0.1.2 <1; source delivery is not an npm release.
+The injected fetch and authorization provider remain caller-owned. They are
+never destroyed or replaced globally.
+
+`getWithSignal(key, signal, codec?)`,
+`getManyWithSignal(keys, signal, codec?)`, and
+`queryWithSignal(query, signal)` add optional caller cancellation. Existing
+read methods use the same operation without a caller signal. One deadline
+starts before partition mapping, codec work, authorization, JSON serialization,
+fetch, stream reads, and final delivery. The authorization request now includes
+that `signal`, plus `resourceLink` for the canonical Cosmos signing link;
+`resourcePath` remains the actual REST path (feed requests include `/docs`).
+The adapter continues to accept a complete broker-provided authorization
+header and does not sign with master keys. Synchronous caller callbacks cannot
+be preempted; cancellation and monotonic elapsed time are checked as soon as
+they return. `QueryCancelledError.reason` is `caller` or `deadline` and never
+copies the signal reason. Credential, transport and codec failures use the
+fixed `CosmosTransportError` without raw causes. `CosmosHttpError` keeps only
+status and validated retry delay.
+
+`getMany` snapshots the admitted array, preserves order/missing/duplicates,
+and shares one aggregate JSON-request/response-body byte budget and deadline
+across all batches. Parallel reads remain configurable (hard maximum 32 and
+never more than the admitted key cap). Failure aborts started siblings and
+prevents later batches; no partial result escapes. Request byte accounting
+covers serialized JSON bodies, not all network framing. Point URLs and
+partition values have separate fixed bounds: collection/key/partition strings
+4 KiB, authorization 8 KiB, resource identifiers 128 characters. Response
+headers are bounded to 64 KiB and continuation to 16 KiB printable ASCII.
+The fetch implementation can allocate headers or chunks before the adapter
+receives them; these are delivery bounds, not a pre-allocation network cap or
+an engine working-memory bound. Best-effort cancellation is not awaited and
+late fetch results have their unused bodies cancelled once. An injected
+implementation that ignores cancellation can continue its own work.
+
+JSON accepts only finite non-negative-zero numbers, strings, booleans, null,
+dense ordinary arrays and enumerable data properties on plain objects. It
+refuses cycles, accessors, custom classes/array properties, nesting beyond 32,
+more than 65,536 structural nodes, and more than 16 MiB aggregate string/key
+bytes. This prevents validation from invoking JSON getters or `toJSON`.
+Custom proxies, codecs and arbitrary application callbacks are trusted code;
+the adapter cannot bound their allocations or force them to return.
+
+A query page refuses overreturn beyond the requested item count, mismatched
+optional `_count`, duplicate managed identities and documents outside the
+managed collection/id layout before running user codecs. A supplied physical
+partition-field mismatch is refused; absence remains accepted for compatibility.
+Scope then relies on the explicit request partition header and managed
+collection/id validation, not independent proof that every response contains
+a physical partition field. Empty pages may legitimately carry continuation.
+Continuation handles are opaque, in-process and bound to the same database
+instance, partition, exact filter/query and limit. They cannot be serialized,
+forged or transferred to a different instance/query. They are not snapshot or
+transaction guarantees.
+
+Existing insert/upsert/delete wire behavior is retained with the same bounded
+transport and redacted errors. Cancellation or timeout does not prove a remote
+write was rolled back: it may already have completed. No automatic retry or
+rollback is added.
+
+The original `CosmosNoSqlDatabase` requires its managed envelope and base64url
+key layout. The additive native mode below uses a separate contract. Hosted authorization/RU/consistency behavior, Cosmos
+emulator or actual service, CORS, actual browser execution, installed CLI and
+package release acceptance remain separate unverified gates. Deterministic
+fetch/stream lifecycle tests establish only their local contract boundaries.
+
+Managed document data uses JavaScript JSON values, including ordinary `number`
+precision. It does not preserve arbitrary Cosmos numeric lexemes or promise
+lossless integers/decimals outside JavaScript representability. Native numeric
+fidelity uses the separate native contract below and requires its own qualification.
+
+## Native existing documents (additive read-only mode)
+
+`NativeCosmosNoSqlDatabase` reads original `id` values and full document JSON,
+with no envelope, ID rewrite, resource provisioning or account discovery.
+The package remains private `@dal-go/dalgo2cosmosdb@0.1.0`: source support does
+not establish registry availability, a deployed application or hosted acceptance.
+The existing managed class and its write behavior remain separate.
+
+```ts
+import { NativeCosmosNoSqlDatabase, nativeCosmosResourceToken,
+  nativeCosmosNumber, encodeNativeCosmosJson } from "@dal-go/dalgo2cosmosdb";
+
+const db = new NativeCosmosNoSqlDatabase({
+  endpoint: "https://your-account.documents.azure.com",
+  databaseId: "app", containerId: "items", partitionKeyField: "tenant",
+  authScopeId: "trusted-user-principal",
+  // Supply a raw, unencoded broker-issued resource token. No account key.
+  authorization: async ({ signal }) => nativeCosmosResourceToken(await broker(signal)),
+  collections: { items: { partition: "tenant:a" } },
+});
+const result = await db.getNative({ id: "original-id", partition: "tenant:a" });
+if (result.document) console.log(encodeNativeCosmosJson(result.document.data));
+const first = await db.queryNative({
+  sql: "SELECT * FROM c WHERE c.amount >= @amount", partition: "tenant:a", limit: 25,
+  parameters: [{ name: "@amount", value: nativeCosmosNumber("1.230000000000000001") }],
+});
+// Resume only on this instance, with identical SQL/parameters/partition/limit.
+if (first.nextCursor) await db.queryNative({
+  sql: "SELECT * FROM c WHERE c.amount >= @amount", partition: "tenant:a", limit: 25,
+  parameters: [{ name: "@amount", value: nativeCosmosNumber("1.230000000000000001") }],
+  cursor: first.nextCursor,
+});
+db.close();
+```
+
+Here `broker` is trusted application code, not an adapter account-key service.
+Alternatively `nativeCosmosAadToken(rawAccessToken)` supplies the official raw
+`type=aad&ver=1.0&sig=...` header format; audience and RBAC remain the caller's
+responsibility. The resource helper accepts the closed unencoded
+`type=resource&ver=1.0&sig=...` envelope and percent-encodes it exactly once.
+There is no header guessing, master-key signing, anonymous fallback, retry or
+authorization promotion. Errors expose safe codes/status and observed metadata,
+never SQL, URLs, IDs, credentials, response bodies or raw transport causes.
+
+Native keys require nonempty string `id` and nonempty string partition values.
+The physical partition field is one explicitly configured top-level property;
+every returned document must contain that exact field/value and original ID.
+Point IDs reject control characters and path delimiters. IDs/partitions are
+bounded to 1,024/2,048 UTF-8 bytes. Numeric, null, empty, hierarchical,
+unpartitioned and cross-partition query modes are **not implemented** here;
+this is not a claim that Cosmos intrinsically lacks those capabilities.
+`getManyNative` accepts separately explicit point partitions, snapshots all keys
+before dispatch and preserves order, duplicate positions and missing documents.
+`get`/`getMany` and their `WithSignal` variants use only declared collection
+bindings; a DALgo string key ID is the original native ID. Generic structured
+query compilation, native writes and callback transactions are **not implemented**;
+those methods fail without invoking authorization, network or transaction callbacks.
+`configuredMetadata()` reports local declarations, not container/index discovery.
+
+Every inbound JSON number is an immutable branded `NativeCosmosJsonNumber`,
+with an exact `lexeme` such as `9223372036854775807`, `1.2300`, `1e+99` or `-0`.
+Use `encodeNativeCosmosJson` for native wire JSON. Ordinary `JSON.stringify`
+does not implicitly turn number wrappers into numeric literals. A user object
+containing `lexeme` or another tag remains ordinary data; there is no tag guessing.
+Parameters accept the same wrappers, or finite JS numbers with their existing
+JS precision; unsafe integer JS numbers are refused. The closed encoder rejects
+accessors, custom classes/serialization, cycles, sparse arrays and invalid Unicode,
+and charges every escaped repeated wire occurrence before constructing output.
+The decoder rejects duplicate names, malformed Unicode/UTF-8, extra values,
+depth above 32, more than 65,536 nodes and number lexemes above 128 characters.
+Native own keys, arrays, booleans and null retain their JSON meanings. Codecs may
+transform data intentionally; native key/revision metadata is snapshotted before
+the codec, and cancellation/Close/elapsed time are checked after it.
+
+Queries use the NoSQL read-query REST route and explicit partition header;
+there is no local SQL-parser claim. Parameterized whole-document queries must
+return `Documents` with valid identity/partition fields. Scalar/aggregate or
+projection-only mapping is not implemented. Optional response counts must match,
+over-return and duplicate identities fail whole, and empty/short evaluated pages
+with a continuation remain nonterminal. The client collects whole physical pages
+up to the requested limit, adjusting item count to the remaining bound; it never
+truncates an over-returning reply. `pages` reports requests in this public call.
+All traversal state keeps the original deadline and spent request/body/page/row
+budget across resumes. Repeated service positions are refused before codecs.
+
+Continuation and observed-session handles are opaque, same-instance capabilities.
+They cannot be serialized, copied, reconstructed or used concurrently. A successful
+resume consumes its incoming handle exactly once. Refused/cancelled delivery
+preserves the old handle and spent work, and ignored pending I/O keeps it busy.
+Exact admitted query fields use fixed SHA-256 binding; actual credential header
+fingerprints also bind cursor and session authority. `authScopeId` partitions
+trusted principal context but cannot substitute for a credential. Token rotation
+requires a new journey/session; retaining only a stable scope ID does not grant
+continuation authority. Cleanup, final caller/deadline checks and net retention
+admission precede cursor ACK; no foreign callback or await follows successful ACK.
+
+Response metadata preserves exact observed request charge (absence is unknown,
+not zero), activity ID, revision and bounded opaque session handles. A 429 raises
+`NativeCosmosHttpError` with safe status, optional validated `retryAfterMs` and
+observed charge; the client never retries automatically or promises an RU/billing
+cap. Default requests never echo session tokens or override consistency. Passing
+an observed same-partition `session` deliberately opts into Session consistency;
+only that traversal echoes its latest observed token. Sessions share the cursor
+registry's bounded count/byte/node/TTL policy, expire without implicit renewal,
+and are invalidated on Close. Raw session and service continuation tokens are
+never exposed by public handles.
+
+Native defaults are 30 s whole-operation timeout (maximum 120 s), 4 physical
+operations (maximum 16; no queue), 100 batch keys, 1,000 cumulative rows,
+100 pages/requests, page size 100, 64 KiB aggregate request bodies and 1 MiB
+aggregate response bodies. Caps are validated; keys/pages/requests/page size
+have maxima 1,000, rows 10,000, request bodies 1 MiB and response bodies 16 MiB.
+Headers have a 64 KiB total bound; individual service/session positions 16 KiB.
+Shared retained handles default/max to 1,000, logical bytes to 16 MiB and nodes
+to 65,536, with a 5 min TTL (maximum 10 min); query journeys also retain their
+shorter original operation deadline. Logical quota includes fixed entry charges,
+UTF-8 IDs/tokens and session data, not an exact JS heap measurement. Idle expired
+handles release quota on later use; Close clears the registry.
+
+The operation begins before input copying, credentials, digest, transport,
+decoding and final delivery. Caller signals and monotonic deadlines cover all of
+them. Ignored credential/fetch/read/cancel promises remain observed and hold an
+admission slot until they settle; cancellation does not wait for hostile cleanup.
+Borrowed fetch and globals are never destroyed. These bounds cover adapter-owned
+materialization/work/retention, not a fetch/provider's internal allocation, caller
+codec allocation, server scan work, RU, remote cancellation or total process RAM.
+
+Node uses the caller's verified transport/CA policy through fetch; browsers need
+trusted time-bound resource/AAD credentials and actual service CORS permission.
+An endpoint is trusted configuration, HTTPS except explicit loopback development.
+Do not expose master/admin keys in either runtime. Deterministic source fixtures
+do not establish an Azure emulator, real account/RBAC/RU/consistency, actual
+Chromium/Workers runtime, installed release, registry publication or Apps approval.

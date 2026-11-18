@@ -281,6 +281,9 @@ try {
     }
     if (adapter.directory === "packages/adapter-runtime") {
       assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.8.1 <0.9.0");
+    } else if (adapter.directory === "packages/couchdb") {
+      assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.8.1 <0.9.0");
+      assert.equal(manifest.peerDependencies?.["@dalgo/adapter-runtime"], ">=0.1.2 <1.0.0");
     } else {
       assert.equal(manifest.peerDependencies?.["@dalgo/core"], ">=0.7.4 <0.9.0");
       assert.equal(manifest.peerDependencies?.["@dalgo/adapter-runtime"], ">=0.1.0 <1.0.0");

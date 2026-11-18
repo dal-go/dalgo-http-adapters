@@ -10,7 +10,9 @@ import {
   type RecordSnapshot,
   type StructuredQuery,
   type UpdateData,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
+import { cancelQuietly, type CancellableQueryExecutor } from "@dalgo/adapter-runtime";
+import { InfluxDB3Operation } from "./operation.js";
 import { compileInfluxDB3Query, validateIdentifier } from "./sql.js";
 import type { InfluxDB3Column, InfluxDB3DatabaseOptions, InfluxDB3Table } from "./types.js";
 
@@ -125,7 +127,7 @@ export class InfluxDB3HttpError extends Error {
 }
 
 /** DALgo adapter for the InfluxDB 3 `/api/v3/query_sql` JSON HTTP API. */
-export class InfluxDB3Database implements Database {
+export class InfluxDB3Database implements Database, CancellableQueryExecutor {
   readonly #database: string;
   readonly #origin: string;
   readonly #tables: Readonly<Record<string, InfluxDB3Table>>;
@@ -151,35 +153,67 @@ export class InfluxDB3Database implements Database {
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 
-  public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+  public get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.operation(undefined, (operation) => this.getInOperation(operation, key, codec));
+  }
+
+  public getWithSignal<T>(key: Key, signal: AbortSignal, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.operation(signal, (operation) => this.getInOperation(operation, key, codec));
+  }
+
+  private async getInOperation<T>(operation: InfluxDB3Operation, key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    operation.check();
     this.assertStringKey(key);
     const table = this.tableFor(key);
     const compiled = compileInfluxDB3Query(table, { source: { kind: "collection", name: key.collection }, filters: [{ field: "__name__", operator: "==", value: key.id }], orders: [] }, 2);
-    const rows = await this.select(compiled.sql, compiled.params, table);
+    const rows = await this.select(operation, compiled.sql, compiled.params, table, 2);
     if (rows.length === 0) return { key, exists: false };
     if (rows.length !== 1 || rows[0]?.__dalgo_key !== key.id) throw new UnsupportedError("InfluxDB 3 key mapping returned more than one record");
     return this.snapshot(key, rows[0] ?? {}, codec);
   }
 
-  public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+  public getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    return this.operation(undefined, (operation) => this.getManyInOperation(operation, keys, codec));
+  }
+
+  public getManyWithSignal<T>(keys: readonly Key[], signal: AbortSignal, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    return this.operation(signal, (operation) => this.getManyInOperation(operation, keys, codec));
+  }
+
+  private async getManyInOperation<T>(operation: InfluxDB3Operation, keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
     if (keys.length === 0) return [];
     if (keys.length > this.#maxRows) throw new UnsupportedError(`InfluxDB 3 getMany above configured maxRows (${String(this.#maxRows)})`);
-    const first = keys[0]; if (first === undefined) throw new Error("InfluxDB 3 lost first key");
-    for (const key of keys) this.assertStringKey(key);
+    const admittedKeys = keys.slice();
+    const first = admittedKeys[0]; if (first === undefined) throw new Error("InfluxDB 3 lost first key");
+    for (const key of admittedKeys) this.assertStringKey(key);
     const table = this.tableFor(first);
-    if (keys.some((key) => this.tableFor(key) !== table)) throw new UnsupportedError("InfluxDB 3 getMany across table mappings");
-    const records = await Promise.all(keys.map((key) => this.get(key, codec)));
+    if (admittedKeys.some((key) => this.tableFor(key) !== table)) throw new UnsupportedError("InfluxDB 3 getMany across table mappings");
+    // One request at a time bounds in-flight work and preserves key ordering.
+    // Every request shares the original deadline and aggregate byte budget.
+    const records: RecordSnapshot<T>[] = [];
+    for (const key of admittedKeys) {
+      operation.check();
+      records.push(await this.getInOperation(operation, key, codec));
+    }
     return records;
   }
 
-  public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
+  public query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
+    return this.operation(undefined, (operation) => this.queryInOperation(operation, query));
+  }
+
+  public queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal): Promise<QueryPage<T>> {
+    return this.operation(signal, (operation) => this.queryInOperation(operation, query));
+  }
+
+  private async queryInOperation<T>(operation: InfluxDB3Operation, query: StructuredQuery<T>): Promise<QueryPage<T>> {
     const table = this.tableForCollection(query.source.name);
     if (query.offset !== undefined) throw new UnsupportedError("InfluxDB 3 query offsets");
     const requested = query.limit ?? this.#maxRows;
     if (!Number.isSafeInteger(requested) || requested < 1) throw new TypeError("InfluxDB 3 query limit must be positive");
     if (requested > this.#maxRows) throw new UnsupportedError(`InfluxDB 3 query above configured maxRows (${String(this.#maxRows)})`);
     const compiled = compileInfluxDB3Query(table, query, requested + 1);
-    const rows = await this.select(compiled.sql, compiled.params, table);
+    const rows = await this.select(operation, compiled.sql, compiled.params, table, requested + 1);
     const hasMore = rows.length > requested;
     const pageRows = hasMore ? rows.slice(0, requested) : rows;
     const records = pageRows.map((row) => {
@@ -195,14 +229,22 @@ export class InfluxDB3Database implements Database {
   }
 
   /** Appends complete InfluxDB line-protocol points through native v3 `write_lp`; it is not DALgo record CRUD. */
-  public async appendLineProtocol(lines: readonly string[], precision: "auto" | "second" | "millisecond" | "microsecond" | "nanosecond" = "auto"): Promise<void> {
+  public appendLineProtocol(lines: readonly string[], precision: "auto" | "second" | "millisecond" | "microsecond" | "nanosecond" = "auto"): Promise<void> {
+    return this.operation(undefined, (operation) => this.appendInOperation(operation, lines, precision));
+  }
+
+  public appendLineProtocolWithSignal(lines: readonly string[], signal: AbortSignal, precision: "auto" | "second" | "millisecond" | "microsecond" | "nanosecond" = "auto"): Promise<void> {
+    return this.operation(signal, (operation) => this.appendInOperation(operation, lines, precision));
+  }
+
+  private async appendInOperation(operation: InfluxDB3Operation, lines: readonly string[], precision: "auto" | "second" | "millisecond" | "microsecond" | "nanosecond"): Promise<void> {
     if (!Array.isArray(lines) || lines.length === 0) throw new TypeError("appendLineProtocol requires at least one line");
     if (lines.some((line) => typeof line !== "string" || line.length === 0 || line.includes("\n") || line.includes("\r"))) throw new TypeError("each line-protocol point must be one non-empty line without CR or LF");
     const body = lines.join("\n");
     if (new TextEncoder().encode(body).byteLength > this.#maxWriteBytes) throw new UnsupportedError(`InfluxDB 3 line-protocol request exceeds maxWriteBytes (${String(this.#maxWriteBytes)})`);
     const url = new URL("/api/v3/write_lp", this.#origin);
     url.searchParams.set("db", this.#database); url.searchParams.set("precision", precision);
-    await this.request(url, { method: "POST", headers: { "content-type": "text/plain; charset=utf-8" }, body }, false);
+    await this.request(operation, url, { method: "POST", headers: { "content-type": "text/plain; charset=utf-8" }, body }, false);
   }
 
   public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> { void key; void data; void codec; throw new UnsupportedError("InfluxDB 3 point insert semantics; use appendLineProtocol"); }
@@ -236,48 +278,94 @@ export class InfluxDB3Database implements Database {
     return { key, exists: true, data: identityOr(codec).decode(data) };
   }
 
-  private async select(sql: string, params: Readonly<Record<string, Scalar>>, table: InfluxDB3Table): Promise<readonly Record<string, Scalar>[]> {
-    const response = await this.request(new URL("/api/v3/query_sql", this.#origin), {
+  private async operation<T>(signal: AbortSignal | undefined, worker: (operation: InfluxDB3Operation) => Promise<T>): Promise<T> {
+    const operation = new InfluxDB3Operation(signal, this.#timeoutMs, this.#maxResponseBytes);
+    let result: T;
+    try {
+      operation.check();
+      result = await worker(operation);
+      operation.check();
+    } catch (error: unknown) {
+      operation.check();
+      throw error;
+    } finally { operation.dispose(); }
+    operation.check();
+    return result;
+  }
+
+  private async select(operation: InfluxDB3Operation, sql: string, params: Readonly<Record<string, Scalar>>, table: InfluxDB3Table, limit: number): Promise<readonly Record<string, Scalar>[]> {
+    const response = await this.request(operation, new URL("/api/v3/query_sql", this.#origin), {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ db: this.#database, q: sql, params, format: "json" }),
     }, true);
-    return responseRows(response, table);
+    operation.check();
+    const rows = responseRows(response, table);
+    if (rows.length > limit) throw new UnsupportedError("InfluxDB 3 response exceeds requested row bound");
+    return rows;
   }
 
-  private async request(url: URL, init: RequestInit, parseJson: boolean): Promise<unknown> {
-    const token = await this.#accessToken();
-    if (typeof token !== "string" || token.trim().length === 0 || /[\r\n]/u.test(token)) throw new TypeError("accessToken must return a non-empty header-safe token");
-    const abort = new AbortController(); const timer = setTimeout(() => abort.abort(), this.#timeoutMs);
+  private async request(operation: InfluxDB3Operation, url: URL, init: RequestInit, parseJson: boolean): Promise<unknown> {
+    const token = await operation.io(() => this.#accessToken(operation.signal));
+    if (typeof token !== "string" || token.length === 0 || token.length > 8192 || /[^\x21-\x7e]/u.test(token)) throw new TypeError("accessToken must return a non-empty header-safe token of at most 8192 characters");
+    let response: Response | undefined;
+    let bodyOwnedByReader = false;
+    let bodyCancelled = false;
+    const cancelUnconsumed = (): void => {
+      if (response !== undefined && !bodyOwnedByReader && !bodyCancelled) {
+        bodyCancelled = true;
+        cancelQuietly(response.body);
+      }
+    };
     try {
-      const response = await this.#fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${token}` }, redirect: "error", signal: abort.signal });
+      await operation.io(() => {
+        const pending = this.#fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${token}` }, redirect: "error", signal: operation.signal });
+        // A fetch implementation may ignore abort and resolve later. Its body
+        // still has exactly one owner, even after the caller has stopped waiting.
+        void pending.then((value) => {
+          response = value;
+          if (operation.stopped) cancelUnconsumed();
+        }, () => undefined).catch(() => undefined);
+        return pending;
+      });
+      operation.check();
+      if (response === undefined) throw new TypeError("InfluxDB 3 response is unavailable");
       if (!response.ok) throw new InfluxDB3HttpError(response.status);
       if (!parseJson) return undefined;
       const length = response.headers.get("content-length");
-      if (length !== null && (!/^\d+$/u.test(length) || Number(length) > this.#maxResponseBytes)) throw new UnsupportedError("InfluxDB 3 response exceeds maxResponseBytes");
-      const body = await this.readBoundedBody(response);
+      if (length !== null && (!/^\d+$/u.test(length) || Number(length) > operation.remainingBytes)) throw new UnsupportedError("InfluxDB 3 response exceeds maxResponseBytes");
+      bodyOwnedByReader = true;
+      const body = await this.readBoundedBody(operation, response);
       try { return JSON.parse(body) as unknown; } catch { throw new TypeError("malformed InfluxDB 3 JSON response"); }
-    } finally { clearTimeout(timer); }
+    } finally {
+      cancelUnconsumed();
+    }
   }
 
-  private async readBoundedBody(response: Response): Promise<string> {
+  private async readBoundedBody(operation: InfluxDB3Operation, response: Response): Promise<string> {
     if (response.body === null) return "";
-    const reader = response.body.getReader();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const chunks: Uint8Array[] = [];
     let size = 0;
     try {
+      await operation.io(() => { reader = response.body?.getReader(); });
+      if (reader === undefined) throw new TypeError("InfluxDB 3 response reader is unavailable");
+      const ownedReader = reader;
       while (true) {
-        const next = await reader.read();
+        const next = await operation.io(() => ownedReader.read());
         if (next.done) break;
         const bytes = next.value;
+        operation.consume(bytes.byteLength);
         size += bytes.byteLength;
-        if (size > this.#maxResponseBytes) {
-          await reader.cancel();
-          throw new UnsupportedError("InfluxDB 3 response exceeds maxResponseBytes");
-        }
         chunks.push(bytes);
       }
-    } finally { reader.releaseLock(); }
+    } finally {
+      if (reader === undefined) cancelQuietly(response.body);
+      else {
+        cancelQuietly(reader);
+        try { reader.releaseLock(); } catch { /* Cleanup must not mask the original failure. */ }
+      }
+    }
     const result = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }

@@ -70,7 +70,7 @@ describe("CouchDbDatabase", () => {
     const { database: db, fetch } = database({ maxGetManyKeys: 2, maxParallelReads: 1 });
     fetch.mockResolvedValueOnce(response(404));
     fetch.mockResolvedValueOnce(response(200, { ...document("WyJpdGVtcyIsImVnZ3MiXQ"), __dalgo_id: "eggs" }));
-    await expect(db.getMany([{ ...key("items", "milk") }, key("items", "eggs")])).resolves.toHaveLength(2);
+    await expect(db.getMany([key("items", "milk"), key("items", "eggs")])).resolves.toHaveLength(2);
     await expect(db.getMany([key("items", "a"), key("items", "b"), key("items", "c")])).rejects.toBeInstanceOf(UnsupportedError);
   });
 
@@ -82,7 +82,7 @@ describe("CouchDbDatabase", () => {
     expect(JSON.parse(request(fetch).body as string)).toEqual({ selector: { $and: [{ __dalgo_collection: { $eq: "items" } }, { "data.done": { $eq: false } }] }, limit: 1 });
     expect(page.nextCursor?.values).toHaveLength(1);
     fetch.mockResolvedValueOnce(response(200, { docs: [] }));
-    await db.query(items.query().startAfter(...(page.nextCursor?.values ?? [])).build());
+    await db.query(items.query().where("done", "==", false).limit(1).startAfter(...(page.nextCursor?.values ?? [])).build());
     expect(JSON.parse(request(fetch, 1).body as string)).toMatchObject({ bookmark: "opaque" });
   });
 
@@ -109,24 +109,33 @@ describe("CouchDbDatabase", () => {
     await expect(db.get(key("items", "milk"))).rejects.toThrow("maxResponseBytes");
   });
 
-  it("keeps the legacy body timeout error and never awaits a hostile cancellation", async () => {
-    const fetch = vi.fn<typeof globalThis.fetch>();
+  it("keeps one public deadline through an owned reader and never awaits hostile cancellation", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
     const cancel = vi.fn(() => new Promise<void>(() => undefined));
-    const stream = new ReadableStream<Uint8Array>({
-      pull: () => new Promise<void>(() => undefined),
-      cancel,
-    });
-    fetch.mockResolvedValueOnce(new Response(stream, { status: 200 }));
-    const db = new CouchDbDatabase({ databaseUrl: "https://couch.example.com/app", fetch, timeoutMs: 50 });
-    const items = collection<{ done: boolean }>("items");
-    const query = db.query(items.query().build());
-    const settled = query.catch((reason: unknown) => reason);
-    await vi.waitFor(() => {
-      expect(stream.locked).toBe(true);
-    }, { interval: 1 });
-
-    await expect(settled).resolves.toMatchObject({ message: "CouchDB response timed out" });
-    expect(cancel).toHaveBeenCalledTimes(1);
+    let acknowledge!: (value: undefined) => void;
+    const reading = new Promise<undefined>((resolve) => { acknowledge = resolve; });
+    let releasePull: (() => void) | undefined;
+    let advanced = false; let settled: Promise<void> | undefined;
+    try {
+      const stream = new ReadableStream<Uint8Array>({ pull: () => new Promise<void>((resolve) => { releasePull = resolve; }), cancel }, { highWaterMark: 0 });
+      const ownedResponse = new Response(stream, { status: 200 });
+      const nativeGetReader = stream.getReader.bind(stream);
+      vi.spyOn(stream, "getReader").mockImplementation(() => {
+        const reader = nativeGetReader(); const nativeRead = reader.read.bind(reader);
+        vi.spyOn(reader, "read").mockImplementation(() => { const pending = nativeRead(); acknowledge(undefined); return pending; });
+        return reader;
+      });
+      const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(ownedResponse);
+      const db = new CouchDbDatabase({ databaseUrl: "https://couch.example.com/app", fetch, timeoutMs: 50 });
+      settled = expect(db.query(collection("items").query().build())).rejects.toMatchObject({ name: "QueryCancelledError", reason: "deadline" });
+      await reading; expect(fetch).toHaveBeenCalledTimes(1); expect(stream.locked).toBe(true); expect(cancel).not.toHaveBeenCalled();
+      clock.mockReturnValue(50); await vi.advanceTimersByTimeAsync(50); advanced = true;
+      await settled; expect(cancel).toHaveBeenCalledTimes(1); expect(stream.locked).toBe(false);
+    } finally {
+      try { if (!advanced) { clock.mockReturnValue(50); await vi.advanceTimersByTimeAsync(50); } releasePull?.(); await settled; }
+      finally { vi.clearAllTimers(); vi.restoreAllMocks(); vi.useRealTimers(); }
+    }
   });
 
   it.each(["https://couch.example.com/app", "https://localhost/app", "http://localhost:5984/app", "http://127.0.0.1:5984/app", "http://[::1]:5984/app"])("accepts supported database endpoint %s without eager I/O", databaseUrl => {

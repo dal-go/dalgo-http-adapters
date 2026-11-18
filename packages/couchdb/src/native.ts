@@ -1,4 +1,4 @@
-import { QueryCancelledError, createAbortScope } from "@dalgo/adapter-runtime";
+import { QueryCancelledError } from "@dalgo/adapter-runtime";
 import {
   DOCUMENT_ID,
   Key,
@@ -29,6 +29,8 @@ import {
   type CouchDbHeaderProvider,
   type CouchDbHeaders,
 } from "./transport.js";
+import { readBatch } from "./batch.js";
+import type { CouchDbOperation } from "./operation.js";
 import { NATIVE_COUCHDB_READ_CAPABILITIES } from "./capabilities.js";
 
 const DEFAULT_MAX_GET_MANY = 100;
@@ -508,85 +510,30 @@ export class NativeCouchDbDatabase implements Database {
   public get collection(): string { return this.#collection; }
   public get databaseName(): string { return this.#databaseName; }
 
-  public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
-    assertKey(key, this.#collection);
-    const { snapshot } = await this.readOne(key, codec, new AbortController().signal);
-    return snapshot;
+  public get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> { return this.getWithSignal(key, undefined, codec); }
+
+  public getWithSignal<T>(key: Key, signal: AbortSignal | undefined, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.#transport.within(signal, (op) => this.readOne(key, codec, op));
   }
 
-  public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
-    return this.readMany(keys, undefined, codec);
+  public getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> { return this.readMany(keys, undefined, codec); }
+
+  public getManyWithSignal<T>(keys: readonly Key[], signal: AbortSignal, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> { return this.readMany(keys, signal, codec); }
+
+  private async readOne<T>(key: Key, codec: Codec<T> | undefined, op: CouchDbOperation): Promise<RecordSnapshot<T>> {
+    op.check(); assertKey(key, this.#collection);
+    const response = await this.#transport.request("GET", `/${encodeURIComponent(key.id)}`, undefined, [404], {}, op.signal, this.#maxResponseBytes, undefined, op);
+    op.check();
+    return response.status === 404 ? { key, exists: false } : this.recordDocument(response.body, key, codec, op);
   }
 
-  /**
-   * Cancellable native batch read. One deadline and one abort scope cover every
-   * key, headers and response body. The first failure aborts in-flight siblings
-   * and prevents any later key from being requested.
-   */
-  public async getManyWithSignal<T>(keys: readonly Key[], signal: AbortSignal, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
-    if (signal.aborted) throw new QueryCancelledError("caller");
-    return this.readMany(keys, signal, codec);
-  }
-
-  private async readOne<T>(key: Key, codec: Codec<T> | undefined, signal: AbortSignal): Promise<{ readonly snapshot: RecordSnapshot<T>; readonly bytes: number }> {
-    assertKey(key, this.#collection);
-    const response = await this.#transport.request("GET", `/${encodeURIComponent(key.id)}`, undefined, [404], {}, signal);
-    if (response.status === 404) return { snapshot: { key, exists: false }, bytes: response.bytes };
-    return { snapshot: this.recordDocument(response.body, key, codec), bytes: response.bytes };
-  }
-
-  private async readMany<T>(keys: readonly Key[], callerSignal: AbortSignal | undefined, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
-    if (keys.length > this.#maxGetManyKeys) throw new UnsupportedError(`Native CouchDB getMany above maxGetManyKeys (${String(this.#maxGetManyKeys)})`);
-    for (const key of keys) assertKey(key, this.#collection);
-    const results: RecordSnapshot<T>[] = new Array(keys.length);
-    if (keys.length === 0) return results;
-
-    const deadline = createAbortScope(callerSignal, this.#transport.timeoutMs);
-    const batch = new AbortController();
-    const forwardAbort = (): void => { batch.abort(); };
-    if (deadline.signal.aborted) batch.abort();
-    else deadline.signal.addEventListener("abort", forwardAbort, { once: true });
-    const signal = batch.signal;
-    let failure: { readonly error: unknown } | undefined;
-    let acceptedBytes = 0;
-    let next = 0;
-    const stop = (error: unknown): void => {
-      if (failure !== undefined) return;
-      failure = { error };
-      batch.abort();
-    };
-    const worker = async (): Promise<void> => {
-      for (;;) {
-        if (failure !== undefined || signal.aborted) return;
-        const index = next;
-        next += 1;
-        const key = keys[index];
-        if (key === undefined) return;
-        try {
-          const { snapshot, bytes } = await this.readOne(key, codec, signal);
-          // A late sibling result must never join a batch that already failed.
-          if (failure !== undefined || signal.aborted) return;
-          if (acceptedBytes + bytes > this.#maxGetManyBytes) { stop(new CouchDbBatchSizeError()); return; }
-          acceptedBytes += bytes;
-          results[index] = snapshot;
-        } catch (error) {
-          stop(error);
-          return;
-        }
-      }
-    };
-
-    try {
-      await Promise.all(Array.from({ length: Math.min(this.#maxParallelReads, keys.length) }, () => worker()));
-      if (deadline.signal.aborted) {
-        throw new QueryCancelledError(deadline.callerAborted ? "caller" : "deadline");
-      }
-      if (failure !== undefined) throw failure.error;
-      return results;
-    } finally {
-      deadline.signal.removeEventListener("abort", forwardAbort);
-      deadline.dispose();
-    }
+  private readMany<T>(keys: readonly Key[], signal: AbortSignal | undefined, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    return this.#transport.within(signal, (op) => {
+      if (keys.length > this.#maxGetManyKeys) throw new UnsupportedError(`Native CouchDB getMany above maxGetManyKeys (${String(this.#maxGetManyKeys)})`);
+      const admitted = keys.slice();
+      for (const key of admitted) { op.check(); assertKey(key, this.#collection); }
+      return readBatch(admitted, this.#maxParallelReads, op, (key) => this.readOne(key, codec, op));
+    }, this.#maxGetManyBytes, () => new CouchDbBatchSizeError());
   }
 
   public async query<T>(query: NativeCouchDbQuery<T>): Promise<QueryPage<T>> {
@@ -627,100 +574,83 @@ export class NativeCouchDbDatabase implements Database {
     return Promise.reject(new UnsupportedError("Native CouchDB mode is read-only: delete"));
   }
 
-  public async testConnection(signal?: AbortSignal): Promise<NativeCouchDbConnectionTest> {
-    try {
-      const info = await this.databaseInfo(signal);
-      return { ok: true, collection: this.#collection, database: info };
-    } catch (error) {
-      if (error instanceof QueryCancelledError) throw error;
-      return { ok: false, collection: this.#collection, ...failureFor(error) };
-    }
+  public testConnection(signal?: AbortSignal): Promise<NativeCouchDbConnectionTest> {
+    return this.#transport.within(signal, (op) => this.connection(op), this.#maxMetadataBytes);
+  }
+  private async connection(op: CouchDbOperation): Promise<NativeCouchDbConnectionTest> {
+    try { const info = await this.databaseInfo(op.signal, op); op.check(); return { ok: true, collection: this.#collection, database: info }; }
+    catch (error) { op.check(); if (error instanceof QueryCancelledError) throw error; return { ok: false, collection: this.#collection, ...failureFor(error) }; }
   }
 
-  public async listIndexes(signal?: AbortSignal): Promise<NativeCouchDbIndexDiscovery> {
-    try {
-      return await this.discoverIndexes(signal);
-    } catch (error) {
-      if (error instanceof QueryCancelledError || error instanceof RangeError) throw error;
-      return { status: "unavailable", ...failureFor(error) };
-    }
+  public listIndexes(signal?: AbortSignal): Promise<NativeCouchDbIndexDiscovery> {
+    return this.#transport.within(signal, (op) => this.indexes(op), this.#maxMetadataBytes);
+  }
+  private async indexes(op: CouchDbOperation): Promise<NativeCouchDbIndexDiscovery> {
+    try { const result = await this.discoverIndexes(op.signal, op); op.check(); return result; }
+    catch (error) { op.check(); if (error instanceof QueryCancelledError || error instanceof RangeError) throw error; return { status: "unavailable", ...failureFor(error) }; }
   }
 
-  public async sampleFields(signal?: AbortSignal): Promise<NativeCouchDbFieldDiscovery> {
+  public sampleFields(signal?: AbortSignal): Promise<NativeCouchDbFieldDiscovery> {
+    return this.#transport.within(signal, (op) => this.fields(op), this.#maxMetadataBytes);
+  }
+  private async fields(op: CouchDbOperation): Promise<NativeCouchDbFieldDiscovery> {
     if (this.#configuredFields !== undefined) return { status: "configured", fields: this.#configuredFields };
-    try {
-      return await this.discoverFields(signal);
-    } catch (error) {
-      if (error instanceof QueryCancelledError || error instanceof RangeError) throw error;
-      return { status: "unavailable", ...failureFor(error) };
-    }
+    try { const result = await this.discoverFields(op.signal, op); op.check(); return result; }
+    catch (error) { op.check(); if (error instanceof QueryCancelledError || error instanceof RangeError) throw error; return { status: "unavailable", ...failureFor(error) }; }
   }
 
-  public async describe(signal?: AbortSignal): Promise<NativeCouchDbDescribe> {
-    const [database, indexes, fields] = await Promise.all([
-      this.testConnection(signal),
-      this.listIndexes(signal),
-      this.sampleFields(signal),
-    ]);
-    return {
-      adapter: "@dalgo/dalgo2couchdb",
-      storage: "native-rows",
-      readOnly: true,
-      resource: { database: this.#databaseName, collection: this.#collection },
-      database,
-      indexes,
-      fields,
-      limits: {
-        maxGetManyKeys: this.#maxGetManyKeys,
-        maxGetManyBytes: this.#maxGetManyBytes,
-        maxParallelReads: this.#maxParallelReads,
-        maxQueryLimit: this.#maxQueryLimit,
-        maxRequestBytes: this.#maxRequestBytes,
-        maxResponseBytes: this.#maxResponseBytes,
-        maxMetadataBytes: this.#maxMetadataBytes,
-        maxSampleDocuments: this.#maxSampleDocuments,
-        maxIndexes: this.#maxIndexes,
-        maxIssuedCursors: MAX_ISSUED_CURSORS,
-        maxConservedCursors: MAX_CONSERVED_CURSORS,
-      },
-    };
-  }
-
-  private async runQuery<T>(query: NativeCouchDbQuery<T>, signal: AbortSignal | undefined): Promise<QueryPage<T>> {
-    const plan = this.plan(query);
-    const cursor = this.prepareCursor(query, plan);
-    if (cursor !== undefined) this.#activeCursors.add(cursor.token);
-    let observed: CouchDbHeaders | undefined;
-    const effectiveSignal = signal ?? new AbortController().signal;
-    try {
-      const body = this.mangoBody(plan, cursor?.binding.bookmark);
-      const response = await this.#transport.request(
-        "POST",
-        "/_find",
-        body,
-        [],
-        {},
-        effectiveSignal,
-        this.#maxResponseBytes,
-        (headers) => {
-          observed = headers;
-          if (cursor !== undefined && this.credentialScope(headers) !== cursor.binding.scope) {
-            throw new TypeError("Native CouchDB query cursor credential scope does not match");
-          }
+  public describe(signal?: AbortSignal): Promise<NativeCouchDbDescribe> {
+    return this.#transport.within(signal, async (op) => {
+      const [database, indexes, fields] = await Promise.all([this.connection(op), this.indexes(op), this.fields(op)]);
+      return {
+        adapter: "@dalgo/dalgo2couchdb",
+        storage: "native-rows",
+        readOnly: true,
+        resource: { database: this.#databaseName, collection: this.#collection },
+        database,
+        indexes,
+        fields,
+        limits: {
+          maxGetManyKeys: this.#maxGetManyKeys,
+          maxGetManyBytes: this.#maxGetManyBytes,
+          maxParallelReads: this.#maxParallelReads,
+          maxQueryLimit: this.#maxQueryLimit,
+          maxRequestBytes: this.#maxRequestBytes,
+          maxResponseBytes: this.#maxResponseBytes,
+          maxMetadataBytes: this.#maxMetadataBytes,
+          maxSampleDocuments: this.#maxSampleDocuments,
+          maxIndexes: this.#maxIndexes,
+          maxIssuedCursors: MAX_ISSUED_CURSORS,
+          maxConservedCursors: MAX_CONSERVED_CURSORS,
         },
-      );
-      if (effectiveSignal.aborted) throw new QueryCancelledError("caller");
+      };
+    }, this.#maxMetadataBytes * 3);
+  }
+
+  private runQuery<T>(query: NativeCouchDbQuery<T>, signal: AbortSignal | undefined): Promise<QueryPage<T>> {
+    return this.#transport.within(signal, async (op) => {
+      const plan = this.plan(query);
+      const cursor = this.prepareCursor(query, plan);
+      if (cursor !== undefined) {
+        this.#activeCursors.add(cursor.token);
+        op.onFailure(() => { this.#activeCursors.delete(cursor.token); });
+      }
+      let observed: CouchDbHeaders | undefined;
+      const body = this.mangoBody(plan, cursor?.binding.bookmark);
+      const response = await this.#transport.request("POST", "/_find", body, [], {}, op.signal, this.#maxResponseBytes, (headers) => {
+        observed = headers;
+        if (cursor !== undefined && this.credentialScope(headers) !== cursor.binding.scope) throw new TypeError("Native CouchDB query cursor credential scope does not match");
+      }, op);
+      op.check();
       const scope = this.credentialScope(observed ?? {});
-      const page = this.queryPage(query, plan, response.body, scope);
-      if (cursor !== undefined) this.commitCursor(cursor.token);
+      const page = this.queryPage(query, plan, response.body, scope, op, cursor?.binding.bookmark);
+      if (cursor !== undefined) op.beforeDelivery(() => { this.commitCursor(cursor.token); });
       return page;
-    } catch (error) {
-      if (cursor !== undefined) this.#activeCursors.delete(cursor.token);
-      throw error;
-    }
+    });
   }
 
   private plan<T>(query: NativeCouchDbQuery<T>): NativeQueryPlan {
+    if (query.filters.length > 64 || query.orders.length > 10) throw new UnsupportedError("Native CouchDB query exceeds filter/order bounds");
     if (query.source.kind !== "collection" || query.source.parent !== undefined) {
       throw new UnsupportedError("Native CouchDB collection-group or nested collection queries");
     }
@@ -844,15 +774,21 @@ export class NativeCouchDbDatabase implements Database {
    * one continuation. Evicting the oldest pending handle retires an unused
    * cursor rather than growing memory without bound.
    */
-  private issueCursor(binding: NativeCursorBinding): string {
-    while (this.#issuedCursors.size >= MAX_ISSUED_CURSORS) {
-      const oldest = this.#issuedCursors.keys().next().value;
-      if (typeof oldest !== "string") break;
-      this.#issuedCursors.delete(oldest);
-    }
+  private issueCursor(binding: NativeCursorBinding, op: CouchDbOperation): string {
     let token = randomCursorToken();
     while (this.#issuedCursors.has(token) || this.#activeCursors.has(token) || this.#consumedCursors.has(token)) token = randomCursorToken();
-    this.#issuedCursors.set(token, binding);
+    // Reserve now, but do not issue/evict or consume any handle on failed delivery.
+    this.#activeCursors.add(token);
+    op.onFailure(() => { this.#activeCursors.delete(token); });
+    op.beforeDelivery(() => {
+      this.#activeCursors.delete(token);
+      while (this.#issuedCursors.size >= MAX_ISSUED_CURSORS) {
+        const oldest = this.#issuedCursors.keys().next().value;
+        if (typeof oldest !== "string") break;
+        this.#issuedCursors.delete(oldest);
+      }
+      this.#issuedCursors.set(token, binding);
+    });
     return token;
   }
 
@@ -866,47 +802,51 @@ export class NativeCouchDbDatabase implements Database {
     };
   }
 
-  private queryPage<T>(query: NativeCouchDbQuery<T>, plan: NativeQueryPlan, body: unknown, scope: string): QueryPage<T> {
+  private queryPage<T>(query: NativeCouchDbQuery<T>, plan: NativeQueryPlan, body: unknown, scope: string, op: CouchDbOperation, incomingBookmark: string | undefined): QueryPage<T> {
     if (!isObject(body) || !Array.isArray(body.docs)) throw new TypeError("malformed CouchDB Mango response: docs must be an explicit array");
     const docs = body.docs;
     if (!docs.every(isPlainObject)) throw new TypeError("malformed CouchDB Mango response document");
     if (docs.length > plan.limit) throw new RangeError("CouchDB response returned more rows than the requested query limit");
     const seen = new Set<string>();
-    const records = docs.map((document): ExistingRecord<T> => this.queryRecord(document, query.source.codec, seen));
+    for (const document of docs) { op.check(); this.queryIdentity(document, seen); }
     const bookmark = body.bookmark;
-    if (bookmark !== undefined && (typeof bookmark !== "string" || bookmark.length > MAX_BOOKMARK_CHARS)) throw new TypeError("malformed CouchDB Mango response bookmark");
-    if (docs.length < plan.limit) return { records };
-    if (bookmark === undefined || bookmark.length === 0) throw new TypeError("CouchDB Mango response omitted a bookmark for a full page; completion is unknown");
-    const token = this.issueCursor({ query: plan.fingerprint, scope, limit: plan.limit, bookmark });
+    if (bookmark !== undefined && (typeof bookmark !== "string" || bookmark.length === 0 || bookmark.length > MAX_BOOKMARK_CHARS)) throw new TypeError("malformed CouchDB Mango response bookmark");
+    if (docs.length === plan.limit && (bookmark === undefined || bookmark.length === 0)) throw new TypeError("CouchDB Mango response omitted a bookmark for a full page; completion is unknown");
+    if (docs.length === plan.limit && incomingBookmark !== undefined && bookmark === incomingBookmark) throw new TypeError("CouchDB Mango bookmark did not advance");
+    const records = docs.map((document): ExistingRecord<T> => this.queryRecord(document, query.source.codec, op));
+    op.check();
+    if (docs.length < plan.limit || typeof bookmark !== "string") return { records };
+    const token = this.issueCursor({ query: plan.fingerprint, scope, limit: plan.limit, bookmark }, op);
     return { records, nextCursor: { values: [token] } };
   }
 
-  private queryRecord<T>(document: Record<string, unknown>, codec: Codec<T> | undefined, seen: Set<string>): ExistingRecord<T> {
+  private queryIdentity(document: Record<string, unknown>, seen: Set<string>): string {
     const id = document._id;
     if (typeof id !== "string" || id.length === 0 || id.length > MAX_KEY_CHARS) throw new TypeError("CouchDB Mango response document is missing a valid string _id");
     if (id.startsWith("_")) throw new TypeError("CouchDB Mango response included a metadata document");
+    if (!controlFree(id) || id === "." || id === "..") throw new TypeError("CouchDB Mango response document has an invalid native _id");
     if (seen.has(id)) throw new TypeError("CouchDB Mango response contained a duplicate document _id");
     seen.add(id);
     if (document._rev !== undefined && typeof document._rev !== "string") throw new TypeError("CouchDB Mango response document has a malformed _rev");
-    const data = codecOrIdentity(codec).decode(document);
-    return {
-      key: new Key(this.#collection, id),
-      exists: true,
-      data,
-      metadata: { id, ...(typeof document._rev === "string" ? { revision: document._rev } : {}) },
-    };
+    return id;
   }
 
-  private recordDocument<T>(body: unknown, key: Key<string>, codec?: Codec<T>): ExistingRecord<T> {
+  private queryRecord<T>(document: Record<string, unknown>, codec: Codec<T> | undefined, op: CouchDbOperation): ExistingRecord<T> {
+    const id = document._id;
+    if (typeof id !== "string") throw new TypeError("CouchDB Mango response document is missing a valid string _id");
+    const revision = document._rev;
+    const metadata = { id, ...(typeof revision === "string" ? { revision } : {}) };
+    const data = op.call(() => codecOrIdentity(codec).decode(document));
+    return { key: new Key(this.#collection, id), exists: true, data, metadata };
+  }
+
+  private recordDocument<T>(body: unknown, key: Key<string>, codec: Codec<T> | undefined, op: CouchDbOperation): ExistingRecord<T> {
     if (!isPlainObject(body) || typeof body._id !== "string" || typeof body._rev !== "string") throw new TypeError("malformed native CouchDB document");
     if (body._id !== key.id) throw new TypeError("CouchDB document does not match requested native key");
     if (body._id.startsWith("_")) throw new TypeError("CouchDB returned a metadata document");
-    return {
-      key,
-      exists: true,
-      data: codecOrIdentity(codec).decode(body),
-      metadata: { id: body._id, revision: body._rev },
-    };
+    const metadata = { id: body._id, revision: body._rev };
+    const data = op.call(() => codecOrIdentity(codec).decode(body));
+    return { key, exists: true, data, metadata };
   }
 
   private credentialScope(headers: CouchDbHeaders): string {
@@ -926,8 +866,8 @@ export class NativeCouchDbDatabase implements Database {
     }
   }
 
-  private async databaseInfo(signal: AbortSignal | undefined): Promise<NativeCouchDbDatabaseInfo> {
-    const response = await this.#transport.request("GET", "", undefined, [401, 403, 404], {}, signal, this.#maxMetadataBytes);
+  private async databaseInfo(signal: AbortSignal | undefined, op: CouchDbOperation): Promise<NativeCouchDbDatabaseInfo> {
+    const response = await this.#transport.request("GET", "", undefined, [401, 403, 404], {}, signal, this.#maxMetadataBytes, undefined, op);
     if (response.status !== 200) throw new CouchDbHttpError(response.status);
     const body = response.body;
     if (!isObject(body) || typeof body.db_name !== "string" || body.db_name !== this.#databaseName) throw new TypeError("malformed CouchDB database info");
@@ -948,8 +888,8 @@ export class NativeCouchDbDatabase implements Database {
     };
   }
 
-  private async discoverIndexes(signal: AbortSignal | undefined): Promise<NativeCouchDbIndexDiscovery> {
-    const response = await this.#transport.request("GET", "/_index", undefined, [401, 403, 404], {}, signal, this.#maxMetadataBytes);
+  private async discoverIndexes(signal: AbortSignal | undefined, op: CouchDbOperation): Promise<NativeCouchDbIndexDiscovery> {
+    const response = await this.#transport.request("GET", "/_index", undefined, [401, 403, 404], {}, signal, this.#maxMetadataBytes, undefined, op);
     if (response.status !== 200) return { status: "unavailable", ...failureForStatus(response.status) };
     const body = response.body;
     if (!isObject(body) || !Array.isArray(body.indexes)) throw new TypeError("malformed CouchDB index discovery response");
@@ -996,8 +936,8 @@ export class NativeCouchDbDatabase implements Database {
     return { status: "available", total: body.indexes.length, indexes: Object.freeze(indexes) };
   }
 
-  private async discoverFields(signal: AbortSignal | undefined): Promise<NativeCouchDbFieldDiscovery> {
-    const response = await this.#transport.request("GET", `/_all_docs?include_docs=true&limit=${String(this.#maxSampleDocuments)}`, undefined, [401, 403, 404], {}, signal, this.#maxMetadataBytes);
+  private async discoverFields(signal: AbortSignal | undefined, op: CouchDbOperation): Promise<NativeCouchDbFieldDiscovery> {
+    const response = await this.#transport.request("GET", `/_all_docs?include_docs=true&limit=${String(this.#maxSampleDocuments)}`, undefined, [401, 403, 404], {}, signal, this.#maxMetadataBytes, undefined, op);
     if (response.status !== 200) return { status: "unavailable", ...failureForStatus(response.status) };
     const body = response.body;
     if (!isObject(body) || !Array.isArray(body.rows)) throw new TypeError("malformed CouchDB field sample response");

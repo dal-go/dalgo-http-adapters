@@ -1,6 +1,6 @@
 import { DynamoDBClient, type DynamoDBClientConfig } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 
 import { DynamoDbDatabase } from "../src/index.js";
 

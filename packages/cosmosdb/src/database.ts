@@ -14,14 +14,20 @@ import {
   type RecordSnapshot,
   type StructuredQuery,
   type UpdateData,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
+import { CosmosOperation } from "./operation.js";
+import { boundedHeaders, discardBody, ownedFetch, responseText } from "./transport.js";
 
 export type CosmosFetch = typeof globalThis.fetch;
 export type CosmosPartitionValue = string | number | boolean | null;
 
 export interface CosmosAuthorizationRequest {
   readonly method: string;
-  /** Cosmos resource link, without a leading slash. */
+  /** Whole-operation signal, including authorization acquisition. */
+  readonly signal: AbortSignal;
+  /** Canonical Cosmos signing resource link (parent container for feeds). */
+  readonly resourceLink: string;
+  /** Actual REST request path, without a leading slash; feed paths include /docs. */
   readonly resourcePath: string;
   readonly resourceType: "docs";
   /** RFC 1123 UTC date sent as x-ms-date. */
@@ -98,15 +104,7 @@ interface CosmosQueryResult {
   readonly Documents: readonly CosmosDocument[];
 }
 
-interface CosmosCursor {
-  readonly adapter: "@dal-go/dalgo2cosmosdb";
-  readonly version: 1;
-  readonly databaseId: string;
-  readonly containerId: string;
-  readonly collectionPath: string;
-  readonly partition: CosmosPartitionValue;
-  readonly continuation: string;
-}
+interface CursorState { readonly scope: string; readonly continuation: string; }
 
 export class CosmosHttpError extends Error {
   public readonly status: number;
@@ -133,7 +131,7 @@ function boundedInteger(value: number | undefined, fallback: number, field: stri
 
 function resourceId(value: string, field: string): string {
   const result = requireName(value, field);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(result)) throw new TypeError(`${field} must use only ASCII letters, digits, dot, underscore, and hyphen`);
+  if (result.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(result)) throw new TypeError(`${field} must use only ASCII letters, digits, dot, underscore, and hyphen`);
   return result;
 }
 
@@ -154,7 +152,7 @@ function resolve(options: CosmosNoSqlOptions): ResolvedOptions {
   const serviceVersion = requireName(options.serviceVersion ?? "2018-12-31", "serviceVersion");
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(serviceVersion)) throw new TypeError("serviceVersion must use YYYY-MM-DD format");
   const maxGetManyKeys = boundedInteger(options.maxGetManyKeys, 100, "maxGetManyKeys", 1000);
-  const maxParallelReads = boundedInteger(options.maxParallelReads, Math.min(8, maxGetManyKeys), "maxParallelReads", maxGetManyKeys);
+  const maxParallelReads = boundedInteger(options.maxParallelReads, Math.min(8, maxGetManyKeys), "maxParallelReads", Math.min(32, maxGetManyKeys));
   return {
     endpoint: url.origin,
     databaseId: resourceId(options.databaseId, "databaseId"),
@@ -192,27 +190,43 @@ function assertDocument(value: unknown): asserts value is Record<string, unknown
   assertJsonValue(value);
 }
 
-function assertJsonValue(value: unknown, seen = new Set<object>()): void {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || Object.is(value, -0)) throw new TypeError("Cosmos JSON numbers must be finite and must not be -0");
-    return;
-  }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) throw new TypeError("Cosmos JSON must not contain cycles");
-    seen.add(value);
-    for (const entry of value) assertJsonValue(entry, seen);
-    seen.delete(value);
-    return;
-  }
-  if (!isPlainObject(value)) throw new TypeError("Cosmos JSON values must be null, primitives, arrays, or plain records");
-  if (seen.has(value)) throw new TypeError("Cosmos JSON must not contain cycles");
-  if (Object.getOwnPropertySymbols(value).length !== 0 || Object.getOwnPropertyNames(value).length !== Object.keys(value).length) {
-    throw new TypeError("Cosmos JSON records must have only enumerable string properties");
-  }
-  seen.add(value);
-  for (const entry of Object.values(value)) assertJsonValue(entry, seen);
-  seen.delete(value);
+function assertJsonValue(value: unknown): void {
+  const seen = new Set<object>();
+  let nodes = 0;
+  let stringBytes = 0;
+  const chargeString = (value: string): void => {
+    if (value.length > 16_777_216) throw new RangeError("Cosmos JSON string byte bound exceeded");
+    stringBytes += byteLength(value);
+    if (stringBytes > 16_777_216) throw new RangeError("Cosmos JSON string byte bound exceeded");
+  };
+  const visit = (entry: unknown, depth: number): void => {
+    if (++nodes > 65_536 || depth > 32) throw new RangeError("Cosmos JSON structural bound exceeded");
+    if (typeof entry === "string") { chargeString(entry); return; }
+    if (entry === null || typeof entry === "boolean") return;
+    if (typeof entry === "number") {
+      if (!Number.isFinite(entry) || Object.is(entry, -0)) throw new TypeError("Cosmos JSON numbers must be finite and must not be -0");
+      return;
+    }
+    if (typeof entry !== "object" || (!Array.isArray(entry) && !isPlainObject(entry))) throw new TypeError("Cosmos JSON values must be null, primitives, arrays, or plain records");
+    if (Array.isArray(entry) && Object.getPrototypeOf(entry) !== Array.prototype) throw new TypeError("Cosmos JSON arrays must have the standard prototype");
+    if (seen.has(entry)) throw new TypeError("Cosmos JSON must not contain cycles");
+    seen.add(entry);
+    const descriptors = Object.getOwnPropertyDescriptors(entry);
+    const names = Reflect.ownKeys(descriptors);
+    if (names.length > 65_537) throw new RangeError("Cosmos JSON structural bound exceeded");
+    if (Array.isArray(entry) && (entry.length > 65_536 || names.length !== entry.length + 1)) throw new TypeError("Cosmos JSON arrays must be dense with no extra properties");
+    for (const name of names) {
+      if (typeof name !== "string") throw new TypeError("Cosmos JSON records must have only enumerable string properties");
+      if (Array.isArray(entry) && name === "length") continue;
+      const descriptor = descriptors[name];
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) throw new TypeError("Cosmos JSON accessors and hidden properties are not supported");
+      if (Array.isArray(entry) && (!/^(0|[1-9][0-9]*)$/u.test(name) || Number(name) >= entry.length)) throw new TypeError("Cosmos JSON arrays must have only indexed values");
+      chargeString(name);
+      visit(descriptor.value, depth + 1);
+    }
+    seen.delete(entry);
+  };
+  visit(value, 0);
 }
 
 function serializeJson(value: unknown): string {
@@ -227,6 +241,7 @@ function isKeyId(value: unknown): value is string | number {
 
 function storageId(id: string | number): string {
   if (!isKeyId(id)) throw new TypeError("Cosmos DALgo key IDs must be strings or safe integers, excluding -0");
+  if (typeof id === "string" && byteLength(id) > 4096) throw new RangeError("Cosmos key exceeds the supported byte bound");
   const bytes = new TextEncoder().encode(JSON.stringify(id));
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -235,57 +250,25 @@ function storageId(id: string | number): string {
 
 function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }
 
-async function responseText(response: Response, maximum: number, signal: AbortSignal): Promise<string> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null) {
-    const length = Number(declaredLength);
-    if (!Number.isSafeInteger(length) || length < 0 || length > maximum) {
-      await response.body?.cancel();
-      throw new RangeError("Cosmos response exceeds maxResponseBytes");
-    }
-  }
-  const body: ReadableStream<Uint8Array> | null = response.body;
-  if (body === null) return "";
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  let rejectAbort: ((reason: Error) => void) | undefined;
-  const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject as (reason: Error) => void; });
-  const cancelOnAbort = () => { rejectAbort?.(new Error("Cosmos response timed out")); void reader.cancel(); };
-  if (signal.aborted) cancelOnAbort();
-  signal.addEventListener("abort", cancelOnAbort, { once: true });
-  try {
-    let next = await Promise.race([reader.read(), aborted]);
-    while (!next.done) {
-      total += next.value.byteLength;
-      if (total > maximum) {
-        await reader.cancel();
-        throw new RangeError("Cosmos response exceeds maxResponseBytes");
-      }
-      chunks.push(next.value);
-      next = await Promise.race([reader.read(), aborted]);
-    }
-  } finally { signal.removeEventListener("abort", cancelOnAbort); reader.releaseLock(); }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(bytes);
-}
 
 function fieldPath(field: string): string {
-  if (field.length === 0) throw new TypeError("Cosmos query filter fields must not be empty");
+  if (field.length === 0 || byteLength(field) > 4096) throw new TypeError("Cosmos query filter fields must be nonempty bounded strings");
   return `c.data[${JSON.stringify(field)}]`;
 }
 
-function queryResult(value: unknown): CosmosQueryResult {
+function queryResult(value: unknown, limit: number, partitionKeyField: string, partition: CosmosPartitionValue): CosmosQueryResult {
   if (!isObject(value) || !Array.isArray(value.Documents)) throw new TypeError("malformed Cosmos query response");
-  return { Documents: value.Documents.map((document) => cosmosDocument(document, "query")) };
+  if (value.Documents.length > limit) throw new RangeError("Cosmos query response exceeds the requested limit");
+  if ("_count" in value && value._count !== value.Documents.length) throw new TypeError("Cosmos query response count does not match its documents");
+  return { Documents: value.Documents.map((document) => cosmosDocument(document, "query", partitionKeyField, partition)) };
 }
 
-function cosmosDocument(value: unknown, operation: string): CosmosDocument {
+function cosmosDocument(value: unknown, operation: string, partitionKeyField: string, partition: CosmosPartitionValue): CosmosDocument {
+  assertJsonValue(value);
   if (!isObject(value) || typeof value.id !== "string" || typeof value.__dalgo_collection !== "string" || !isKeyId(value.__dalgo_id) || !("data" in value)) {
     throw new TypeError(`malformed Cosmos ${operation} document`);
   }
+  if (partitionKeyField in value && value[partitionKeyField] !== partition) throw new TypeError("Cosmos document has an unexpected physical partition value");
   if (value._etag !== undefined && typeof value._etag !== "string") throw new TypeError(`malformed Cosmos ${operation} etag`);
   if (value._ts !== undefined && (typeof value._ts !== "number" || !Number.isSafeInteger(value._ts))) throw new TypeError(`malformed Cosmos ${operation} timestamp`);
   return {
@@ -301,80 +284,113 @@ function cosmosDocument(value: unknown, operation: string): CosmosDocument {
 /** A bounded DALgo adapter for one existing Cosmos DB for NoSQL container. */
 export class CosmosNoSqlDatabase implements Database {
   readonly #options: ResolvedOptions;
+  readonly #cursors = new WeakMap<object, CursorState>();
 
   public constructor(options: CosmosNoSqlOptions) { this.#options = resolve(options); }
 
-  public async get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
-    const partition = this.partition(key.collectionPath);
-    const response = await this.request("GET", this.documentPath(key), partition, undefined, [404]);
+  public get<T>(key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> { return this.getWithSignal(key, undefined, codec); }
+
+  public getWithSignal<T>(key: Key, signal: AbortSignal | undefined, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    return this.operation(signal, (op) => this.read(op, key, codec));
+  }
+
+  private async read<T>(op: CosmosOperation, key: Key, codec?: Codec<T>): Promise<RecordSnapshot<T>> {
+    op.check();
+    const partition = this.partition(op, key.collectionPath);
+    const response = await this.request(op, "GET", this.documentPath(key), partition, undefined, [404]);
+    op.check();
     if (response.status === 404) return { key, exists: false };
-    return this.record(key, cosmosDocument(response.body, "get"), codec);
+    return this.record(op, key, cosmosDocument(response.body, "get", this.#options.partitionKeyField, partition), codec);
   }
 
-  public async getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
-    if (keys.length > this.#options.maxGetManyKeys) throw new UnsupportedError(`Cosmos getMany supports at most ${String(this.#options.maxGetManyKeys)} keys`);
-    const results: RecordSnapshot<T>[] = [];
-    for (let start = 0; start < keys.length; start += this.#options.maxParallelReads) {
-      const batch = keys.slice(start, start + this.#options.maxParallelReads);
-      results.push(...await Promise.all(batch.map(async (key) => this.get(key, codec))));
-    }
-    return results;
+  public getMany<T>(keys: readonly Key[], codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> { return this.getManyWithSignal(keys, undefined, codec); }
+
+  public getManyWithSignal<T>(keys: readonly Key[], signal: AbortSignal | undefined, codec?: Codec<T>): Promise<readonly RecordSnapshot<T>[]> {
+    return this.operation(signal, async (op) => {
+      if (keys.length > this.#options.maxGetManyKeys) throw new UnsupportedError(`Cosmos getMany supports at most ${String(this.#options.maxGetManyKeys)} keys`);
+      const admitted = keys.slice();
+      // Validate the whole list before the first credential/network effect.
+      for (const key of admitted) { op.check(); this.documentPath(key); this.collectionPath(key.collectionPath); }
+      const results: RecordSnapshot<T>[] = [];
+      for (let start = 0; start < admitted.length; start += this.#options.maxParallelReads) {
+        op.check();
+        const batch = admitted.slice(start, start + this.#options.maxParallelReads);
+        try { results.push(...await Promise.all(batch.map(async (key) => this.read(op, key, codec)))); }
+        catch (error: unknown) { op.check(); op.fail(); throw error; }
+      }
+      return results;
+    });
   }
 
-  public async insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
-    const partition = this.partition(key.collectionPath);
-    const response = await this.request("POST", this.documentsPath(), partition, this.documentFor(key, partition, codecOrIdentity(codec).encode(data)), [409]);
-    if (response.status === 409) throw new AlreadyExistsError(key, { cause: new CosmosHttpError(409, response.retryAfterMs) });
+  public insert<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
+    return this.operation(undefined, async (op) => {
+      const partition = this.partition(op, key.collectionPath);
+      const encoded = op.call(() => codecOrIdentity(codec).encode(data));
+      const response = await this.request(op, "POST", this.documentsPath(), partition, this.documentFor(key, partition, encoded), [409], {}, false);
+      if (response.status === 409) throw new AlreadyExistsError(key, { cause: new CosmosHttpError(409, response.retryAfterMs) });
+    });
   }
 
-  public async set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
-    const partition = this.partition(key.collectionPath);
-    await this.request("POST", this.documentsPath(), partition, this.documentFor(key, partition, codecOrIdentity(codec).encode(data)), [], { "x-ms-documentdb-is-upsert": "True" });
+  public set<T>(key: Key, data: T, codec?: Codec<T>): Promise<void> {
+    return this.operation(undefined, async (op) => {
+      const partition = this.partition(op, key.collectionPath);
+      const encoded = op.call(() => codecOrIdentity(codec).encode(data));
+      await this.request(op, "POST", this.documentsPath(), partition, this.documentFor(key, partition, encoded), [], { "x-ms-documentdb-is-upsert": "True" }, false);
+    });
   }
 
   public update(key: Key, data: UpdateData): Promise<void> {
     return Promise.reject(new UnsupportedError(`Cosmos DB partial updates for ${key.collectionPath} (${String(Object.keys(data).length)} fields): use Cosmos Patch explicitly`));
   }
 
-  public async delete(key: Key): Promise<void> {
-    const partition = this.partition(key.collectionPath);
-    await this.request("DELETE", this.documentPath(key), partition, undefined, [404]);
+  public delete(key: Key): Promise<void> {
+    return this.operation(undefined, async (op) => {
+      const partition = this.partition(op, key.collectionPath);
+      await this.request(op, "DELETE", this.documentPath(key), partition, undefined, [404], {}, false);
+    });
   }
 
-  public async query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> {
-    if (query.source.kind !== "collection") throw new UnsupportedError("Cosmos collection-group queries");
-    if ((query.offset ?? 0) !== 0) throw new UnsupportedError("Cosmos query offsets");
-    if (query.startAt !== undefined || query.endAt !== undefined || query.endBefore !== undefined) {
-      throw new UnsupportedError("Cosmos inclusive and end query cursors");
-    }
-    if (query.orders.length !== 0) throw new UnsupportedError("Cosmos ordering; an unordered Cosmos continuation is the only preserved DALgo pagination mode");
-    const collectionPath = query.source.parent === undefined ? query.source.name : `${query.source.parent.path}/${query.source.name}`;
-    const partition = this.partition(collectionPath);
-    const cursor = this.cursor(query.startAfter, collectionPath, partition);
-    const compiled = this.compileFilters(query.filters);
-    const parameters: { name: string; value: unknown }[] = [
-      { name: "@collection", value: collectionPath },
-      ...compiled.parameters,
-    ];
-    const clauses = ["c.__dalgo_collection = @collection", ...compiled.clauses];
-    const body = { query: `SELECT * FROM c WHERE ${clauses.join(" AND ")}`, parameters };
-    const limit = query.limit ?? this.#options.maxQueryLimit;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#options.maxQueryLimit) throw new UnsupportedError(`Cosmos query limit must be from 1 to ${String(this.#options.maxQueryLimit)}`);
-    const response = await this.request("POST", this.documentsPath(), partition, body, [], {
-      "content-type": "application/query+json",
-      "x-ms-documentdb-isquery": "True",
-      "x-ms-max-item-count": String(limit),
-      ...(cursor === undefined ? {} : { "x-ms-continuation": cursor.continuation }),
+  public query<T>(query: StructuredQuery<T>): Promise<QueryPage<T>> { return this.queryWithSignal(query, undefined); }
+
+  public queryWithSignal<T>(query: StructuredQuery<T>, signal: AbortSignal | undefined): Promise<QueryPage<T>> {
+    return this.operation(signal, async (op) => {
+      const source = query.source;
+      if (source.kind !== "collection") throw new UnsupportedError("Cosmos collection-group queries");
+      if ((query.offset ?? 0) !== 0) throw new UnsupportedError("Cosmos query offsets");
+      if (query.startAt !== undefined || query.endAt !== undefined || query.endBefore !== undefined) throw new UnsupportedError("Cosmos inclusive and end query cursors");
+      if (query.orders.length !== 0) throw new UnsupportedError("Cosmos ordering; an unordered Cosmos continuation is the only preserved DALgo pagination mode");
+      if (query.filters.length > 64) throw new UnsupportedError("Cosmos queries support at most 64 filters");
+      const collectionPath = this.collectionPath(source.parent === undefined ? source.name : `${source.parent.path}/${source.name}`);
+      const partition = this.partition(op, collectionPath);
+      const compiled = this.compileFilters(query.filters);
+      const parameters = [{ name: "@collection", value: collectionPath }, ...compiled.parameters];
+      const clauses = ["c.__dalgo_collection = @collection", ...compiled.clauses];
+      const body = { query: `SELECT * FROM c WHERE ${clauses.join(" AND ")}`, parameters };
+      const limit = query.limit ?? this.#options.maxQueryLimit;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.#options.maxQueryLimit) throw new UnsupportedError(`Cosmos query limit must be from 1 to ${String(this.#options.maxQueryLimit)}`);
+      const scope = serializeJson([this.#options.databaseId, this.#options.containerId, collectionPath, partition, body, limit]);
+      if (byteLength(scope) > this.#options.maxRequestBytes) throw new RangeError("Cosmos request exceeds maxRequestBytes");
+      const cursor = this.cursor(query.startAfter, scope);
+      const response = await this.request(op, "POST", this.documentsPath(), partition, body, [], {
+        "content-type": "application/query+json", "x-ms-documentdb-isquery": "True", "x-ms-max-item-count": String(limit),
+        ...(cursor === undefined ? {} : { "x-ms-continuation": cursor.continuation }),
+      });
+      const result = queryResult(response.body, limit, this.#options.partitionKeyField, partition);
+      const identities = new Set<string>();
+      // Validate the complete managed page before any caller codec is invoked.
+      for (const document of result.Documents) {
+        op.check();
+        if (document.__dalgo_collection !== collectionPath) throw new TypeError("Cosmos query returned a document outside the requested collection");
+        if (document.id !== storageId(document.__dalgo_id) || identities.has(document.id)) throw new TypeError("Cosmos query returned mismatched or duplicate managed identities");
+        identities.add(document.id);
+        assertDocument(document.data);
+      }
+      const continuation = response.headers.get("x-ms-continuation");
+      if (continuation !== null && continuation !== "" && (byteLength(continuation) > 16_384 || /[^ -~]/u.test(continuation))) throw new RangeError("Cosmos continuation exceeds the supported header bound");
+      const records = result.Documents.map((document) => this.record(op, new Key(source.name, document.__dalgo_id, source.parent), document, source.codec));
+      const nextCursor = continuation === null || continuation.length === 0 ? undefined : this.cursorFor(scope, continuation);
+      return { records, ...(nextCursor === undefined ? {} : { nextCursor }) };
     });
-    const result = queryResult(response.body);
-    const parent = query.source.parent;
-    const records = result.Documents.map((document) => {
-      if (document.__dalgo_collection !== collectionPath) throw new TypeError("Cosmos query returned a document outside the requested collection");
-      return this.record(new Key(query.source.name, document.__dalgo_id, parent), document, query.source.codec);
-    });
-    const continuation = response.headers.get("x-ms-continuation");
-    const nextCursor = continuation === null || continuation.length === 0 ? undefined : this.cursorFor(collectionPath, partition, continuation);
-    return { records, ...(nextCursor === undefined ? {} : { nextCursor }) };
   }
 
   public runReadwriteTransaction<Result>(callback: (transaction: ReadwriteTransaction) => Promise<Result>): Promise<Result> {
@@ -383,9 +399,12 @@ export class CosmosNoSqlDatabase implements Database {
   }
 
   private documentsPath(): string { return `dbs/${encodeURIComponent(this.#options.databaseId)}/colls/${encodeURIComponent(this.#options.containerId)}/docs`; }
-  private documentPath(key: Key): string { return `${this.documentsPath()}/${storageId(key.id)}`; }
-  private partition(collectionPath: string): CosmosPartitionValue {
-    const value: unknown = this.#options.partitionKey(collectionPath);
+  private documentPath(key: Key): string { this.collectionPath(key.collectionPath); return `${this.documentsPath()}/${storageId(key.id)}`; }
+  private collectionPath(value: string): string { if (byteLength(value) > 4096) throw new RangeError("Cosmos collection path exceeds the supported byte bound"); return value; }
+  private partition(op: CosmosOperation, collectionPath: string): CosmosPartitionValue {
+    this.collectionPath(collectionPath);
+    const value: unknown = op.call(() => this.#options.partitionKey(collectionPath));
+    if (typeof value === "string" && byteLength(value) > 4096) throw new RangeError("Cosmos partition exceeds the supported byte bound");
     if (!(typeof value === "string" || typeof value === "boolean" || value === null || (typeof value === "number" && Number.isFinite(value) && !Object.is(value, -0)))) {
       throw new TypeError("partitionKey must return a JSON scalar with a finite non--0 number, or null");
     }
@@ -395,10 +414,11 @@ export class CosmosNoSqlDatabase implements Database {
     assertDocument(data);
     return { id: storageId(key.id), __dalgo_collection: key.collectionPath, __dalgo_id: key.id, [this.#options.partitionKeyField]: partition, data };
   }
-  private record<T>(key: Key, document: CosmosDocument, codec?: Codec<T>): ExistingRecord<T> {
+  private record<T>(op: CosmosOperation, key: Key, document: CosmosDocument, codec?: Codec<T>): ExistingRecord<T> {
+    op.check();
     if (document.id !== storageId(key.id) || document.__dalgo_collection !== key.collectionPath || document.__dalgo_id !== key.id) throw new TypeError("Cosmos response document does not match the requested DALgo key");
     assertDocument(document.data);
-    return { key, exists: true, data: codecOrIdentity(codec).decode(document.data), metadata: { ...(document._etag === undefined ? {} : { etag: document._etag }), ...(document._ts === undefined ? {} : { timestamp: document._ts }) } };
+    return { key, exists: true, data: op.call(() => codecOrIdentity(codec).decode(document.data)), metadata: { ...(document._etag === undefined ? {} : { etag: document._etag }), ...(document._ts === undefined ? {} : { timestamp: document._ts }) } };
   }
   private compileFilters<T>(filters: readonly QueryFilter<T>[]): { clauses: string[]; parameters: { name: string; value: unknown }[] } {
     const clauses: string[] = [];
@@ -426,45 +446,54 @@ export class CosmosNoSqlDatabase implements Database {
     }
     return { clauses, parameters };
   }
-  private cursorFor(collectionPath: string, partition: CosmosPartitionValue, continuation: string): QueryCursor {
-    return { values: [{ adapter: "@dal-go/dalgo2cosmosdb", version: 1, databaseId: this.#options.databaseId, containerId: this.#options.containerId, collectionPath, partition, continuation } satisfies CosmosCursor] };
+  private cursorFor(scope: string, continuation: string): QueryCursor {
+    const handle = Object.freeze({ adapter: "@dal-go/dalgo2cosmosdb", version: 2 });
+    this.#cursors.set(handle, { scope, continuation });
+    return { values: [handle] };
   }
-  private cursor(cursor: QueryCursor | undefined, collectionPath: string, partition: CosmosPartitionValue): CosmosCursor | undefined {
+  private cursor(cursor: QueryCursor | undefined, scope: string): CursorState | undefined {
     if (cursor === undefined) return undefined;
     if (cursor.values.length !== 1 || !isObject(cursor.values[0])) throw new TypeError("Cosmos startAfter must be a cursor returned by this adapter");
-    const value = cursor.values[0];
-    if (value.adapter !== "@dal-go/dalgo2cosmosdb" || value.version !== 1 || value.databaseId !== this.#options.databaseId || value.containerId !== this.#options.containerId || value.collectionPath !== collectionPath || value.partition !== partition || typeof value.continuation !== "string" || value.continuation.length === 0) throw new TypeError("Cosmos startAfter does not belong to this container, collection, and partition");
-    return {
-      adapter: "@dal-go/dalgo2cosmosdb",
-      version: 1,
-      databaseId: value.databaseId,
-      containerId: value.containerId,
-      collectionPath: value.collectionPath,
-      partition: value.partition as CosmosPartitionValue,
-      continuation: value.continuation,
-    };
+    const state = this.#cursors.get(cursor.values[0]);
+    if (state?.scope !== scope) throw new TypeError("Cosmos startAfter must be a cursor returned by this adapter for this query and partition");
+    return state;
   }
-  private async request(method: string, resourcePath: string, partition: CosmosPartitionValue, body?: unknown, accepted: readonly number[] = [], extra: Readonly<Record<string, string>> = {}): Promise<{ status: number; body: unknown; headers: Headers; retryAfterMs?: number }> {
-    const date = new Date().toUTCString();
-    const authorization = await this.#options.authorization({ method, resourcePath, resourceType: "docs", date });
-    if (authorization.trim().length === 0 || /[\r\n]/u.test(authorization)) throw new TypeError("authorization provider returned an unsafe header");
+  private async operation<T>(signal: AbortSignal | undefined, work: (op: CosmosOperation) => T | Promise<T>): Promise<T> {
+    const op = new CosmosOperation(signal, this.#options.timeoutMs, this.#options.maxRequestBytes, this.#options.maxResponseBytes);
+    let result: T;
+    try { op.check(); result = await work(op); op.check(); }
+    catch (error: unknown) { op.fail(); op.checkCancellation(); throw error; }
+    finally { op.dispose(); }
+    // Original caller signal and monotonic elapsed time survive listener cleanup.
+    op.check();
+    return result;
+  }
+  private async request(op: CosmosOperation, method: string, resourcePath: string, partition: CosmosPartitionValue, body?: unknown, accepted: readonly number[] = [], extra: Readonly<Record<string, string>> = {}, readBody = true): Promise<{ status: number; body: unknown; headers: Headers; retryAfterMs?: number }> {
+    op.check();
     const serialized = body === undefined ? undefined : serializeJson(body);
-    if (serialized !== undefined && byteLength(serialized) > this.#options.maxRequestBytes) throw new RangeError("Cosmos request exceeds maxRequestBytes");
-    const controller = new AbortController();
-    const timeout = setTimeout(() => { controller.abort(); }, this.#options.timeoutMs);
+    if (serialized !== undefined) op.requestBytes(byteLength(serialized));
+    const date = new Date().toUTCString();
+    const resourceLink = resourcePath.endsWith("/docs") ? resourcePath.slice(0, -5) : resourcePath;
+    const authorization = await op.io(() => this.#options.authorization({ method, resourcePath, resourceLink, resourceType: "docs", date, signal: op.signal }));
+    if (typeof authorization !== "string" || authorization.trim().length === 0 || byteLength(authorization) > 8192 || /[^\x20-\x7e]/u.test(authorization)) throw new TypeError("authorization provider returned an unsafe header");
+    const response = await ownedFetch(op, () => this.#options.fetch(`${this.#options.endpoint}/${resourcePath}`, { method, redirect: "error", signal: op.signal, headers: { accept: "application/json", "x-ms-date": date, "x-ms-version": this.#options.serviceVersion, authorization, "x-ms-documentdb-partitionkey": JSON.stringify([partition]), ...(serialized === undefined ? {} : { "content-type": "application/json" }), ...extra }, ...(serialized === undefined ? {} : { body: serialized }) }));
+    let readerOwnsBody = false;
     try {
-      const response = await this.#options.fetch(`${this.#options.endpoint}/${resourcePath}`, { method, redirect: "error", signal: controller.signal, headers: { accept: "application/json", "x-ms-date": date, "x-ms-version": this.#options.serviceVersion, authorization, "x-ms-documentdb-partitionkey": JSON.stringify([partition]), ...(serialized === undefined ? {} : { "content-type": "application/json" }), ...extra }, ...(serialized === undefined ? {} : { body: serialized }) });
-      const text = await responseText(response, this.#options.maxResponseBytes, controller.signal);
+      boundedHeaders(response.headers);
+      const retry = response.headers.get("x-ms-retry-after-ms");
+      const retryAfterMs = retry !== null && /^\d+$/u.test(retry) && Number.isSafeInteger(Number(retry)) ? Number(retry) : undefined;
+      if (!response.ok && !accepted.includes(response.status)) throw new CosmosHttpError(response.status, retryAfterMs);
       let parsed: unknown;
-      try { parsed = text.length === 0 ? undefined : JSON.parse(text); } catch { parsed = text; }
-      const retryAfterHeader = response.headers.get("x-ms-retry-after-ms");
-      const retryAfterMs = retryAfterHeader === null ? undefined : Number(retryAfterHeader);
-      const safeRetryAfterMs = retryAfterMs !== undefined && Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 0 ? retryAfterMs : undefined;
-      if (!response.ok && !accepted.includes(response.status)) throw new CosmosHttpError(response.status, safeRetryAfterMs);
-      return { status: response.status, body: parsed, headers: response.headers, ...(safeRetryAfterMs === undefined ? {} : { retryAfterMs: safeRetryAfterMs }) };
-    } catch (error: unknown) {
-      if (controller.signal.aborted) throw new Error(`Cosmos request timed out after ${String(this.#options.timeoutMs)}ms`, { cause: error });
-      throw error;
-    } finally { clearTimeout(timeout); }
+      // Error/accepted-empty/write responses need no payload or JSON parsing.
+      if (readBody && response.ok) {
+        readerOwnsBody = true;
+        const text = await responseText(response, op);
+        try { parsed = text.length === 0 ? undefined : JSON.parse(text); }
+        catch { throw new TypeError("malformed Cosmos JSON response"); }
+        if (parsed !== undefined) assertJsonValue(parsed);
+      }
+      op.check();
+      return { status: response.status, body: parsed, headers: response.headers, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) };
+    } finally { if (!readerOwnsBody) discardBody(response); }
   }
 }
