@@ -13,7 +13,8 @@ export interface InfluxDB3Table {
   readonly columns: Readonly<Record<string, InfluxDB3Column>>;
 }
 
-export type InfluxDB3AccessTokenProvider = () => string | Promise<string>;
+/** Receives the operation signal. Existing zero-argument providers still work. */
+export type InfluxDB3AccessTokenProvider = (signal?: AbortSignal) => string | Promise<string>;
 export type InfluxDB3Fetch = typeof globalThis.fetch;
 
 export interface InfluxDB3DatabaseOptions {
@@ -27,11 +28,11 @@ export interface InfluxDB3DatabaseOptions {
   readonly tables: Readonly<Record<string, InfluxDB3Table>>;
   /** Maximum records returned by a DALgo operation. Defaults to 1000. */
   readonly maxRows?: number;
-  /** Maximum accepted JSON response size. Defaults to 1 MiB. */
+  /** Aggregate accepted JSON bytes per operation, including all getMany reads. Defaults to 1 MiB. */
   readonly maxResponseBytes?: number;
   /** Maximum line-protocol request size. Defaults to 1 MiB. */
   readonly maxWriteBytes?: number;
-  /** Per-request deadline. Defaults to 30 seconds. */
+  /** Whole-operation deadline, from token acquisition through final delivery. Defaults to 30 seconds. */
   readonly timeoutMs?: number;
   readonly fetch?: InfluxDB3Fetch;
 }

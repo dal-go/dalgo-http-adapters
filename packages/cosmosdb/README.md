@@ -1,7 +1,7 @@
 # DALgo adapter for Azure Cosmos DB for NoSQL
 
 `@dal-go/dalgo2cosmosdb` is a deliberately bounded adapter from
-[`@dal-go/dalgo`](https://github.com/dal-go/dalgo-js) to the Azure Cosmos DB
+[`@dalgo/core`](https://github.com/dal-go/dalgo-js) to the Azure Cosmos DB
 for NoSQL HTTPS data-plane API. It owns one configured, existing container;
 it does not create databases or containers.
 
@@ -57,7 +57,7 @@ a cross-partition query.
 ## Minimal setup
 
 ```ts
-import { collection } from "@dal-go/dalgo";
+import { collection } from "@dalgo/core";
 import { CosmosNoSqlDatabase } from "@dal-go/dalgo2cosmosdb";
 
 const db = new CosmosNoSqlDatabase({
@@ -123,3 +123,79 @@ live-service acceptance coverage.
 ## License
 
 MIT
+
+## Operation lifecycle and compatibility
+
+The private package name/version remain `@dal-go/dalgo2cosmosdb` 0.1.0. It uses
+one canonical public `@dalgo/core` >=0.8.1 <0.9 and
+`@dalgo/adapter-runtime` >=0.1.2 <1; source delivery is not an npm release.
+The injected fetch and authorization provider remain caller-owned. They are
+never destroyed or replaced globally.
+
+`getWithSignal(key, signal, codec?)`,
+`getManyWithSignal(keys, signal, codec?)`, and
+`queryWithSignal(query, signal)` add optional caller cancellation. Existing
+read methods use the same operation without a caller signal. One deadline
+starts before partition mapping, codec work, authorization, JSON serialization,
+fetch, stream reads, and final delivery. The authorization request now includes
+that `signal`, plus `resourceLink` for the canonical Cosmos signing link;
+`resourcePath` remains the actual REST path (feed requests include `/docs`).
+The adapter continues to accept a complete broker-provided authorization
+header and does not sign with master keys. Synchronous caller callbacks cannot
+be preempted; cancellation and monotonic elapsed time are checked as soon as
+they return. `QueryCancelledError.reason` is `caller` or `deadline` and never
+copies the signal reason. Credential, transport and codec failures use the
+fixed `CosmosTransportError` without raw causes. `CosmosHttpError` keeps only
+status and validated retry delay.
+
+`getMany` snapshots the admitted array, preserves order/missing/duplicates,
+and shares one aggregate JSON-request/response-body byte budget and deadline
+across all batches. Parallel reads remain configurable (hard maximum 32 and
+never more than the admitted key cap). Failure aborts started siblings and
+prevents later batches; no partial result escapes. Request byte accounting
+covers serialized JSON bodies, not all network framing. Point URLs and
+partition values have separate fixed bounds: collection/key/partition strings
+4 KiB, authorization 8 KiB, resource identifiers 128 characters. Response
+headers are bounded to 64 KiB and continuation to 16 KiB printable ASCII.
+The fetch implementation can allocate headers or chunks before the adapter
+receives them; these are delivery bounds, not a pre-allocation network cap or
+an engine working-memory bound. Best-effort cancellation is not awaited and
+late fetch results have their unused bodies cancelled once. An injected
+implementation that ignores cancellation can continue its own work.
+
+JSON accepts only finite non-negative-zero numbers, strings, booleans, null,
+dense ordinary arrays and enumerable data properties on plain objects. It
+refuses cycles, accessors, custom classes/array properties, nesting beyond 32,
+more than 65,536 structural nodes, and more than 16 MiB aggregate string/key
+bytes. This prevents validation from invoking JSON getters or `toJSON`.
+Custom proxies, codecs and arbitrary application callbacks are trusted code;
+the adapter cannot bound their allocations or force them to return.
+
+A query page refuses overreturn beyond the requested item count, mismatched
+optional `_count`, duplicate managed identities and documents outside the
+managed collection/id layout before running user codecs. A supplied physical
+partition-field mismatch is refused; absence remains accepted for compatibility.
+Scope then relies on the explicit request partition header and managed
+collection/id validation, not independent proof that every response contains
+a physical partition field. Empty pages may legitimately carry continuation.
+Continuation handles are opaque, in-process and bound to the same database
+instance, partition, exact filter/query and limit. They cannot be serialized,
+forged or transferred to a different instance/query. They are not snapshot or
+transaction guarantees.
+
+Existing insert/upsert/delete wire behavior is retained with the same bounded
+transport and redacted errors. Cancellation or timeout does not prove a remote
+write was rolled back: it may already have completed. No automatic retry or
+rollback is added.
+
+Arbitrary existing native application documents remain a separate
+**not implemented** mapping mode: this source requires the managed envelope
+and base64url key layout. Hosted authorization/RU/consistency behavior, Cosmos
+emulator or actual service, CORS, actual browser execution, installed CLI and
+package release acceptance remain separate unverified gates. Deterministic
+fetch/stream lifecycle tests establish only their local contract boundaries.
+
+Managed document data uses JavaScript JSON values, including ordinary `number`
+precision. It does not preserve arbitrary Cosmos numeric lexemes or promise
+lossless integers/decimals outside JavaScript representability. Native numeric
+fidelity requires a separate contract and qualification.

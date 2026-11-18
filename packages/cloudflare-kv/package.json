@@ -1,0 +1,28 @@
+{
+  "name": "@dalgo/cloudflare-kv",
+  "version": "0.1.0",
+  "description": "Bounded native Cloudflare Workers KV and trusted HTTP reads",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "engines": { "node": ">=24" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./binding": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./browser": { "types": "./dist/browser.d.ts", "import": "./dist/browser.js" },
+    "./node": { "types": "./dist/node.d.ts", "import": "./dist/node.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "eslint . && vitest run && tsc -p tsconfig.json --noEmit && npm run build && npm run check:browser",
+    "check:browser": "node scripts/check-browser.mjs",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "prepack": "npm --prefix ../adapter-runtime run build && npm run build"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/dal-go/dalgo-http-adapters.git", "directory": "packages/cloudflare-kv" },
+  "peerDependencies": { "@dalgo/core": ">=0.8.1 <0.9.0", "@dalgo/adapter-runtime": ">=0.1.2 <1.0.0" },
+  "devDependencies": { "@dalgo/core": "0.8.1", "@dalgo/adapter-runtime": "workspace:^", "@types/node": "26.6.5", "@eslint/js": "10.0.1", "eslint": "10.11.0", "esbuild": "0.28.2", "typescript": "6.0.3", "typescript-eslint": "8.70.0", "vitest": "5.0.1" },
+  "publishConfig": { "access": "public" }
+}

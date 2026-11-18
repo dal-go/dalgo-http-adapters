@@ -13,7 +13,7 @@ import {
   UnsupportedError,
   collection,
   key,
-} from "@dal-go/dalgo";
+} from "@dalgo/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { DynamoDbDatabase } from "../src/index.js";
