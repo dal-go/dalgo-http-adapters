@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/dalgo2redis-resp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bounded read-only Redis RESP Node executor and browser-safe trusted HTTP client",
   "type": "module",
   "packageManager": "pnpm@11.20.0",

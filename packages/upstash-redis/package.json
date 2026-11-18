@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/dalgo2upstash-redis",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Browser-safe bounded read-only Upstash Redis REST executor with lossless RESP2 values",
   "type": "module",
   "packageManager": "pnpm@11.20.0",

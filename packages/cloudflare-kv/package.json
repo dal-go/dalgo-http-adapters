@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/cloudflare-kv",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Bounded native Cloudflare Workers KV and trusted HTTP reads",
   "type": "module",
   "sideEffects": false,

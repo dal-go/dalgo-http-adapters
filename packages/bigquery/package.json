@@ -1,6 +1,6 @@
 {
   "name": "@dalgo/bigquery",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "BigQuery REST API adapter for DALgo TypeScript",
   "type": "module",
   "packageManager": "pnpm@11.28.11",
