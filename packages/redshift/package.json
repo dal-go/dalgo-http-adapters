@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Amazon Redshift Data API adapter for DALgo TypeScript",
   "type": "module",
-  "packageManager": "pnpm@11.28.11",
+  "packageManager": "pnpm@11.28.13",
   "sideEffects": false,
   "exports": {
     ".": {

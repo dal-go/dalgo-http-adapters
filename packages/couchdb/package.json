@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "description": "Apache CouchDB HTTP document and Mango adapter for DALgo TypeScript",
   "type": "module",
-  "packageManager": "pnpm@11.28.11",
+  "packageManager": "pnpm@11.28.13",
   "sideEffects": false,
   "exports": {
     ".": {
