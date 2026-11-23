@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Bounded read-only Redis RESP Node executor and browser-safe trusted HTTP client",
   "type": "module",
-  "packageManager": "pnpm@11.20.0",
+  "packageManager": "pnpm@11.28.13",
   "sideEffects": false,
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },

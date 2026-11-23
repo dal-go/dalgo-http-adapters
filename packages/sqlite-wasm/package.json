@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Read-write DALgo database over SQLite for browsers (sqlite-wasm, OPFS) and Node",
   "type": "module",
-  "packageManager": "pnpm@11.28.11",
+  "packageManager": "pnpm@11.28.13",
   "sideEffects": false,
   "exports": {
     ".": {

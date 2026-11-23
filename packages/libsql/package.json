@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "description": "Provider-neutral libSQL Hrana-over-HTTP adapter and read-only native-table facade for DALgo TypeScript",
   "type": "module",
-  "packageManager": "pnpm@11.28.11",
+  "packageManager": "pnpm@11.28.13",
   "sideEffects": false,
   "exports": {
     ".": {
