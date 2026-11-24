@@ -6,7 +6,7 @@ toolchain go1.27.4
 
 // Exact parser/YAML versions used by released openvaultdb-go v0.26.2.
 require (
-	github.com/dal-go/dalgo v0.102.4
+	github.com/dal-go/dalgo v0.102.6
 	gopkg.in/yaml.v3 v3.0.1
 )
 
