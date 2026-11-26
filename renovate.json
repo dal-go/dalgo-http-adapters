@@ -3,5 +3,23 @@
   "extends": [
     "github>dal-go/dalgo-renovate-config",
     "github>sneat-co/cicd"
+  ],
+  "packageRules": [
+    {
+      "description": "Keep the exact Node floor used by adapter compatibility and release proofs",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["uses-with"],
+      "matchPackageNames": ["node"],
+      "matchFileNames": [".github/workflows/ci.yml", ".github/workflows/release.yml"],
+      "matchCurrentValue": "20.0.0",
+      "enabled": false
+    },
+    {
+      "description": "Require a coordinated consumer and release matrix update before adopting DALgo core 0.9 or later",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@dalgo/core", "@dal-go/dalgo"],
+      "matchFileNames": ["package.json", "packages/**/package.json"],
+      "allowedVersions": "<0.9.0"
+    }
   ]
 }
