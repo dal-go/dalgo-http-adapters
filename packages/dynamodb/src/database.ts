@@ -1,7 +1,6 @@
 import {
   BatchGetCommand,
   DeleteCommand,
-  DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -134,6 +133,10 @@ function isPlainDocument(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+function isValueArray(value: unknown): value is readonly unknown[] {
+  return Array.isArray(value);
+}
+
 function assertDocument(value: unknown): asserts value is Record<string, unknown> {
   if (!isPlainDocument(value)) {
     throw new TypeError("DynamoDB DALgo records must encode to a non-null object");
@@ -188,13 +191,11 @@ function storageFingerprint(item: DynamoItem, partitionKey: string, sortKey: str
  * writes `collectionPath` to the partition key and `key.path` to the sort key.
  */
 export class DynamoDbDatabase implements Database, CancellableQueryExecutor {
-  readonly #client: DynamoDBDocumentClient;
+  readonly #client: DynamoDbDocumentClientLike;
   readonly #table: ResolvedTableOptions;
 
   public constructor(client: DynamoDbDocumentClientLike, options: DynamoDbTableOptions) {
-    // The public boundary does not expose the SDK's Node ambient declarations.
-    // Internally keep official command/output typing and the exact borrowed object.
-    this.#client = client as DynamoDBDocumentClient;
+    this.#client = client;
     this.#table = resolveTable(options);
   }
 
@@ -250,13 +251,19 @@ export class DynamoDbDatabase implements Database, CancellableQueryExecutor {
     }), { abortSignal: signal }));
     operation.account(output);
     if (!isPlainDocument(output)) throw new DynamoDbReadError("invalid-response");
-    const unprocessed = output.UnprocessedKeys?.[this.#table.tableName]?.Keys ?? [];
-    if (!Array.isArray(unprocessed)) throw new DynamoDbReadError("invalid-response");
+    const unprocessedByTable = output.UnprocessedKeys ?? {};
+    if (!isPlainDocument(unprocessedByTable)) throw new DynamoDbReadError("invalid-response");
+    const tableRequest = unprocessedByTable[this.#table.tableName] ?? {};
+    if (!isPlainDocument(tableRequest)) throw new DynamoDbReadError("invalid-response");
+    const unprocessed = tableRequest.Keys ?? [];
+    if (!isValueArray(unprocessed)) throw new DynamoDbReadError("invalid-response");
     if (unprocessed.length > 0) {
       throw new Error("DynamoDB BatchGet returned unprocessed keys; retry the operation");
     }
-    const items = output.Responses?.[this.#table.tableName] ?? [];
-    if (!Array.isArray(items)) throw new DynamoDbReadError("invalid-response");
+    const responses = output.Responses ?? {};
+    if (!isPlainDocument(responses)) throw new DynamoDbReadError("invalid-response");
+    const items = responses[this.#table.tableName] ?? [];
+    if (!isValueArray(items)) throw new DynamoDbReadError("invalid-response");
     operation.consumeRecords(items.length);
     const byStorageKey = new Map<string, DynamoItem>();
     for (const item of items) {
@@ -417,7 +424,7 @@ export class DynamoDbDatabase implements Database, CancellableQueryExecutor {
       operation.account(output);
       if (!isPlainDocument(output)) throw new DynamoDbReadError("invalid-response");
       const pageItems = output.Items ?? [];
-      if (!Array.isArray(pageItems)) throw new DynamoDbReadError("invalid-response");
+      if (!isValueArray(pageItems)) throw new DynamoDbReadError("invalid-response");
       if (remaining !== undefined && pageItems.length > remaining) throw new DynamoDbReadError("limit");
       operation.consumeRecords(pageItems.length);
       for (const item of pageItems) {

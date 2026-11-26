@@ -304,4 +304,16 @@ describe("DynamoDB bounded read lifecycle", () => {
     send.mockResolvedValueOnce({ Responses: { owned: [item()] }, UnprocessedKeys: { owned: { Keys: [{ pk: "items", sk: "items/two" }] } } });
     await expect(db.getMany([items.key("one"), items.key("two")])).rejects.toThrow("unprocessed keys");
   });
+
+  it("rejects malformed BatchGet response maps from a borrowed client", async () => {
+    const { db, send } = fixture();
+    for (const response of [
+      { Responses: [] },
+      { UnprocessedKeys: [] },
+      { UnprocessedKeys: { owned: [] } },
+    ]) {
+      send.mockResolvedValueOnce(response);
+      await expect(db.getMany([items.key("one")])).rejects.toMatchObject({ code: "invalid-response" });
+    }
+  });
 });
