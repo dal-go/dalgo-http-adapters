@@ -17,8 +17,8 @@
     {
       "description": "Require a coordinated consumer and release matrix update before adopting DALgo core 0.9 or later",
       "matchManagers": ["npm"],
-      "matchPackageNames": ["@dalgo/core", "@dal-go/dalgo"],
-      "matchFileNames": ["package.json", "packages/**/package.json"],
+      "matchPackageNames": ["@dalgo/core", "@dal-go/dalgo", "/>@dalgo\\/core$/"],
+      "matchFileNames": ["package.json", "packages/**/package.json", "pnpm-workspace.yaml"],
       "allowedVersions": "<0.9.0"
     }
   ]
