@@ -104,8 +104,8 @@ describe("fetchCanonical", () => {
     const failing = (): Promise<Response> => Promise.reject(new TypeError("offline"));
     const error = await fetchCanonical(pin, failing).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(CanonicalFetchError);
-    expect((error as CanonicalFetchError).cause).toBeInstanceOf(TypeError);
-    expect((error as CanonicalFetchError).status).toBeUndefined();
+    expect(error).toHaveProperty("cause", expect.any(TypeError));
+    expect(error).toHaveProperty("status", undefined);
   });
 
   it("rejects bytes that do not match the pin", async () => {
