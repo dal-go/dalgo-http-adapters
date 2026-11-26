@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BSON, type Db, type Document, type FindOptions, type AggregateOptions } from "mongodb";
+import { BSON, MongoClient, type Db, type Document, type FindOptions, type AggregateOptions } from "mongodb";
 import { MongoNodeExecutor } from "../src/node-executor.js";
 
 function fixture(rows: readonly Record<string, unknown>[]) {
@@ -84,7 +84,10 @@ describe("MongoNodeExecutor", () => {
   });
 
   it("applies the configured response byte cap to configured metadata", async () => {
-    const executor = new MongoNodeExecutor({ database: {} as Db, collections: { products: "physical" }, maxResponseBytes: 32 });
+    const database = new MongoClient("mongodb://127.0.0.1:27017").db("fixture");
+    const collection = vi.spyOn(database, "collection");
+    const executor = new MongoNodeExecutor({ database, collections: { products: "physical" }, maxResponseBytes: 32 });
     await expect(executor.execute({ kind: "discover" })).rejects.toMatchObject({ code: "bounds" });
+    expect(collection).not.toHaveBeenCalled();
   });
 });
