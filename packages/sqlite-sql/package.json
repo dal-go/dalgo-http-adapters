@@ -45,10 +45,10 @@
   "devDependencies": {
     "@dalgo/core": "^0.2.0",
     "@eslint/js": "10.0.1",
-    "@vitest/coverage-v8": "5.1.1",
+    "@vitest/coverage-v8": "5.1.2",
     "eslint": "10.15.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.74.0",
-    "vitest": "5.1.1"
+    "vitest": "5.1.2"
   }
 }
