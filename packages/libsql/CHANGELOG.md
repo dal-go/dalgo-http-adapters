@@ -1,5 +1,11 @@
 # @dalgo/dalgo2libsql
 
+## 0.2.2
+
+### Patch Changes
+
+- 6b02475: Own native `getMany` batch key membership and key values before asynchronous authorization headers settle and across the first codec callback. Caller mutation of key objects or the input list can no longer change admitted identities, duplicate slots, result order, or the configured key and work limits.
+
 ## 0.2.1
 
 ### Patch Changes
