@@ -447,8 +447,8 @@ importers:
         specifier: 0.28.2
         version: 0.28.2
       playwright:
-        specifier: 1.65.1
-        version: 1.65.1
+        specifier: 1.64.1
+        version: 1.64.1
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -715,8 +715,8 @@ importers:
         specifier: 10.15.0
         version: 10.15.0(supports-color@7.2.0)
       playwright:
-        specifier: 1.65.1
-        version: 1.65.1
+        specifier: 1.64.1
+        version: 1.64.1
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -1075,7 +1075,7 @@ importers:
         version: 10.0.1(eslint@10.15.0(supports-color@7.2.0))
       '@vitest/coverage-v8':
         specifier: 5.1.1
-        version: 5.1.1(vitest@5.1.1)
+        version: 5.1.1(@types/node@26.6.10)(vite@8.3.0(@types/node@26.6.10)(esbuild@0.28.2)(yaml@2.9.1))(vitest@5.1.1)
       eslint:
         specifier: 10.15.0
         version: 10.15.0(supports-color@7.2.0)
@@ -1111,7 +1111,7 @@ importers:
         version: 26.6.10
       '@vitest/coverage-v8':
         specifier: 5.1.1
-        version: 5.1.1(vitest@5.1.1)
+        version: 5.1.1(@types/node@26.6.10)(vite@8.3.0(@types/node@26.6.10)(esbuild@0.28.2)(yaml@2.9.1))(vitest@5.1.1)
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -3036,8 +3036,18 @@ packages:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
 
+  playwright-core@1.64.1:
+    resolution: {integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   playwright-core@1.65.1:
     resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.64.1:
+    resolution: {integrity: sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -4673,7 +4683,23 @@ snapshots:
       '@typescript-eslint/types': 8.74.0
       eslint-visitor-keys: 5.0.1
 
-  '@vitest/coverage-v8@5.1.1(vitest@5.1.1)':
+  '@vitest/coverage-v8@5.1.1(@types/node@24.19.3)(vite@8.3.0(@types/node@24.19.3)(esbuild@0.28.2)(yaml@2.9.1))(vitest@5.1.1)':
+    dependencies:
+      '@bcoe/v8-coverage': 1.0.2
+      '@vitest/istanbul-lib-coverage': 2.1.0
+      '@vitest/istanbul-lib-report': 2.1.0
+      ast-v8-to-istanbul: 1.0.7
+      magicast: 0.5.5
+      obug: 3.0.0
+      std-env: 4.3.0
+      tinyrainbow: 3.2.0
+      vitest: 5.1.1(@types/node@24.19.3)(@vitest/coverage-v8@5.1.1)(jsdom@26.1.0(supports-color@7.2.0))(vite@8.3.0(@types/node@24.19.3)(esbuild@0.28.2)(yaml@2.9.1))
+    transitivePeerDependencies:
+      - '@types/node'
+      - vite
+    optional: true
+
+  '@vitest/coverage-v8@5.1.1(@types/node@26.6.10)(vite@8.3.0(@types/node@26.6.10)(esbuild@0.28.2)(yaml@2.9.1))(vitest@5.1.1)':
     dependencies:
       '@bcoe/v8-coverage': 1.0.2
       '@vitest/istanbul-lib-coverage': 2.1.0
@@ -4684,6 +4710,9 @@ snapshots:
       std-env: 4.3.0
       tinyrainbow: 3.2.0
       vitest: 5.1.1(@types/node@26.6.10)(@vitest/coverage-v8@5.1.1)(jsdom@26.1.0(supports-color@7.2.0))(vite@8.3.0(@types/node@26.6.10)(esbuild@0.28.2)(yaml@2.9.1))
+    transitivePeerDependencies:
+      - '@types/node'
+      - vite
 
   '@vitest/istanbul-lib-coverage@2.1.0': {}
 
@@ -5324,7 +5353,13 @@ snapshots:
 
   picomatch@4.0.7: {}
 
+  playwright-core@1.64.1: {}
+
   playwright-core@1.65.1: {}
+
+  playwright@1.64.1:
+    dependencies:
+      playwright-core: 1.64.1
 
   playwright@1.65.1:
     dependencies:
@@ -5549,7 +5584,7 @@ snapshots:
       why-is-node-running: 3.2.1
     optionalDependencies:
       '@types/node': 24.19.3
-      '@vitest/coverage-v8': 5.1.1(vitest@5.1.1)
+      '@vitest/coverage-v8': 5.1.1(@types/node@24.19.3)(vite@8.3.0(@types/node@24.19.3)(esbuild@0.28.2)(yaml@2.9.1))(vitest@5.1.1)
       jsdom: 26.1.0(supports-color@7.2.0)
     transitivePeerDependencies:
       - msw
@@ -5572,7 +5607,7 @@ snapshots:
       why-is-node-running: 3.2.1
     optionalDependencies:
       '@types/node': 26.6.10
-      '@vitest/coverage-v8': 5.1.1(vitest@5.1.1)
+      '@vitest/coverage-v8': 5.1.1(@types/node@26.6.10)(vite@8.3.0(@types/node@26.6.10)(esbuild@0.28.2)(yaml@2.9.1))(vitest@5.1.1)
       jsdom: 26.1.0(supports-color@7.2.0)
     transitivePeerDependencies:
       - msw
