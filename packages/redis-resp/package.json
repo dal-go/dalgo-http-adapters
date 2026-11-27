@@ -26,12 +26,12 @@
     "@dalgo/adapter-runtime": "workspace:^",
     "@dalgo/core": "^0.8.1",
     "@eslint/js": "10.0.1",
-    "@types/node": "24.0.0",
+    "@types/node": "24.19.3",
     "esbuild": "0.28.2",
-    "eslint": "10.11.0",
+    "eslint": "10.15.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.70.0",
-    "vitest": "5.0.1"
+    "typescript-eslint": "8.74.0",
+    "vitest": "5.1.1"
   },
   "repository": { "type": "git", "url": "git+https://github.com/dal-go/dalgo-http-adapters.git", "directory": "packages/redis-resp" },
   "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" }

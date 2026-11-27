@@ -52,8 +52,9 @@ describe("typed errors across the worker boundary", () => {
     expect(fetchError).toBeInstanceOf(CanonicalFetchError);
     expect(fetchError).toMatchObject({ status: 503, code: "canonical_fetch" });
     const offline = roundTrip(new CanonicalFetchError("offline", undefined, { cause: new TypeError("Failed to fetch") }));
+    expect(offline).toBeInstanceOf(CanonicalFetchError);
     expect(offline).toMatchObject({ cause: { name: "TypeError" } });
-    expect((offline as CanonicalFetchError).status).toBeUndefined();
+    expect(offline).toHaveProperty("status", undefined);
     expect(roundTrip(new CanonicalIntegrityError("bad sha"))).toBeInstanceOf(CanonicalIntegrityError);
     expect(roundTrip(new CorruptDatabaseError("damaged"))).toBeInstanceOf(CorruptDatabaseError);
     const config = roundTrip(new DemoDbConfigError("contradiction"));

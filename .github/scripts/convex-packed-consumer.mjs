@@ -10,9 +10,9 @@ const RUNTIME_VERSION = "0.1.2";
 const RUNTIME_SPEC = "@dalgo/adapter-runtime@0.1.2";
 const RUNTIME_TARBALL = "https://registry.npmjs.org/@dalgo/adapter-runtime/-/adapter-runtime-0.1.2.tgz";
 const RUNTIME_INTEGRITY = "sha512-dNX7DKuCrI4n7IXKfhWAglHNXwqHG0/f4oRveKw+CnG1jLS2KSyhAV+N6UeDmZoiNrAvOigUYVBzKaChYh+OSQ==";
-const CONVEX_VERSION = "1.49.0";
-const CONVEX_TARBALL = "https://registry.npmjs.org/convex/-/convex-1.49.0.tgz";
-const CONVEX_INTEGRITY = "sha512-mkr9oXF8/arkCI1kvYyGytWd62oVXNABh4uwLeI4UQVN6Zuudm4DlmSzNUJKF63djk6f/uUXC+6ffuVSkPLvzA==";
+const CONVEX_VERSION = "1.51.0";
+const CONVEX_TARBALL = "https://registry.npmjs.org/convex/-/convex-1.51.0.tgz";
+const CONVEX_INTEGRITY = "sha512-Y5gS+JmT2JBq76S3CrQDrdL/Ijs4ZRKsvz3cu5EmHf/QxW18QrHunb5j9WC6lAbWbWc/gvmqpa5lvXzLXFQVJA==";
 const legacyCore = /@dal-go\/dalgo(?![\w-])/u;
 
 export async function checkConvexPackedConsumer({ repository, scratch, run, walk, sourceHashes, assertNoLegacyDependency, assertNoLegacyTree, core, typescript, nodeTypes, esbuild }) {

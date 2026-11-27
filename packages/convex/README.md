@@ -69,7 +69,7 @@ failure. Server functions must independently validate arguments and enforce
 `ctx.auth` authorization; a configured tenant argument is not authorization.
 The functions in [examples/convex](./examples/convex) illustrate both checks.
 
-The public `convex/values` codec from pinned `convex@1.49.0` is used with
+The public `convex/values` codec from pinned `convex@1.51.0` is used with
 the official client's `convex_encoded_json` request envelope. Signed int64
 values remain `bigint`, bytes remain copied `ArrayBuffer`, IEEE float64
 specials and negative zero remain numbers, and nested values retain their
@@ -159,7 +159,7 @@ follows from branch publication.
 Producer and clean consumer profiles keep `skipLibCheck: false`. Development
 Node declarations use the repository-qualified `@types/node@26.6.5` with
 TypeScript 6. The Node runtime minimum is **22.0.0**, matching the mandatory
-`convex@1.49.0` dependency's engine requirement. Execution qualification is
+`convex@1.51.0` dependency's engine requirement. Execution qualification is
 on **Node 24.22.2**; the minimum declaration does not claim an actual Node 22
 runtime run. A declaration package version likewise does not imply that Node 26
 or an older incompatible declaration package was executed or qualified.

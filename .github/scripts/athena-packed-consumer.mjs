@@ -11,9 +11,9 @@ const RUNTIME_VERSION = "0.1.2";
 const RUNTIME_SPEC = `@dalgo/adapter-runtime@${RUNTIME_VERSION}`;
 const RUNTIME_TARBALL = "https://registry.npmjs.org/@dalgo/adapter-runtime/-/adapter-runtime-0.1.2.tgz";
 const RUNTIME_INTEGRITY = "sha512-dNX7DKuCrI4n7IXKfhWAglHNXwqHG0/f4oRveKw+CnG1jLS2KSyhAV+N6UeDmZoiNrAvOigUYVBzKaChYh+OSQ==";
-const SIGNER_VERSION = "5.7.3";
+const SIGNER_VERSION = "5.7.5";
 const SIGNER_TARBALL = `https://registry.npmjs.org/@smithy/signature-v4/-/signature-v4-${SIGNER_VERSION}.tgz`;
-const SIGNER_INTEGRITY = "sha512-7ImGm+FkHRLcBaRttIAMZ6bzJZWb2cJGoYjq46F2UjycujWzrL9GEN9h4w7eQyXJYnltrUhxbbieBAIRrdqpow==";
+const SIGNER_INTEGRITY = "sha512-WPjdr5oWOk1LArpI4pavu+fSo+/evi0Re1olxGvqwuZopd4gYR1UGCi+Soyn/IjmafqbWs+ZC+3AKxJS3ZpwUg==";
 const legacyCore = /@dal-go\/dalgo(?![\w-])/u;
 const EXPECTED_RUNTIME = {
   publicCoreIdentity: { core: true, typedNativeValues: true },
